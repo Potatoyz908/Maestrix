@@ -16,11 +16,16 @@ from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent, Sti
 from maestri_core.models.connection import Connection
 
 
+FIXED_TIMESTAMP = "2026-11-05T20:27:31Z"
+
+
 def generate_full_test_document() -> WorkspaceDocument:
     term_node = CanvasNode(
         id="11111111-1111-1111-1111-111111111111",
         frame=NodeFrame(x=100.0, y=100.0, width=400.0, height=300.0),
         node_type="terminal",
+        created_at=FIXED_TIMESTAMP,
+        last_modified_at=FIXED_TIMESTAMP,
         content=TerminalContent(
             name="Main Terminal",
             agent_type="generic_shell",
@@ -35,6 +40,8 @@ def generate_full_test_document() -> WorkspaceDocument:
         id="22222222-2222-2222-2222-222222222222",
         frame=NodeFrame(x=600.0, y=100.0, width=300.0, height=200.0),
         node_type="stickyNote",
+        created_at=FIXED_TIMESTAMP,
+        last_modified_at=FIXED_TIMESTAMP,
         content=StickyNoteContent(
             name="QuickNote",
             file_name="QuickNote.md",
@@ -47,6 +54,8 @@ def generate_full_test_document() -> WorkspaceDocument:
         id="33333333-3333-3333-3333-333333333333",
         frame=NodeFrame(x=100.0, y=500.0, width=500.0, height=400.0),
         node_type="portal",
+        created_at=FIXED_TIMESTAMP,
+        last_modified_at=FIXED_TIMESTAMP,
         content=PortalContent(
             name="Web Preview",
             current_url="https://github.com",
@@ -58,6 +67,8 @@ def generate_full_test_document() -> WorkspaceDocument:
         id="44444444-4444-4444-4444-444444444444",
         frame=NodeFrame(x=700.0, y=500.0, width=500.0, height=400.0),
         node_type="portal",
+        created_at=FIXED_TIMESTAMP,
+        last_modified_at=FIXED_TIMESTAMP,
         content=PortalContent(
             name="Docs Preview",
             current_url="https://docs.swift.org",
@@ -69,6 +80,8 @@ def generate_full_test_document() -> WorkspaceDocument:
         id="55555555-5555-5555-5555-555555555555",
         frame=NodeFrame(x=1000.0, y=100.0, width=250.0, height=500.0),
         node_type="fileTree",
+        created_at=FIXED_TIMESTAMP,
+        last_modified_at=FIXED_TIMESTAMP,
         content=FileTreeContent(
             name="Project Files",
             root_path="/tmp",
@@ -83,30 +96,35 @@ def generate_full_test_document() -> WorkspaceDocument:
         b_id="11111111-1111-1111-1111-111111111111",
         kind="terminal",
         rope_points=[[100.0, 100.0], [200.0, 200.0]],
+        created_at=FIXED_TIMESTAMP,
     )
     c_note = Connection(
         id="BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB",
         a_id="11111111-1111-1111-1111-111111111111",
         b_id="22222222-2222-2222-2222-222222222222",
         kind="terminalToNote",
+        created_at=FIXED_TIMESTAMP,
     )
     c_portal = Connection(
         id="CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC",
         a_id="11111111-1111-1111-1111-111111111111",
         b_id="33333333-3333-3333-3333-333333333333",
         kind="terminalToPortal",
+        created_at=FIXED_TIMESTAMP,
     )
     c_p2p = Connection(
         id="DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD",
         a_id="33333333-3333-3333-3333-333333333333",
         b_id="44444444-4444-4444-4444-444444444444",
         kind="portalToPortal",
+        created_at=FIXED_TIMESTAMP,
     )
     c_n2n = Connection(
         id="EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEEEEEE",
         a_id="22222222-2222-2222-2222-222222222222",
         b_id="22222222-2222-2222-2222-222222222222",
         kind="noteToNote",
+        created_at=FIXED_TIMESTAMP,
     )
 
     payload = WorkspacePayload(
@@ -121,6 +139,8 @@ def generate_full_test_document() -> WorkspaceDocument:
         portal_connections=[c_portal],
         portal_to_portal_connections=[c_p2p],
         note_to_note_connections=[c_n2n],
+        created_at=FIXED_TIMESTAMP,
+        last_modified_at=FIXED_TIMESTAMP,
     )
 
     return WorkspaceDocument(payload=payload)

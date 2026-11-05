@@ -666,6 +666,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self.canvas_widget.refuse_connection(a, b, plan)
             return
         a, b, side_a, side_b, kind = plan.a, plan.b, plan.side_a, plan.side_b, plan.kind
+        ws_id = self.document.payload.id
         target_list = getattr(self.document.payload, plan.list_attr)
 
         cid = f"local-{a[:8]}-{b[:8]}"
@@ -673,15 +674,19 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         def create_worker():
             try:
-                conn = self.client.create_connection(a, b, kind=kind)
+                conn = self.client.create_connection(a, b, kind=kind, workspace_id=ws_id)
             except Exception:
                 conn = None
-            GLib.idle_add(self._apply_connection_created, cid, conn, target_list, a, b)
+            GLib.idle_add(self._apply_connection_created, cid, conn, target_list, a, b, ws_id)
 
         threading.Thread(target=create_worker, daemon=True).start()
 
-    def _apply_connection_created(self, temp_cid: str, conn, target_list, a: str = "", b: str = ""):
+    def _apply_connection_created(self, temp_cid: str, conn, target_list, a: str = "", b: str = "", ws_id: str = ""):
         cw = self.canvas_widget
+        if ws_id and self.document.payload.id != ws_id:
+            # Workspace switched while connection was being created; discard
+            cw.remove_connection(temp_cid)
+            return GLib.SOURCE_REMOVE
         if conn is not None:
             if not cw.replace_connection_id(temp_cid, conn.id):   # the rope vanished meanwhile (node deleted): nothing to confirm
                 return GLib.SOURCE_REMOVE

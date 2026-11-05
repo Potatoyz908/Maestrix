@@ -761,11 +761,16 @@ class MaestriClient:
         data = self._handle_response(resp).json()
         return [Connection.from_dict(item) for item in data]
 
-    def create_connection(self, a_id: str, b_id: str, kind: str = "terminal") -> Connection:
+    def create_connection(self, a_id: str, b_id: str, kind: str = "terminal", workspace_id: Optional[str] = None) -> Connection:
         """Connects two canvas nodes with 21 interpolated ropePoints."""
-        payload = {"a": a_id, "b": b_id, "kind": kind}
+        payload: Dict[str, Any] = {"a": a_id, "b": b_id, "kind": kind}
+        if workspace_id:
+            payload["workspaceId"] = workspace_id
+        url = f"{self.base_url}/api/connections"
+        if workspace_id:
+            url += f"?workspace={urllib.parse.quote(workspace_id)}"
         resp = self.session.post(
-            f"{self.base_url}/api/connections",
+            url,
             json=payload,
             headers=self._headers({"Content-Type": "application/json"}),
             timeout=self.timeout,
@@ -773,10 +778,13 @@ class MaestriClient:
         data = self._handle_response(resp).json()
         return Connection.from_dict(data, default_kind=kind)
 
-    def delete_connection(self, connection_id: str) -> bool:
+    def delete_connection(self, connection_id: str, workspace_id: Optional[str] = None) -> bool:
         """Removes a connection between canvas nodes."""
+        url = f"{self.base_url}/api/connections/{connection_id}"
+        if workspace_id:
+            url += f"?workspace={urllib.parse.quote(workspace_id)}"
         resp = self.session.delete(
-            f"{self.base_url}/api/connections/{connection_id}",
+            url,
             headers=self._headers(),
             timeout=self.timeout,
         )

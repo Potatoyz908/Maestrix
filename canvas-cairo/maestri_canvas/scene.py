@@ -13,6 +13,7 @@ PIN_RADIUS_PX = 9.0
 
 # Kinds rendered as real GTK widgets (chrome + content). Everything else (shape, stroke, freehand, text) is drawn by Cairo.
 WIDGET_KINDS = frozenset({"terminal", "stickyNote", "portal", "fileTree"})
+CONNECTABLE_KINDS = frozenset({"terminal", "stickyNote", "portal"})
 
 
 def norm(i: str) -> str:
@@ -132,8 +133,8 @@ class Scene:
         r = PIN_RADIUS_PX / zoom
         ex = norm(exclude) if exclude else None
         for n in self.descending():
-            if n.id == ex or n.kind not in WIDGET_KINDS:
-                continue   # shape/stroke/freehand/text have no pins (and the core has no connection table for them)
+            if n.id == ex or n.kind not in CONNECTABLE_KINDS:
+                continue   # fileTree and canvas-drawn kinds (shape/stroke/text) have no pins
             for side in ("left", "right"):
                 q = pin_point(n.frame, side)  # type: ignore[arg-type]
                 if math.hypot(q.x - p.x, q.y - p.y) <= r:
@@ -145,7 +146,7 @@ class Scene:
         a, b = norm(a), norm(b)
         if a == b or a not in self.nodes or b not in self.nodes:
             return False
-        if self.nodes[a].kind not in WIDGET_KINDS or self.nodes[b].kind not in WIDGET_KINDS:
+        if self.nodes[a].kind not in CONNECTABLE_KINDS or self.nodes[b].kind not in CONNECTABLE_KINDS:
             return False
         return not any({c.a, c.b} == {a, b} for c in self.connections.values())
 

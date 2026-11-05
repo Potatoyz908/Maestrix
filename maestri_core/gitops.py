@@ -41,6 +41,7 @@ class GitResult:
     ok: bool
     action: str
     output: str
+    timed_out: bool = False
 
 
 def _valid_ref(name: Optional[str]) -> bool:
@@ -290,13 +291,13 @@ class GitOps:
             try:
                 _ok, out, _err = p.communicate_finish(res)
             except GLib.Error as exc:
-                done(False, exc.message)
+                done(False, exc.message, False)
                 return
             text = out.get_data().decode("utf-8", "replace") if out is not None else ""
             if timed_out["v"]:
-                done(False, f"timed out after {TIMEOUT_SECONDS}s")
+                done(False, f"timed out after {TIMEOUT_SECONDS}s", True)
                 return
-            done(p.get_successful(), text)
+            done(p.get_successful(), text, False)
 
         proc.communicate_async(None, None, finished)
 
@@ -310,14 +311,14 @@ class GitOps:
         outputs: List[str] = []
 
         def step(i: int) -> None:
-            def done(ok: bool, out: str) -> None:
+            def done(ok: bool, out: str, timed_out: bool = False) -> None:
                 outputs.append(out.rstrip("\n") if action in ("diff", "diff-index") else out.strip())
                 if ok and i + 1 < len(steps):
                     step(i + 1)
                     return
                 if mutating:
                     self.cache.invalidate(self.root)
-                callback(GitResult(ok, action, "\n".join(o for o in outputs if o)))
+                callback(GitResult(ok, action, "\n".join(o for o in outputs if o), timed_out=timed_out))
             self._spawn(steps[i], done)
 
         step(0)
@@ -341,13 +342,13 @@ class GitOps:
             for cb in self.cache.inflight.pop(self.root, []):
                 cb(status)
 
-        def got_top(ok: bool, out: str) -> None:
+        def got_top(ok: bool, out: str, *_) -> None:
             if not ok:
                 deliver(GitStatus(False, error=out.strip()))
                 return
             top = out.strip()
             self._spawn(self.argv_for("status"),
-                        lambda ok2, out2: deliver(parse_porcelain(out2, top) if ok2 else GitStatus(False, top, error=out2.strip())))
+                        lambda ok2, out2, *_: deliver(parse_porcelain(out2, top) if ok2 else GitStatus(False, top, error=out2.strip())))
 
         self._spawn(self.argv_for("toplevel"), got_top)
 

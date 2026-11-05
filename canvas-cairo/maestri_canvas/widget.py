@@ -256,8 +256,9 @@ class NodeFrame(Gtk.Overlay):
         self.content = content
         for edge in Edge:
             self.add_overlay(self._handle(edge))
-        for side in ("left", "right"):
-            self.add_overlay(self._pin(side))
+        if item.kind in ("terminal", "stickyNote", "portal"):
+            for side in ("left", "right"):
+                self.add_overlay(self._pin(side))
         attach = getattr(content, "frame_attached", None)
         if attach is not None:
             attach(self)   # lets a content widget style the card and retag its header widgets

@@ -61,3 +61,46 @@ def test_auth_failure_disables_sync_and_does_not_save(maestri_app):
             assert mock_post.call_count == 0
 
             win.close()
+
+
+def test_status_changed_signal_arities_and_ui_update(maestri_app):
+    """SignalBus status-changed emits (status: str, ok: bool) which must be accepted without TypeError."""
+    from maestri_core.signals.bus import bus
+
+    client = MaestriClient(port=12345, token="valid_token")
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "schemaVersion": 2,
+        "payload": {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "name": "Test",
+            "nodes": [],
+            "connections": [],
+            "noteConnections": [],
+            "portalConnections": [],
+            "portalToPortalConnections": [],
+            "noteToNoteConnections": [],
+        }
+    }
+
+    with patch.object(client.session, "get", return_value=mock_resp):
+        win = OpenMaestriWindow(maestri_app, client)
+        assert win.wait_loaded()
+
+        # 1. Emit save-failed with ok=False
+        bus.emit("status-changed", "save-failed", False)
+        assert "Falha ao Salvar" in win.lbl_status.get_label()
+
+        # 2. Emit git action with ok=False
+        bus.emit("status-changed", "git-push", False)
+        assert "Falha ao Salvar" in win.lbl_status.get_label()
+
+        # 3. Emit idle with ok=True
+        win.core_connected = True
+        bus.emit("status-changed", "idle", True)
+        assert f"Porta {client.port}" in win.lbl_status.get_label()
+
+        win.close()
+

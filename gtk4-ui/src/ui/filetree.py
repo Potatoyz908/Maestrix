@@ -118,6 +118,7 @@ class FileTreeWidget(Gtk.Box):
             return
         pop = Gtk.Popover()
         pop.set_parent(self._git_buttons[2])
+        pop.connect("closed", lambda p: p.unparent())
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         for name in branches:
             b = Gtk.Button(label=name, has_frame=False)
