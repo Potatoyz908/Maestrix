@@ -28,6 +28,10 @@ final class POSIXPtyProcess: @unchecked Sendable {
 
     /// 输出监听回调 (在输出线程执行)
     var onDataReceived: ((String) -> Void)?
+    /// 多监听器管理 (线程安全)
+    private var outputListeners: [UUID: (String) -> Void] = [:]
+    private let listenerLock = NSLock()
+
     /// 进程退出回调
     var onProcessExit: ((Int32?) -> Void)?
 
@@ -40,6 +44,19 @@ final class POSIXPtyProcess: @unchecked Sendable {
         term.resize(cols: 80, rows: 24)
         term.changeScrollback(10000)
         self.headlessTerminal = term
+    }
+
+    /// 注册输出监听器，返回取消闭包 (支持多端同时监听)
+    func addOutputListener(id: UUID = UUID(), _ listener: @escaping (String) -> Void) -> (() -> Void) {
+        listenerLock.lock()
+        outputListeners[id] = listener
+        listenerLock.unlock()
+        return { [weak self] in
+            guard let self else { return }
+            self.listenerLock.lock()
+            self.outputListeners.removeValue(forKey: id)
+            self.listenerLock.unlock()
+        }
     }
 
     /// 启动 PTY 子进程
@@ -179,8 +196,15 @@ final class POSIXPtyProcess: @unchecked Sendable {
             if n > 0 {
                 let slice = buffer[..<n]
                 headlessTerminal?.feed(byteArray: Array(slice))
-                if let str = String(bytes: slice, encoding: .utf8) {
+                let str = String(decoding: slice, as: UTF8.self)
+                if !str.isEmpty {
                     onDataReceived?(str)
+                    listenerLock.lock()
+                    let listeners = Array(outputListeners.values)
+                    listenerLock.unlock()
+                    for listener in listeners {
+                        listener(str)
+                    }
                 }
             } else if n == 0 {
                 handleChildTermination()

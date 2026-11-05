@@ -1,0 +1,356 @@
+"""
+Unit tests for maestri_core.client.api (MaestriClient & PTYWebSocketClient).
+"""
+
+import base64
+import hashlib
+import json
+import os
+import socket
+import struct
+import threading
+from unittest.mock import MagicMock, patch
+import pytest
+
+from maestri_core.client.api import (
+    AuthenticationError,
+    MaestriAPIError,
+    MaestriClient,
+    NotFoundError,
+    PTYWebSocketClient,
+)
+from maestri_core.models.workspace import WorkspaceDocument, WorkspaceEntry, WorkspacePayload
+
+
+# ============================================================================
+# Client Configuration & Auth Tests
+# ============================================================================
+
+def test_client_token_and_port_resolution(tmp_path, monkeypatch):
+    # 1. Direct parameters
+    client = MaestriClient(host="127.0.0.1", port=45678, auth_token="explicit-token")
+    assert client.port == 45678
+    assert client.auth_token == "explicit-token"
+    assert client.base_url == "http://127.0.0.1:45678"
+
+    # 2. Environment variables
+    monkeypatch.setenv("MAESTRI_AUTH_TOKEN", "env-token-xyz")
+    monkeypatch.setenv("MAESTRI_SERVER_PORT", "54321")
+    client_env = MaestriClient()
+    assert client_env.port == 54321
+    assert client_env.auth_token == "env-token-xyz"
+
+    # 3. File fallback ~/.open-maestri/run/auth.token
+    monkeypatch.delenv("MAESTRI_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("MAESTRI_SERVER_PORT", raising=False)
+    fake_home = tmp_path / "home"
+    run_dir = fake_home / ".open-maestri" / "run"
+    run_dir.mkdir(parents=True)
+    token_file = run_dir / "auth.token"
+    token_file.write_text("file-token-123", encoding="utf-8")
+
+    with patch("pathlib.Path.home", return_value=fake_home):
+        client_file = MaestriClient()
+        assert client_file.auth_token == "file-token-123"
+
+
+def test_client_headers_contain_auth_and_origin():
+    client = MaestriClient(port=39345, auth_token="secret-token-42")
+    headers = client._headers({"Custom": "Value"})
+    assert headers["Authorization"] == "Bearer secret-token-42"
+    assert headers["Origin"] == "http://127.0.0.1:39345"
+    assert headers["Host"] == "127.0.0.1:39345"
+    assert headers["Custom"] == "Value"
+
+
+# ============================================================================
+# REST Endpoints Tests with Mocked Session
+# ============================================================================
+
+@pytest.fixture
+def client():
+    return MaestriClient(port=39345, auth_token="test-token")
+
+
+def test_execute_cli(client):
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 200
+    mock_resp.text = "terminal list: 2 active"
+
+    with patch.object(client.session, "post", return_value=mock_resp) as mock_post:
+        out = client.execute_cli(["list"], terminal_id="TERM-1")
+        assert out == "terminal list: 2 active"
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["json"] == {"args": ["list"]}
+        assert call_kwargs["headers"]["X-Terminal-ID"] == "TERM-1"
+
+
+def test_get_workspaces(client):
+    raw_data = [
+        {
+            "id": "WS-1",
+            "name": "Project Alpha",
+            "workingDirectory": "/projects/alpha",
+            "icon": "folder",
+            "color": "blue",
+            "isPinned": True,
+            "locationType": "local",
+            "createdAt": "2026-11-05T12:00:00Z",
+        }
+    ]
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = raw_data
+
+    with patch.object(client.session, "get", return_value=mock_resp):
+        workspaces = client.get_workspaces()
+        assert len(workspaces) == 1
+        assert isinstance(workspaces[0], WorkspaceEntry)
+        assert workspaces[0].id == "WS-1"
+        assert workspaces[0].name == "Project Alpha"
+        assert workspaces[0].is_pinned is True
+
+
+def test_create_workspace(client):
+    created_raw = {
+        "id": "WS-NEW",
+        "name": "New Project",
+        "workingDirectory": "/tmp/new",
+        "icon": "terminal",
+        "color": "green",
+        "isPinned": False,
+        "locationType": "local",
+        "createdAt": "2026-11-05T12:00:00Z",
+    }
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 201
+    mock_resp.json.return_value = created_raw
+
+    with patch.object(client.session, "post", return_value=mock_resp) as mock_post:
+        ws = client.create_workspace(name="New Project", working_directory="/tmp/new", color="green", icon="terminal")
+        assert ws.id == "WS-NEW"
+        assert ws.name == "New Project"
+        assert ws.color == "green"
+        mock_post.assert_called_once()
+
+
+def test_get_and_save_workspace(client):
+    doc = WorkspaceDocument(schema_version=2, type="workspace", payload=WorkspacePayload(name="Active WS"))
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = doc.to_dict()
+
+    with patch.object(client.session, "get", return_value=mock_resp):
+        loaded = client.get_workspace(workspace_id="WS-123")
+        assert loaded.schema_version == 2
+        assert loaded.payload.name == "Active WS"
+
+    with patch.object(client.session, "post", return_value=mock_resp) as mock_post:
+        success = client.save_workspace(loaded, workspace_id="WS-123")
+        assert success is True
+        mock_post.assert_called_once()
+
+
+def test_terminals_lifecycle(client):
+    create_resp = MagicMock()
+    create_resp.ok = True
+    create_resp.status_code = 201
+    create_resp.json.return_value = {"id": "TERM-88", "name": "Worker", "agentType": "generic_shell"}
+
+    with patch.object(client.session, "post", return_value=create_resp):
+        res = client.create_terminal(name="Worker", command="bash")
+        assert res["id"] == "TERM-88"
+
+    del_resp = MagicMock()
+    del_resp.ok = True
+    del_resp.status_code = 200
+    with patch.object(client.session, "delete", return_value=del_resp):
+        assert client.delete_terminal("TERM-88") is True
+
+
+def test_notes_operations(client):
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 200
+    mock_resp.text = "# Note Content\nHello World"
+
+    with patch.object(client.session, "get", return_value=mock_resp):
+        text = client.get_note("Plan")
+        assert "Hello World" in text
+
+    with patch.object(client.session, "put", return_value=mock_resp):
+        assert client.put_note("Plan", "# New Content") is True
+
+    with patch.object(client.session, "delete", return_value=mock_resp):
+        assert client.delete_note("Plan") is True
+
+
+def test_connections_operations(client):
+    conn_raw = {
+        "id": "CONN-1",
+        "terminalIdA": "TA",
+        "terminalIdB": "TB",
+        "ropePoints": [[0, 0], [10, 10]],
+        "createdAt": "2026-11-05T12:00:00Z",
+    }
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = [conn_raw]
+
+    with patch.object(client.session, "get", return_value=mock_resp):
+        conns = client.get_connections()
+        assert len(conns) == 1
+        assert conns[0].id == "CONN-1"
+
+    post_resp = MagicMock()
+    post_resp.ok = True
+    post_resp.status_code = 201
+    post_resp.json.return_value = conn_raw
+    with patch.object(client.session, "post", return_value=post_resp):
+        created = client.create_connection("TA", "TB", "terminal")
+        assert created.id == "CONN-1"
+
+
+def test_files_and_git_status(client):
+    files_data = [
+        {"name": "src", "path": "src", "isDir": True},
+        {"name": "README.md", "path": "README.md", "isDir": False, "gitStatus": "M"},
+    ]
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = files_data
+
+    with patch.object(client.session, "get", return_value=mock_resp):
+        files = client.list_files(root="/repo", path="")
+        assert len(files) == 2
+        assert files[0]["isDir"] is True
+        assert files[1]["gitStatus"] == "M"
+
+
+def test_sidebar_layout_operations(client):
+    layout = {"schemaVersion": 2, "topLevelItems": ["WS-1"], "groups": []}
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = layout
+
+    with patch.object(client.session, "get", return_value=mock_resp):
+        res = client.get_sidebar_layout()
+        assert res["schemaVersion"] == 2
+
+    with patch.object(client.session, "put", return_value=mock_resp):
+        assert client.save_sidebar_layout(layout) is True
+
+
+def test_error_handling(client):
+    err_401 = MagicMock()
+    err_401.ok = False
+    err_401.status_code = 401
+    err_401.text = "Unauthorized"
+    with patch.object(client.session, "get", return_value=err_401):
+        with pytest.raises(AuthenticationError):
+            client.get_workspaces()
+
+    err_404 = MagicMock()
+    err_404.ok = False
+    err_404.status_code = 404
+    err_404.text = "Not Found"
+    with patch.object(client.session, "get", return_value=err_404):
+        with pytest.raises(NotFoundError):
+            client.get_note("NonExistent")
+
+    err_500 = MagicMock()
+    err_500.ok = False
+    err_500.status_code = 500
+    err_500.text = "Internal Server Error"
+    with patch.object(client.session, "get", return_value=err_500):
+        with pytest.raises(MaestriAPIError):
+            client.get_floors()
+
+
+# ============================================================================
+# RFC 6455 WebSocket Client Tests (PTY Streaming)
+# ============================================================================
+
+def test_pty_websocket_handshake_and_framing():
+    """Starts a minimal test loopback server to verify RFC 6455 WebSocket handshake and framing."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def _srv_worker():
+        conn, _ = srv.accept()
+        # Read handshake
+        req = b""
+        while b"\r\n\r\n" not in req:
+            chunk = conn.recv(1024)
+            if not chunk:
+                break
+            req += chunk
+
+        req_str = req.decode("utf-8")
+        sec_key = ""
+        for line in req_str.splitlines():
+            if line.lower().startswith("sec-websocket-key:"):
+                sec_key = line.split(":", 1)[1].strip()
+
+        accept = base64.b64encode(
+            hashlib.sha1((sec_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("utf-8")).digest()
+        ).decode("ascii")
+
+        resp = (
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
+        ).encode("utf-8")
+        conn.sendall(resp)
+
+        # Server sends initial binary output frame
+        payload = b"hello pty"
+        frame = bytearray([0x82, len(payload)]) + payload
+        conn.sendall(frame)
+
+        # Read client frame (must be masked)
+        client_frame = conn.recv(1024)
+        assert len(client_frame) >= 6
+        assert (client_frame[1] & 0x80) != 0  # mask bit set
+
+        conn.close()
+        srv.close()
+
+    t = threading.Thread(target=_srv_worker, daemon=True)
+    t.start()
+
+    ws = PTYWebSocketClient(
+        host="127.0.0.1",
+        port=port,
+        terminal_id="TERM-TEST-1",
+        auth_token="token-abc",
+        timeout=3.0,
+    )
+    ws.connect()
+    assert ws.is_open is True
+
+    # Receive binary frame from server
+    frame = ws.receive_frame(timeout=2.0)
+    assert frame is not None
+    opcode, data = frame
+    assert opcode == PTYWebSocketClient.OPCODE_BINARY
+    assert data == b"hello pty"
+
+    # Send resize command
+    ws.resize(cols=120, rows=40)
+
+    # Close connection
+    ws.close()
+    assert ws.is_open is False
+    t.join(timeout=2.0)

@@ -1,17 +1,38 @@
 #!/usr/bin/env bash
-# Open Maestri desktop launcher
+# Open Maestri GTK 4 Native Linux Launcher
 set -e
 
-# Resolve repository directory or fallback to standard share directory
 DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-if [ -f "$DIR/open_maestri_app.py" ]; then
-    APP_RUNNER="$DIR/open_maestri_app.py"
-elif [ -f "$DIR/../scripts/open_maestri_app.py" ]; then
-    APP_RUNNER="$DIR/../scripts/open_maestri_app.py"
-elif [ -f "$HOME/.local/share/open-maestri/scripts/open_maestri_app.py" ]; then
-    APP_RUNNER="$HOME/.local/share/open-maestri/scripts/open_maestri_app.py"
-else
-    APP_RUNNER="/home/euller/open-maestri-linux/scripts/open_maestri_app.py"
+REPO_DIR="$(cd "$DIR/.." && pwd)"
+
+# Ensure backend server binary exists
+SERVER_BIN=""
+if [ -f "$REPO_DIR/.build/release/open-maestri-server" ]; then
+    SERVER_BIN="$REPO_DIR/.build/release/open-maestri-server"
+elif [ -f "$REPO_DIR/.build/debug/open-maestri-server" ]; then
+    SERVER_BIN="$REPO_DIR/.build/debug/open-maestri-server"
+elif [ -f "$HOME/.local/bin/open-maestri-server" ]; then
+    SERVER_BIN="$HOME/.local/bin/open-maestri-server"
 fi
 
-exec python3 "$APP_RUNNER" "$@"
+RUN_DIR="$HOME/.open-maestri/run"
+mkdir -p "$RUN_DIR"
+SOCK_PATH="$RUN_DIR/agent.sock"
+
+# Start background server if not currently running
+if [ -n "$SERVER_BIN" ] && [ ! -S "$SOCK_PATH" ]; then
+    echo "🚀 Starting Open Maestri background server..."
+    "$SERVER_BIN" > "$RUN_DIR/server.log" 2>&1 &
+    SERVER_PID=$!
+    # Wait for socket creation
+    for i in $(seq 1 30); do
+        if [ -S "$SOCK_PATH" ]; then
+            break
+        fi
+        sleep 0.1
+    done
+fi
+
+# Launch Native GTK 4 Desktop Application
+export PYTHONPATH="$REPO_DIR/canvas-cairo/src:$REPO_DIR:$PYTHONPATH"
+exec python3 "$REPO_DIR/gtk4-ui/src/app.py" "$@"

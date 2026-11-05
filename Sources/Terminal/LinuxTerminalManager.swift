@@ -102,13 +102,6 @@ final class LinuxTerminalManager: TerminalManaging {
 
     func observeOutput(for terminalId: UUID, _ handler: @escaping (String) -> Void) -> (() -> Void)? {
         guard let proc = processes[terminalId] else { return nil }
-        let previous = proc.onDataReceived
-        proc.onDataReceived = { text in
-            previous?(text)
-            handler(text)
-        }
-        return { [weak proc] in
-            proc?.onDataReceived = previous
-        }
+        return proc.addOutputListener(handler)
     }
 }

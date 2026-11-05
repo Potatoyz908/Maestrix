@@ -134,6 +134,21 @@ public final class InterAgentServer {
 #if os(Linux)
     private var tcpSocketFd: Int32 = -1
     private var tcpSocketSource: DispatchSourceRead?
+    private var ptySessions: [PTYWebSocketSession] = []
+    private let ptySessionsLock = NSLock()
+
+    func registerPTYSession(_ session: PTYWebSocketSession) {
+        ptySessionsLock.lock()
+        ptySessions.append(session)
+        ptySessionsLock.unlock()
+
+        session.onClose = { [weak self, weak session] _ in
+            guard let self, let session else { return }
+            self.ptySessionsLock.lock()
+            self.ptySessions.removeAll { $0 === session }
+            self.ptySessionsLock.unlock()
+        }
+    }
 
     /// Starts the TCP HTTP server on a dynamic port on Linux via POSIX sockets.
     public func start() throws {
@@ -361,6 +376,13 @@ public final class InterAgentServer {
             close(tcpSocketFd)
             tcpSocketFd = -1
         }
+        ptySessionsLock.lock()
+        let sessionsToClose = ptySessions
+        ptySessions.removeAll()
+        ptySessionsLock.unlock()
+        for session in sessionsToClose {
+            session.close()
+        }
 #else
         listener?.cancel()
         listener = nil
@@ -548,6 +570,7 @@ public final class InterAgentServer {
 
                     let acceptKey = WebSocketHandshake.acceptKey(for: clientKey)
                     let session = PTYWebSocketSession(fd: fd, terminalId: terminalId)
+                    self.registerPTYSession(session)
                     session.start(acceptKey: acceptKey)
                     // session 接管 fd 的生命周期，不在此处 close
                     return

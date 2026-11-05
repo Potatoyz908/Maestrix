@@ -198,6 +198,7 @@ final class PTYWebSocketSession: @unchecked Sendable {
     private(set) var isOpen: Bool = true
     private var cancelObserver: (() -> Void)?
     private let lock = NSLock()
+    var onClose: ((PTYWebSocketSession) -> Void)?
 
     init(fd: Int32, terminalId: UUID) {
         self.fd = fd
@@ -233,7 +234,7 @@ final class PTYWebSocketSession: @unchecked Sendable {
             return
         }
 
-        // 2. 回放已有 bufferText 快照并注册 PTY 实时输出监听器
+        // 2. 在 MainActor 调度实时监听与历史 buffer 回放
         Task { @MainActor [weak self] in
             guard let self, self.isOpen else { return }
             if let initialText = LinuxTerminalManager.shared.bufferText(for: self.terminalId),
@@ -249,9 +250,9 @@ final class PTYWebSocketSession: @unchecked Sendable {
             }
         }
 
-        // 3. 启动客户端读取事件循环 (接收按键与 resize 控制帧)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.readLoop()
+        // 3. 启动客户端读取事件循环 (接收按键与 resize 控制帧，强引用 self 保证连接期间存活)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            self.readLoop()
         }
     }
 
@@ -271,7 +272,7 @@ final class PTYWebSocketSession: @unchecked Sendable {
                 case .binary:
                     // 原始输入直接写入 PTY masterFd
                     let data = frame.payload
-                    Task { @MainActor in
+                    DispatchQueue.main.async {
                         LinuxTerminalManager.shared.writeRaw(to: self.terminalId, data: data)
                     }
                 case .text:
@@ -281,13 +282,13 @@ final class PTYWebSocketSession: @unchecked Sendable {
                         if type == "resize" {
                             let cols = json["cols"] as? Int ?? 80
                             let rows = json["rows"] as? Int ?? 24
-                            Task { @MainActor in
+                            DispatchQueue.main.async {
                                 LinuxTerminalManager.shared.resize(terminalId: self.terminalId, cols: cols, rows: rows)
                             }
                         }
                     } else if let text = String(data: frame.payload, encoding: .utf8) {
                         // 文本格式按字符串写给终端
-                        Task { @MainActor in
+                        DispatchQueue.main.async {
                             LinuxTerminalManager.shared.write(to: self.terminalId, text: text)
                         }
                     }
@@ -329,5 +330,9 @@ final class PTYWebSocketSession: @unchecked Sendable {
         #elseif canImport(Darwin)
         _ = Darwin.close(fd)
         #endif
+
+        let notifyClose = self.onClose
+        self.onClose = nil
+        notifyClose?(self)
     }
 }
