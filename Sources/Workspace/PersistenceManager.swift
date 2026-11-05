@@ -49,7 +49,19 @@ public final class PersistenceManager {
 
     let decoder: JSONDecoder = {
         let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
+        dec.dateDecodingStrategy = .custom { d in
+            let container = try d.singleValueContainer()
+            let str = try container.decode(String.self)
+            let formatter = ISO8601DateFormatter()
+            if let date = formatter.date(from: str) {
+                return date
+            }
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: str) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO8601 date string: \(str)")
+        }
         return dec
     }()
 
