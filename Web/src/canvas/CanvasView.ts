@@ -2,8 +2,11 @@ import { Viewport } from "./viewport";
 import { RopeSimulation, computeStaticCatenary } from "../geometry/rope";
 import { snap, type GuideLine } from "../geometry/tileSnapping";
 import { intersects, type Point, type Rect } from "../geometry/types";
+import type { PtyTransport } from "../net/ptySocket";
+import { NodeOverlay } from "./NodeOverlay";
+import type { TerminalNodeHost } from "../terminal/TerminalNode";
 
-export interface NodeModel { id: string; frame: Rect; zIndex: number; title?: string }
+export interface NodeModel { id: string; frame: Rect; zIndex: number; title?: string; kind?: "terminal" }
 export interface ConnectionModel { id: string; a: string; b: string }
 
 /** 2D-canvas renderer: grid, nodes (culled), ropes, snap guides; pan (drag) + zoom (wheel). */
@@ -18,9 +21,28 @@ export class CanvasView {
   private dragging: { id: string; grab: Point } | null = null;
   private panning: Point | null = null;
   private raf = 0;
+  private selected = new Set<string>();
+  private overlay: NodeOverlay;
+  /** Called after a node is closed from its titlebar (send `closeNode` to the core here). */
+  onNodeClosed?: (id: string) => void;
+  /** Called when a move/resize gesture ends (persist the frame via the core here). */
+  onFrameCommit?: (id: string, frame: Rect) => void;
+  /** Creates the PTY transport for a terminal node (PtySocket, or FakePty offline). */
+  ptyFactory: (id: string) => PtyTransport = () => { throw new Error("ptyFactory not set"); };
 
   constructor(private host: HTMLElement) {
+    host.style.position = "relative";
     host.appendChild(this.canvas);
+    const self = this;
+    const nodeHost: TerminalNodeHost = {
+      viewport: this.viewport,
+      onFrameChange: (id, frame, kind) => self.applyFrame(id, frame, kind === "move"),
+      onGestureEnd: (id) => { self.guides = []; const n = self.nodes.find((n) => n.id === id); if (n) self.onFrameCommit?.(id, n.frame); },
+      onClose: (id) => self.closeNode(id),
+      onFocus: (id) => self.select(id),
+      onZoomWheel: (e) => self.viewport.zoomAt(self.pt(e), Math.exp(-e.deltaY * 0.01)),
+    };
+    this.overlay = new NodeOverlay(host, nodeHost);
     this.ctx = this.canvas.getContext("2d")!;
     new ResizeObserver(() => this.resize()).observe(host);
     this.canvas.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
@@ -34,6 +56,11 @@ export class CanvasView {
   setGraph(nodes: NodeModel[], connections: ConnectionModel[]): void {
     this.nodes = nodes;
     this.connections = connections;
+    for (const n of nodes) {
+      if (n.kind === "terminal" && !this.overlay.has(n.id)) {
+        this.overlay.add(n, this.ptyFactory(n.id), () => this.nodes.find((m) => m.id === n.id)!.frame);
+      }
+    }
     for (const c of connections) {
       const [a, b] = this.anchors(c);
       if (a && b && !this.ropes.pointsFor(c.id)) this.ropes.addRope(c.id, a, b);
@@ -57,7 +84,7 @@ export class CanvasView {
 
   /** Z-ordered hit test: highest zIndex first (descending), like the Swift dual-cache. */
   hitTest(canvasPt: Point): NodeModel | undefined {
-    return [...this.nodes].sort((a, b) => b.zIndex - a.zIndex)
+    return [...this.nodes].filter((n) => n.kind !== "terminal").sort((a, b) => b.zIndex - a.zIndex)
       .find((n) => canvasPt.x >= n.frame.x && canvasPt.x <= n.frame.x + n.frame.w && canvasPt.y >= n.frame.y && canvasPt.y <= n.frame.y + n.frame.h);
   }
 
@@ -88,17 +115,44 @@ export class CanvasView {
     } else if (this.dragging) {
       const n = this.nodes.find((n) => n.id === this.dragging!.id)!;
       const c = this.viewport.toCanvas(s);
-      const moved: Rect = { ...n.frame, x: c.x - this.dragging.grab.x, y: c.y - this.dragging.grab.y };
-      const res = snap(moved, this.nodes.filter((o) => o.id !== n.id).map((o) => o.frame));
-      n.frame = { ...moved, x: res.snappedOrigin.x, y: res.snappedOrigin.y };
+      this.applyFrame(n.id, { ...n.frame, x: c.x - this.dragging.grab.x, y: c.y - this.dragging.grab.y }, true);
+    }
+  }
+
+  /** Single place where a node's frame changes (drag, header-drag, resize): snap, then re-anchor ropes. */
+  private applyFrame(id: string, proposed: Rect, snapMove: boolean): void {
+    const n = this.nodes.find((n) => n.id === id);
+    if (!n) return;
+    if (snapMove) {
+      const res = snap(proposed, this.nodes.filter((o) => o.id !== id).map((o) => o.frame));
+      n.frame = { ...proposed, x: res.snappedOrigin.x, y: res.snappedOrigin.y };
       this.guides = res.guidelines;
-      for (const conn of this.connections) {
-        if (conn.a === n.id || conn.b === n.id) {
-          const [a, b] = this.anchors(conn);
-          if (a && b) this.ropes.updateAnchors(conn.id, a, b);
-        }
+    } else {
+      n.frame = proposed; // resize already snapped to the 16-unit grid
+      this.guides = [];
+    }
+    for (const conn of this.connections) {
+      if (conn.a === id || conn.b === id) {
+        const [a, b] = this.anchors(conn);
+        if (a && b) this.ropes.updateAnchors(conn.id, a, b);
       }
     }
+  }
+
+  private select(id: string): void {
+    this.selected = new Set([id]);
+    const top = Math.max(0, ...this.nodes.map((n) => n.zIndex));
+    const n = this.nodes.find((n) => n.id === id);
+    if (n && n.zIndex < top) n.zIndex = top + 1; // raise to front
+  }
+
+  closeNode(id: string): void {
+    this.overlay.remove(id);
+    this.nodes = this.nodes.filter((n) => n.id !== id);
+    for (const c of this.connections.filter((c) => c.a === id || c.b === id)) this.ropes.removeRope(c.id);
+    this.connections = this.connections.filter((c) => c.a !== id && c.b !== id);
+    this.selected.delete(id);
+    this.onNodeClosed?.(id);
   }
 
   private onUp(): void { this.dragging = null; this.panning = null; this.guides = []; }
@@ -106,10 +160,11 @@ export class CanvasView {
   private loop = (): void => {
     this.ropes.tick();
     this.draw();
+    this.overlay.sync(this.nodes.filter((n) => n.kind === "terminal"), this.viewport.visibleRect(this.host.clientWidth, this.host.clientHeight), this.selected);
     this.raf = requestAnimationFrame(this.loop);
   };
 
-  destroy(): void { cancelAnimationFrame(this.raf); }
+  destroy(): void { cancelAnimationFrame(this.raf); this.overlay.destroy(); }
 
   private draw(): void {
     const { ctx, canvas, viewport: vp } = this;
@@ -141,7 +196,7 @@ export class CanvasView {
 
     // Nodes: viewport culling (+200 margin) and ascending z-order.
     for (const n of [...this.nodes].sort((a, b) => a.zIndex - b.zIndex)) {
-      if (!intersects(view, n.frame)) continue;
+      if (n.kind === "terminal" || !intersects(view, n.frame)) continue; // terminals are DOM
       const f = n.frame;
       ctx.fillStyle = "#1e1e1e"; ctx.fillRect(f.x, f.y, f.w, f.h);
       ctx.strokeStyle = "#555"; ctx.lineWidth = 1; ctx.strokeRect(f.x, f.y, f.w, f.h);

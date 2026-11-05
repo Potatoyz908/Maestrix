@@ -1,0 +1,19 @@
+.overlay { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.tnode { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: auto; display: flex; flex-direction: column;
+  background: #1e1e1e; border: 1px solid #555; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); will-change: transform; }
+.tnode.selected { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6, 0 4px 16px rgba(0,0,0,.25); }
+.tnode-header { flex: 0 0 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #2b2b2b; color: #ddd;
+  border-radius: 7px 7px 0 0; cursor: grab; user-select: none; touch-action: none; }
+.tnode-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tnode-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.tnode-status { font-size: 11px; color: #9aa; }
+.tnode-close { all: unset; cursor: pointer; width: 20px; height: 20px; text-align: center; line-height: 20px; border-radius: 4px; color: #bbb; }
+.tnode-close:hover { background: #f85149; color: #fff; }
+.tnode-body { flex: 1; min-height: 0; padding: 4px; overflow: hidden; }
+.tnode-handle { position: absolute; touch-action: none; z-index: 2; }
+.h-left, .h-right { top: 8px; bottom: 8px; width: 8px; }
+.h-top, .h-bottom { left: 8px; right: 8px; height: 8px; }
+.h-left { left: -4px; } .h-right { right: -4px; } .h-top { top: -4px; } .h-bottom { bottom: -4px; }
+.h-topLeft, .h-topRight, .h-bottomLeft, .h-bottomRight { width: 14px; height: 14px; }
+.h-topLeft { left: -6px; top: -6px; } .h-topRight { right: -6px; top: -6px; }
+.h-bottomLeft { left: -6px; bottom: -6px; } .h-bottomRight { right: -6px; bottom: -6px; }

@@ -632,8 +632,14 @@ public final class InterAgentServer {
         data: Data,
         httpVersion: String = "1.1"
     ) -> Data {
-        let statusText = status == 200 ? "OK" : (status == 400 ? "Bad Request" : (status == 404 ? "Not Found" : "Internal Server Error"))
-        let header = "HTTP/\(httpVersion) \(status) \(statusText)\r\nContent-Type: \(contentType)\r\nContent-Length: \(data.count)\r\nConnection: close\r\n\r\n"
+        let statusText = status == 200 ? "OK" : (status == 204 ? "No Content" : (status == 400 ? "Bad Request" : (status == 404 ? "Not Found" : "Internal Server Error")))
+        let header = "HTTP/\(httpVersion) \(status) \(statusText)\r\n" +
+                     "Content-Type: \(contentType)\r\n" +
+                     "Content-Length: \(data.count)\r\n" +
+                     "Access-Control-Allow-Origin: *\r\n" +
+                     "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                     "Access-Control-Allow-Headers: Content-Type, Authorization, X-Terminal-ID\r\n" +
+                     "Connection: close\r\n\r\n"
         return (header.data(using: .utf8) ?? Data()) + data
     }
 }
