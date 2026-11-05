@@ -4,6 +4,8 @@ import { CANVAS_INITIAL_ORIGIN } from "./geometry/constants";
 import { HttpServices, MemoryServices } from "./net/api";
 import { FakePty } from "./net/fakePty";
 import { PtySocket } from "./net/ptySocket";
+import { Sidebar } from "./sidebar/Sidebar";
+import { askText } from "./ui/dialog";
 import { Toolbar } from "./ui/Toolbar";
 
 const live = new URLSearchParams(location.search).has("port"); // ?port= => talk to the core; else offline demo
@@ -17,8 +19,21 @@ view.onNodeClosed = (id) => console.info("closeNode", id);
 view.onContentChange = (id, c) => console.info("updateContent", id, c);
 view.onRopeSettled = (id, pts) => console.debug("persistRope", id, pts.length);
 
-const toolbar = new Toolbar(host, { onAddNote: () => { toolbar.setBusy(true); void view.addNote().finally(() => toolbar.setBusy(false)); } });
+const busy = (p: Promise<void>) => { toolbar.setBusy(true); void p.finally(() => toolbar.setBusy(false)); };
+const toolbar = new Toolbar(host, {
+  onAddNote: () => busy(view.addNote()),
+  onAddPortal: () => busy(view.addPortal()),
+  onAddFileTree: () => {
+    void askText(host, "Folder to explore", "/absolute/path/to/folder").then((root) => { if (root) busy(view.addFileTree(root)); });
+  },
+});
 view.onError = (m) => toolbar.showError(m);
+
+const sidebar = new Sidebar(host, view.services.sidebar, {
+  // TODO: switching workspaces needs the WorkspaceDocument -> graph loader (GET /api/workspace?id=); not wired yet.
+  onOpenWorkspace: (id) => { sidebar.setActiveWorkspace(id); toolbar.showError("Switching workspaces is not wired up yet"); },
+  onError: (m) => toolbar.showError(m),
+});
 
 const o = CANVAS_INITIAL_ORIGIN;
 view.setGraph(

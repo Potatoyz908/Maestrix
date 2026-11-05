@@ -4,7 +4,8 @@ import { snap, type GuideLine } from "../geometry/tileSnapping";
 import { frameFromRect, intersects, type Point, type Rect } from "../geometry/types";
 import { canConnect, facingSides, pinPoint, type PinSide } from "../geometry/pins";
 import { CANVAS_GRID_SPACING } from "../geometry/constants";
-import { linkFor, type NodeContent, type StickyNoteContent } from "../net/protocol";
+import { baseName } from "../filetree/tree";
+import { linkFor, type FileTreeContent, type NodeContent, type NodeType, type PortalContent, type StickyNoteContent } from "../net/protocol";
 import { MemoryServices, type Services } from "../net/api";
 import type { PtyTransport } from "../net/ptySocket";
 import { NodeOverlay } from "./NodeOverlay";
@@ -12,11 +13,16 @@ import type { DomNode, DomNodeHost } from "./DomNode";
 import { DEFAULT_NOTE, isDomKind, modelFromDTO, type NodeModel } from "./model";
 import { TerminalNode } from "../terminal/TerminalNode";
 import { NoteNode } from "../note/NoteNode";
+import { PortalNode } from "../portal/PortalNode";
+import { newPortalContent } from "../portal/url";
+import { FileTreeNode } from "../filetree/FileTreeNode";
 
 export type { NodeModel } from "./model";
 export interface ConnectionModel { id: string; a: string; b: string; sideA?: PinSide; sideB?: PinSide; pending?: boolean }
 
 const NOTE_SIZE = { w: 320, h: 240 };
+const PORTAL_SIZE = { w: 640, h: 440 };
+const FILETREE_SIZE = { w: 300, h: 400 };
 
 /** 2D-canvas renderer (grid, ropes, plain nodes, guides) + DOM overlay for terminals/notes. */
 export class CanvasView {
@@ -98,26 +104,51 @@ export class CanvasView {
       return new NoteNode(n.id, n.note, this.services.notes, this.nodeHost, frame,
         (meta: StickyNoteContent) => { n.note = meta; this.onContentChange?.(n.id, { stickyNote: { _0: meta } }); });
     }
+    if (n.kind === "portal" && n.portal) {
+      return new PortalNode(n.id, n.portal, this.nodeHost, frame,
+        (c: PortalContent) => { n.portal = c; this.onContentChange?.(n.id, { portal: { _0: c } }); });
+    }
+    if (n.kind === "fileTree" && n.fileTree) return new FileTreeNode(n.id, n.fileTree, this.services.files, this.services.git, this.nodeHost, frame);
     return null;
   }
 
-  /** ➕ Note: the server creates the node (POST /api/nodes); we place it at the viewport center. */
-  async addNote(): Promise<void> {
+  /** Server creates every node (POST /api/nodes); we only choose where it appears (viewport center). */
+  private async createNode(nodeType: NodeType, size: { w: number; h: number }, content: NodeContent, what: string): Promise<void> {
     const g = CANVAS_GRID_SPACING;
     const c = this.viewport.toCanvas({ x: this.host.clientWidth / 2, y: this.host.clientHeight / 2 });
-    const frame: Rect = { x: Math.round((c.x - NOTE_SIZE.w / 2) / g) * g, y: Math.round((c.y - NOTE_SIZE.h / 2) / g) * g, ...NOTE_SIZE };
+    const frame: Rect = { x: Math.round((c.x - size.w / 2) / g) * g, y: Math.round((c.y - size.h / 2) / g) * g, ...size };
     while (this.nodes.some((n) => n.frame.x === frame.x && n.frame.y === frame.y)) { frame.x += 2 * g; frame.y += 2 * g; } // don't stack exactly
-    const fileName = this.nextNoteFileName();
     try {
-      const dto = await this.services.nodes.create({ nodeType: "stickyNote", frame: frameFromRect(frame), content: { stickyNote: { _0: { ...DEFAULT_NOTE, fileName } } } });
+      const dto = await this.services.nodes.create({ nodeType, frame: frameFromRect(frame), content });
       const m = modelFromDTO(dto);
       m.zIndex = Math.max(0, ...this.nodes.map((n) => n.zIndex)) + 1;
       this.addNodeModel(m);
       this.select(m.id);
       this.overlay.focus(m.id);
     } catch (err) {
-      this.fail(`Could not create note: ${(err as Error).message}`);
+      this.fail(`Could not create ${what}: ${(err as Error).message}`);
     }
+  }
+
+  async addNote(): Promise<void> {
+    const fileName = this.nextNoteFileName();
+    await this.createNode("stickyNote", NOTE_SIZE, { stickyNote: { _0: { ...DEFAULT_NOTE, fileName } } }, "note");
+  }
+
+  async addPortal(): Promise<void> {
+    const name = this.nextTitle("Portal", "portal");
+    await this.createNode("portal", PORTAL_SIZE, { portal: { _0: newPortalContent(name) } }, "portal");
+  }
+
+  /** `rootPath` is absolute; the core validates it against the allowed roots. */
+  async addFileTree(rootPath: string): Promise<void> {
+    const content: FileTreeContent = { name: baseName(rootPath) || rootPath, rootPath, viewMode: "list" };
+    await this.createNode("fileTree", FILETREE_SIZE, { fileTree: { _0: content } }, "file tree");
+  }
+
+  private nextTitle(prefix: string, kind: NodeModel["kind"]): string {
+    const used = new Set(this.nodes.filter((n) => n.kind === kind).map((n) => n.title));
+    for (let i = 1; ; i++) if (!used.has(`${prefix} ${i}`)) return `${prefix} ${i}`;
   }
 
   private nextNoteFileName(): string {

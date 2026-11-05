@@ -324,6 +324,61 @@ final class LinuxPtyAndServerTests: XCTestCase {
         }
     }
 
+    func testPhase4Endpoints() async throws {
+        try await MainActor.run {
+            let server = InterAgentServer.shared
+            try server.start()
+            defer { server.stop() }
+
+            let auth = "Authorization: Bearer \(server.authToken)\r\n"
+            let port = server.port
+
+            // 1. GET /api/sidebar-layout
+            let getLayoutReq = "GET /api/sidebar-layout HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+            let getLayoutResp = try self.tcpExchange(port: port, request: getLayoutReq)
+            XCTAssertTrue(getLayoutResp.hasPrefix("HTTP/1.1 200 OK"))
+            XCTAssertTrue(getLayoutResp.contains("\"schemaVersion\":2") || getLayoutResp.contains("\"schemaVersion\" : 2"))
+
+            // 2. PUT /api/sidebar-layout
+            let putLayoutBody = "{\"schemaVersion\":2,\"topLevelItems\":[],\"groups\":[{\"id\":\"\(UUID().uuidString)\",\"name\":\"TestGroup\",\"isCollapsed\":false,\"items\":[]}]}"
+            let putLayoutReq = "PUT /api/sidebar-layout HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(putLayoutBody.utf8.count)\r\nConnection: close\r\n\r\n\(putLayoutBody)"
+            let putLayoutResp = try self.tcpExchange(port: port, request: putLayoutReq)
+            XCTAssertTrue(putLayoutResp.hasPrefix("HTTP/1.1 200 OK"))
+
+            // 3. GET /api/workspaces
+            let getWorkspacesReq = "GET /api/workspaces HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+            let getWorkspacesResp = try self.tcpExchange(port: port, request: getWorkspacesReq)
+            XCTAssertTrue(getWorkspacesResp.hasPrefix("HTTP/1.1 200 OK"))
+
+            // 4. POST /api/workspaces
+            let postWorkspaceBody = "{\"name\":\"Linux Parity Test Workspace\",\"workingDirectory\":\"/tmp\"}"
+            let postWorkspaceReq = "POST /api/workspaces HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(postWorkspaceBody.utf8.count)\r\nConnection: close\r\n\r\n\(postWorkspaceBody)"
+            let postWorkspaceResp = try self.tcpExchange(port: port, request: postWorkspaceReq)
+            XCTAssertTrue(postWorkspaceResp.hasPrefix("HTTP/1.1 201 Created"))
+            XCTAssertTrue(postWorkspaceResp.contains("Linux Parity Test Workspace"))
+
+            // 5. GET /api/files
+            let getFilesReq = "GET /api/files?root=\(FileManager.default.currentDirectoryPath)&path=Sources HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+            let getFilesResp = try self.tcpExchange(port: port, request: getFilesReq)
+            XCTAssertTrue(getFilesResp.hasPrefix("HTTP/1.1 200 OK"))
+            XCTAssertTrue(getFilesResp.contains("InterAgent"))
+
+            // 6. GET /api/git/status
+            let getGitReq = "GET /api/git/status?root=\(FileManager.default.currentDirectoryPath) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+            let getGitResp = try self.tcpExchange(port: port, request: getGitReq)
+            XCTAssertTrue(getGitResp.hasPrefix("HTTP/1.1 200 OK"))
+
+            // 7. POST /api/nodes (terminal, portal, stickyNote, fileTree)
+            for nodeType in ["terminal", "stickyNote", "portal", "fileTree"] {
+                let postNodeBody = "{\"nodeType\":\"\(nodeType)\",\"frame\":[[50,50],[400,300]]}"
+                let postNodeReq = "POST /api/nodes HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(postNodeBody.utf8.count)\r\nConnection: close\r\n\r\n\(postNodeBody)"
+                let postNodeResp = try self.tcpExchange(port: port, request: postNodeReq)
+                XCTAssertTrue(postNodeResp.hasPrefix("HTTP/1.1 201 Created"), "POST /api/nodes for \(nodeType) should return 201 Created")
+                XCTAssertTrue(postNodeResp.contains("\"\(nodeType)\"") || postNodeResp.contains("\"id\""), "POST /api/nodes for \(nodeType) should serialize node")
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func tcpExchange(port: UInt16, request: String) throws -> String {

@@ -1138,6 +1138,337 @@ public final class InterAgentServer {
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp, allowedOrigin: allowedOrigin)
         }
 
+        // 12. GET /api/sidebar-layout
+        if method == "GET" && cleanPath == "/api/sidebar-layout" {
+            let pm = PersistenceManager.shared
+            if let layout = try? pm.loadSidebarLayout() {
+                if let data = try? JSONEncoder().encode(layout) {
+                    return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+                }
+            }
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"schemaVersion\":2,\"topLevelItems\":[],\"groups\":[]}", allowedOrigin: allowedOrigin)
+        }
+
+        // 13. PUT /api/sidebar-layout
+        if method == "PUT" && cleanPath == "/api/sidebar-layout" {
+            guard let layout = try? JSONDecoder().decode(SidebarLayout.self, from: body) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid sidebar layout JSON", allowedOrigin: allowedOrigin)
+            }
+            guard layout.schemaVersion == 2 else {
+                return Self.buildHTTPResponse(status: 400, body: "error: schemaVersion must be 2", allowedOrigin: allowedOrigin)
+            }
+            do {
+                try PersistenceManager.shared.saveSidebarLayout(layout)
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save sidebar layout: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
+        }
+
+        // 14. GET /api/workspaces
+        if method == "GET" && cleanPath == "/api/workspaces" {
+            let pm = PersistenceManager.shared
+            let manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime]
+            var list: [[String: Any]] = []
+            for w in manifest.workspaces {
+                list.append([
+                    "id": w.id.uuidString,
+                    "name": w.name,
+                    "workingDirectory": w.workingDirectory,
+                    "icon": w.icon,
+                    "color": w.color,
+                    "isPinned": w.isPinned,
+                    "locationType": w.locationType,
+                    "createdAt": isoFormatter.string(from: Date())
+                ])
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: list, options: [.prettyPrinted]) {
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "[]", allowedOrigin: allowedOrigin)
+        }
+
+        // 15. POST /api/workspaces
+        if method == "POST" && cleanPath == "/api/workspaces" {
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+                  let name = json["name"] as? String, !name.isEmpty else {
+                return Self.buildHTTPResponse(status: 400, body: "error: missing workspace name", allowedOrigin: allowedOrigin)
+            }
+            let workingDirectory = (json["workingDirectory"] as? String) ?? FileManager.default.currentDirectoryPath
+            let id = (json["id"] as? String).flatMap(UUID.init) ?? UUID()
+            let color = (json["color"] as? String) ?? "blue"
+            let icon = (json["icon"] as? String) ?? "folder"
+            let isPinned = (json["isPinned"] as? Bool) ?? false
+            let locationType = (json["locationType"] as? String) ?? "local"
+            var entry = WorkspaceEntry(id: id, name: name, workingDirectory: workingDirectory, icon: icon, color: color)
+            entry.isPinned = isPinned
+            entry.locationType = locationType
+
+            let pm = PersistenceManager.shared
+            var manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+            manifest.workspaces.append(entry)
+            try? pm.saveManifest(manifest)
+
+            let payload = WorkspacePayload(
+                id: id,
+                name: name,
+                workingDirectory: workingDirectory
+            )
+            let initialDoc = WorkspaceDocument(payload: payload)
+            try? pm.ensureWorkspaceDirectoryExists(id: id)
+            try? pm.saveSync(initialDoc, to: pm.workspaceURL(id: id))
+
+            var appState = (try? pm.loadAppState()) ?? AppStateData()
+            appState.activeWorkspaceId = id
+            try? pm.saveAppState(appState)
+
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime]
+            let respObj: [String: Any] = [
+                "id": id.uuidString,
+                "name": name,
+                "workingDirectory": workingDirectory,
+                "icon": icon,
+                "color": color,
+                "isPinned": isPinned,
+                "locationType": locationType,
+                "createdAt": isoFormatter.string(from: Date())
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: respObj) {
+                return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", body: "{\"id\":\"\(id.uuidString)\"}", allowedOrigin: allowedOrigin)
+        }
+
+        // 16. GET /api/floors
+        if method == "GET" && cleanPath == "/api/floors" {
+            let pm = PersistenceManager.shared
+            var targetWorkspaceId: UUID? = nil
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" {
+                        targetWorkspaceId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+            if targetWorkspaceId == nil {
+                let appState = try? pm.loadAppState()
+                targetWorkspaceId = appState?.activeWorkspaceId
+            }
+
+            var floorsList: [[String: Any]] = []
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime]
+            if let wsId = targetWorkspaceId, let doc = try? pm.loadWorkspace(id: wsId) {
+                for f in doc.payload.floors {
+                    floorsList.append([
+                        "id": f.id.uuidString,
+                        "name": f.name,
+                        "branchName": f.branchName,
+                        "worktreePath": f.worktreePath,
+                        "createdAt": isoFormatter.string(from: f.createdAt)
+                    ])
+                }
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: floorsList) {
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "[]", allowedOrigin: allowedOrigin)
+        }
+
+        // 17. GET /api/agents
+        if method == "GET" && cleanPath == "/api/agents" {
+            let agentList: [[String: Any]] = await MainActor.run {
+                #if os(Linux)
+                let tm = LinuxTerminalManager.shared
+                return tm.terminals.values.map { session in
+                    [
+                        "id": session.id.uuidString,
+                        "name": session.displayName ?? session.roleName ?? "Terminal",
+                        "kind": session.agentType
+                    ]
+                }
+                #else
+                return []
+                #endif
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: agentList) {
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "[]", allowedOrigin: allowedOrigin)
+        }
+
+        // 18. GET /api/files
+        if method == "GET" && cleanPath == "/api/files" {
+            var root = ""
+            var relPath = ""
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 {
+                        let key = kv[0]
+                        let val = kv[1].removingPercentEncoding ?? kv[1]
+                        if key == "root" { root = val }
+                        else if key == "path" { relPath = val }
+                    }
+                }
+            }
+            if root.isEmpty { root = FileManager.default.currentDirectoryPath }
+            guard !relPath.contains("..") else {
+                return Self.buildHTTPResponse(status: 400, body: "error: path traversal detected", allowedOrigin: allowedOrigin)
+            }
+            let targetDir = relPath.isEmpty ? root : "\(root)/\(relPath)"
+            let fm = FileManager.default
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: targetDir, isDirectory: &isDir), isDir.boolValue else {
+                return Self.buildHTTPResponse(status: 404, body: "error: directory not found", allowedOrigin: allowedOrigin)
+            }
+            guard let contents = try? fm.contentsOfDirectory(atPath: targetDir) else {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to read directory", allowedOrigin: allowedOrigin)
+            }
+            var items: [[String: Any]] = []
+            for item in contents.sorted() {
+                if item.hasPrefix(".") { continue }
+                let fullPath = "\(targetDir)/\(item)"
+                var subDir: ObjCBool = false
+                _ = fm.fileExists(atPath: fullPath, isDirectory: &subDir)
+                let itemRelPath = relPath.isEmpty ? item : "\(relPath)/\(item)"
+                items.append([
+                    "name": item,
+                    "path": itemRelPath,
+                    "isDir": subDir.boolValue
+                ])
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: items) {
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "[]", allowedOrigin: allowedOrigin)
+        }
+
+        // 19. GET /api/git/status
+        if method == "GET" && cleanPath == "/api/git/status" {
+            var root = ""
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "root" {
+                        root = kv[1].removingPercentEncoding ?? kv[1]
+                    }
+                }
+            }
+            if root.isEmpty { root = FileManager.default.currentDirectoryPath }
+            let provider = GitStatusProvider(workingDirectory: root)
+            var changes: [[String: Any]] = []
+            if let entries = try? provider.status() {
+                for entry in entries {
+                    let badge: String
+                    switch entry.status {
+                    case .modified: badge = "M"
+                    case .added:    badge = "A"
+                    case .deleted:  badge = "D"
+                    case .renamed:  badge = "R"
+                    case .untracked: badge = "?"
+                    default: continue
+                    }
+                    changes.append(["path": entry.path, "status": badge])
+                }
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: changes) {
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "[]", allowedOrigin: allowedOrigin)
+        }
+
+        // 20. POST /api/nodes
+        if method == "POST" && cleanPath == "/api/nodes" {
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+                  let nodeType = json["nodeType"] as? String else {
+                return Self.buildHTTPResponse(status: 400, body: "error: missing nodeType", allowedOrigin: allowedOrigin)
+            }
+            let pm = PersistenceManager.shared
+            var targetWorkspaceId: UUID? = nil
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" {
+                        targetWorkspaceId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+            if targetWorkspaceId == nil {
+                let appState = try? pm.loadAppState()
+                targetWorkspaceId = appState?.activeWorkspaceId ?? (try? pm.loadManifest())?.workspaces.first?.id
+            }
+
+            var wsDoc: WorkspaceDocument? = nil
+            var resolvedWsId: UUID? = targetWorkspaceId
+            if let wsId = targetWorkspaceId, let loaded = try? pm.loadWorkspace(id: wsId) {
+                wsDoc = loaded
+            } else {
+                let defaultPayload = WorkspacePayload(name: "Default", workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+                let defaultDoc = WorkspaceDocument(payload: defaultPayload)
+                try? pm.ensureWorkspaceDirectoryExists(id: defaultPayload.id)
+                try? pm.saveSync(defaultDoc, to: pm.workspaceURL(id: defaultPayload.id))
+                var appState = (try? pm.loadAppState()) ?? AppStateData()
+                appState.activeWorkspaceId = defaultPayload.id
+                try? pm.saveAppState(appState)
+                wsDoc = defaultDoc
+                resolvedWsId = defaultPayload.id
+            }
+
+            guard let wsId = resolvedWsId, var doc = wsDoc else {
+                return Self.buildHTTPResponse(status: 404, body: "error: active workspace not found", allowedOrigin: allowedOrigin)
+            }
+
+            let nodeId = UUID()
+            let frameArray = (json["frame"] as? [[Double]]) ?? [[100, 100], [500, 350]]
+            let frameX = frameArray.count > 0 && frameArray[0].count > 0 ? frameArray[0][0] : 100
+            let frameY = frameArray.count > 0 && frameArray[0].count > 1 ? frameArray[0][1] : 100
+            let frameW = frameArray.count > 1 && frameArray[1].count > 0 ? frameArray[1][0] : 500
+            let frameH = frameArray.count > 1 && frameArray[1].count > 1 ? frameArray[1][1] : 350
+            let frame = CGRect(x: frameX, y: frameY, width: frameW, height: frameH)
+
+            let content: NodeContent
+            switch nodeType {
+            case "terminal":
+                content = .terminal(TerminalContent(
+                    name: "Terminal",
+                    agentType: "generic_shell",
+                    command: "bash",
+                    workingDirectory: doc.payload.workingDirectory
+                ))
+            case "stickyNote":
+                let noteName = "Note-\(nodeId.uuidString.prefix(6))"
+                content = .stickyNote(StickyNoteContent(name: noteName))
+            case "portal":
+                content = .portal(PortalContent(name: "Portal", url: "https://google.com"))
+            case "fileTree":
+                content = .fileTree(FileTreeContent(name: "Files", rootPath: doc.payload.workingDirectory))
+            default:
+                content = .terminal(TerminalContent(
+                    name: "Terminal",
+                    agentType: "generic_shell",
+                    command: "bash",
+                    workingDirectory: doc.payload.workingDirectory
+                ))
+            }
+
+            let maxZ = doc.payload.nodes.map(\.zIndex).max() ?? 0
+            let node = CanvasNode(id: nodeId, frame: frame, content: content, zIndex: maxZ + 1)
+            doc.payload.nodes.append(node)
+            doc.payload.lastModifiedAt = Date()
+            let fileURL = pm.workspaceURL(id: wsId)
+            try? pm.saveSync(doc, to: fileURL)
+
+            if let encoded = try? pm.encoder.encode(node) {
+                return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: encoded, allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", body: "{\"id\":\"\(nodeId.uuidString)\"}", allowedOrigin: allowedOrigin)
+        }
+
         return Self.buildHTTPResponse(status: 404, body: "error: not found", allowedOrigin: allowedOrigin)
     }
 
@@ -1175,6 +1506,7 @@ public final class InterAgentServer {
         let statusText: String
         switch status {
         case 200: statusText = "OK"
+        case 201: statusText = "Created"
         case 204: statusText = "No Content"
         case 400: statusText = "Bad Request"
         case 401: statusText = "Unauthorized"

@@ -142,7 +142,8 @@ describe("notes API", () => {
     const api = new HttpServices(async (_u, init) => { body = String(init?.body); return new Response(JSON.stringify({ id: "X" }), { status: 200 }); });
     const r = await api.connections.create({ kind: "note", terminalId: "T", noteNodeId: "N" });
     expect(r.id).toBe("X");
-    expect(JSON.parse(body)).toEqual({ kind: "note", terminalId: "T", noteNodeId: "N" });
+    // a/b are what today's server reads (it infers the type from the nodes); kind + ids stay for typed servers
+    expect(JSON.parse(body)).toEqual({ kind: "note", terminalId: "T", noteNodeId: "N", a: "T", b: "N" });
   });
   it("offline MemoryServices round-trips notes and creates uppercase ids with fraction-less dates", async () => {
     const m = new MemoryServices();

@@ -60,3 +60,58 @@
 .toolbar button:hover:not(:disabled) { background: rgba(0,0,0,.08); }
 .toolbar button:disabled { opacity: .4; cursor: not-allowed; }
 .toolbar .toast { align-self: center; padding: 0 8px; color: #c62828; font: 12px system-ui, sans-serif; }
+
+/* portal */
+.pnode { background: #fff; border: 1px solid #888; color: #222; }
+.pnode .dnode-header { background: #e9e9ec; }
+.pnode .dnode-body { display: flex; flex-direction: column; }
+.pnode-bar { flex: 0 0 30px; display: flex; gap: 4px; align-items: center; padding: 0 6px; background: #f4f4f6; border-bottom: 1px solid #d0d0d4; }
+.pnode-btn { all: unset; cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+.pnode-btn:hover:not(:disabled) { background: rgba(0,0,0,.1); }
+.pnode-btn:disabled { opacity: .35; cursor: default; }
+.pnode-url { flex: 1; min-width: 0; padding: 3px 8px; border: 1px solid #ccc; border-radius: 12px; font: 12px system-ui, sans-serif; outline: 0; }
+.pnode-url:focus { border-color: #3b82f6; }
+.pnode-url.bad { border-color: #f85149; background: #fff0ef; }
+.pnode-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
+.pnode.loading .dnode-title::after { content: " …"; }
+
+/* file tree */
+.fnode { background: #fbfbfc; border: 1px solid #aaa; color: #222; }
+.fnode .dnode-header { background: #e6e8ec; }
+.fnode .dnode-body { display: flex; flex-direction: column; }
+.fnode-bar { flex: 0 0 24px; display: flex; align-items: center; gap: 6px; padding: 0 8px; font-size: 11px; color: #666; border-bottom: 1px solid #ddd; }
+.fnode-root { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.fnode-refresh { all: unset; cursor: pointer; padding: 0 4px; }
+.fnode-list { flex: 1; overflow: auto; font: 12px system-ui, sans-serif; user-select: none; }
+.fnode-msg { padding: 6px 8px; font-size: 11px; color: #b54708; }
+.fnode-row { display: flex; align-items: center; gap: 4px; height: 22px; padding-right: 8px; cursor: default; white-space: nowrap; }
+.fnode-row:hover { background: rgba(59,130,246,.08); }
+.fnode-row.sel { background: rgba(59,130,246,.2); }
+.fnode-chev { width: 10px; color: #777; font-size: 10px; }
+.fnode-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.fnode-badge { font: 700 10px ui-monospace, monospace; padding: 0 4px; border-radius: 3px; }
+.gm { color: #b54708; background: #fff1d6; } .ga { color: #1a7f37; background: #dafbe1; } .gu { color: #6e7781; background: #eaeef2; }
+.gd { color: #cf222e; background: #ffebe9; } .gr { color: #8250df; background: #fbefff; } .gdot { color: #b54708; font-size: 14px; padding: 0 2px; }
+
+/* sidebar */
+.sidebar { position: absolute; left: 0; top: 0; bottom: 0; width: 240px; z-index: 20; display: flex; background: rgba(250,250,252,.96);
+  border-right: 1px solid rgba(0,0,0,.15); box-shadow: 2px 0 10px rgba(0,0,0,.08); font: 13px system-ui, sans-serif; color: #222; transition: width .15s; }
+.sidebar.collapsed { width: 28px; }
+.sidebar.collapsed .sidebar-content { display: none; }
+.sidebar-toggle { all: unset; cursor: pointer; align-self: flex-start; flex: none; width: 28px; height: 28px; text-align: center; line-height: 28px; order: 2; margin-left: auto; }
+.sidebar.collapsed .sidebar-toggle { margin: 0; }
+.sidebar-content { flex: 1; min-width: 0; overflow-y: auto; padding: 6px 0; order: 1; }
+.sb-title { padding: 10px 12px 4px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #777; }
+.sb-item, .sb-group { padding: 4px 12px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-item.indent { padding-left: 26px; }
+.sb-item:hover, .sb-group:hover { background: rgba(59,130,246,.1); }
+.sb-item.active { background: rgba(59,130,246,.2); font-weight: 600; }
+.sb-group { font-weight: 600; }
+.sb-empty { padding: 2px 12px; color: #999; font-size: 12px; }
+
+/* dialog */
+.dialog-scrim { position: absolute; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.25); }
+.dialog { width: 360px; display: flex; flex-direction: column; gap: 10px; padding: 14px; background: #fff; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.3); font: 13px system-ui, sans-serif; }
+.dialog input { padding: 6px 8px; border: 1px solid #bbb; border-radius: 6px; font: 13px ui-monospace, monospace; }
+.dialog-row { display: flex; justify-content: flex-end; gap: 8px; }
+.dialog button { padding: 4px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f4f4f6; cursor: pointer; }

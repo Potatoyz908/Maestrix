@@ -3,6 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- The page URL carries ?token=: never send it as a Referer (portals embed third-party sites). -->
+    <meta name="referrer" content="no-referrer" />
     <title>Open Maestri</title>
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #e6e6e6; font: 13px system-ui, sans-serif; }

@@ -98,6 +98,9 @@ export function linkFor(a: { id: string; kind?: string }, b: { id: string; kind?
   if (k === "note|note") return { kind: "noteToNote", noteNodeIdA: a.id, noteNodeIdB: b.id };
   if (k === "terminal|note") return { kind: "note", terminalId: a.id, noteNodeId: b.id };
   if (k === "note|terminal") return { kind: "note", terminalId: b.id, noteNodeId: a.id };
+  if (k === "terminal|portal") return { kind: "portal", terminalId: a.id, portalNodeId: b.id };
+  if (k === "portal|terminal") return { kind: "portal", terminalId: b.id, portalNodeId: a.id };
+  if (k === "portal|portal") return { kind: "portalToPortal", portalIdA: a.id, portalIdB: b.id };
   return null;
 }
 
@@ -128,3 +131,39 @@ export type ClientCommand =
 export type ServerPtyControl = { type: "exit"; code: number };
 
 export type ClientPtyControl = { type: "resize"; cols: number; rows: number };
+
+// ---- Phase 4 DTOs (verified against Sources/Workspace/Models/NodeContent.swift) ------------------
+
+/** Portal: NO url/isLoading keys. isLoading == (status === "loading"); URL is currentURL, kept coherent with source.url._0. */
+export interface PortalContent {
+  id: string;
+  name: string;
+  currentURL: string;
+  source: { url: { _0: string } } | Record<string, never>; // {} == none
+  status: "idle" | "loading";
+  chromeHidden: boolean;
+  storageScope: "isolated" | "shared";
+}
+
+/** FileTree persists ONLY these 3 keys. expandedPaths is runtime state: never add it here. */
+export interface FileTreeContent { name: string; rootPath: string; viewMode: "list" | "grid" }
+
+/** ~/.open-maestri/sidebar-layout.json (NOT in workspace.json). GET/PUT /api/sidebar-layout. */
+export interface SidebarGroup { id: string; name: string; isCollapsed: boolean; items: string[] }
+export interface SidebarLayout { schemaVersion: 2; topLevelItems: string[]; groups: SidebarGroup[] }
+
+/** manifest.json WorkspaceEntry (GET /api/workspaces, PROPOSED). */
+export interface WorkspaceEntryDTO {
+  id: string; name: string; workingDirectory: string; icon: string; color: string;
+  isPinned: boolean; locationType: "local" | "ssh" | string; createdAt: string; lastOpenedAt?: string;
+}
+/** Floor (GET /api/floors?workspace=, PROPOSED). */
+export interface FloorDTO { id: string; name: string; branchName: string; worktreePath: string; createdAt: string }
+/** Connected agents (GET /api/agents, PROPOSED; same data as `maestri list`). */
+export interface AgentDTO { id?: string; name: string; kind?: string }
+
+/** GET /api/files?root=<abs>&path=<rel> (PROPOSED). `path` is relative to root, posix separators. */
+export interface FileEntry { name: string; path: string; isDir: boolean }
+/** GET /api/git/status?root=<abs> (PROPOSED): paths RELATIVE TO root. Mirrors GitFileStatus.swift. */
+export type GitBadge = "M" | "A" | "?" | "D" | "R";
+export interface GitChange { path: string; status: GitBadge }
