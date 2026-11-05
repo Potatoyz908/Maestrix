@@ -48,12 +48,15 @@ let coreSources: [String] = [
     "Terminal/TerminalActivityMonitor.swift",
     "Terminal/TerminalSession.swift",
     "InterAgent/CLIRouter.swift",
+    "InterAgent/InterAgentServer.swift",
     "InterAgent/Handlers/AskHandler.swift",
     "InterAgent/Handlers/CheckHandler.swift",
     "InterAgent/Handlers/ListHandler.swift",
     "InterAgent/Handlers/MaestroHandlers.swift",
     "InterAgent/Handlers/NoteHandler.swift",
     "InterAgent/Handlers/PortalHandler.swift",
+    "Terminal/POSIXPtyProcess.swift",
+    "Terminal/LinuxTerminalManager.swift",
 ]
 
 let coreTestSources: [String] = [
@@ -61,6 +64,7 @@ let coreTestSources: [String] = [
     "Workspace/CanvasNodeLegacyDecodeTests.swift",
     "Workspace/PersistenceManagerTests.swift",
     "Workspace/MigrationTests.swift",
+    "InterAgent/LinuxPtyAndServerTests.swift",
 ]
 
 #if os(Linux)
@@ -71,9 +75,15 @@ let package = Package(
         .library(name: "OpenMaestriCore", targets: ["OpenMaestriCore"]),
         .executable(name: "omaestri", targets: ["omaestri"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", "1.4.0"..<"2.0.0"),
+    ],
     targets: [
         .target(
             name: "OpenMaestriCore",
+            dependencies: [
+                "SwiftTerm",
+            ],
             path: "Sources",
             sources: coreSources
         ),
