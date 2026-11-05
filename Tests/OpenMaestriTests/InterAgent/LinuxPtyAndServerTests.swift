@@ -107,7 +107,37 @@ final class LinuxPtyAndServerTests: XCTestCase {
             let deleteTermResp = try self.tcpExchange(port: port, request: deleteTermReq)
             XCTAssertTrue(deleteTermResp.hasPrefix("HTTP/1.1 200 OK"), "DELETE /api/terminals should return 200 OK")
             XCTAssertTrue(deleteTermResp.contains("\"status\":\"ok\""))
+
+            // 4. PUT /api/notes/:name & GET /api/notes/:name
+            let noteContent = "# Hello Note\nTesting note storage."
+            let putNoteReq = "PUT /api/notes/my-note HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: \(noteContent.utf8.count)\r\nConnection: close\r\n\r\n\(noteContent)"
+            let putNoteResp = try self.tcpExchange(port: port, request: putNoteReq)
+            XCTAssertTrue(putNoteResp.hasPrefix("HTTP/1.1 200 OK"), "PUT /api/notes/my-note should return 200 OK")
+
+            let getNoteReq = "GET /api/notes/my-note HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let getNoteResp = try self.tcpExchange(port: port, request: getNoteReq)
+            XCTAssertTrue(getNoteResp.hasPrefix("HTTP/1.1 200 OK"), "GET /api/notes/my-note should return 200 OK")
+            XCTAssertTrue(getNoteResp.contains(noteContent))
+
+            // 5. Path traversal protection
+            let badReq = "GET /api/notes/../../etc/passwd HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let badResp = try self.tcpExchange(port: port, request: badReq)
+            XCTAssertTrue(badResp.hasPrefix("HTTP/1.1 400 Bad Request") || badResp.hasPrefix("HTTP/1.1 404"),
+                          "Path traversal should be rejected")
         }
+    }
+
+    func testISO8601WithMillisecondsDecodable() throws {
+        struct DateTest: Decodable {
+            let createdAt: Date
+        }
+        let jsonWithoutMs = "{\"createdAt\":\"2026-11-05T15:27:28Z\"}"
+        let docWithoutMs = try PersistenceManager.shared.decoder.decode(DateTest.self, from: Data(jsonWithoutMs.utf8))
+        XCTAssertNotNil(docWithoutMs)
+
+        let jsonWithMs = "{\"createdAt\":\"2026-11-05T15:27:28.123Z\"}"
+        let docWithMs = try PersistenceManager.shared.decoder.decode(DateTest.self, from: Data(jsonWithMs.utf8))
+        XCTAssertNotNil(docWithMs)
     }
 
     func testWebSocketUpgradeHandshake() async throws {

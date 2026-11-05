@@ -465,7 +465,8 @@ public final class InterAgentServer {
         headerMap: [String: String],
         body: Data
     ) async -> Data {
-        let cleanPath = path.components(separatedBy: "?").first ?? path
+        let pathParts = path.components(separatedBy: "?")
+        let cleanPath = pathParts.first ?? path
 
         // 0. OPTIONS (CORS Preflight)
         if method == "OPTIONS" {
@@ -598,6 +599,88 @@ public final class InterAgentServer {
             }
             let resp = "{\"status\":\"ok\"}"
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp)
+        }
+
+        // 6. GET /api/notes/:name
+        if method == "GET" && cleanPath.hasPrefix("/api/notes/") {
+            let noteName = String(cleanPath.dropFirst("/api/notes/".count))
+            guard !noteName.isEmpty,
+                  !noteName.contains("/"),
+                  !noteName.contains(".."),
+                  !noteName.contains("\\") else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid note name or path traversal detected")
+            }
+
+            let pm = PersistenceManager.shared
+            var targetWorkspaceId: UUID? = nil
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" {
+                        targetWorkspaceId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+
+            if targetWorkspaceId == nil {
+                let appState = try? pm.loadAppState()
+                targetWorkspaceId = appState?.activeWorkspaceId
+            }
+
+            guard let wsId = targetWorkspaceId else {
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+            }
+
+            let notePath = NoteFileManager.shared.managedPath(workspaceId: wsId, noteName: noteName)
+            do {
+                let content = try NoteFileManager.shared.read(filePath: notePath)
+                return Self.buildHTTPResponse(status: 200, contentType: "text/markdown; charset=utf-8", body: content)
+            } catch {
+                return Self.buildHTTPResponse(status: 404, body: "error: note not found: \(error.localizedDescription)")
+            }
+        }
+
+        // 7. PUT /api/notes/:name
+        if method == "PUT" && cleanPath.hasPrefix("/api/notes/") {
+            let noteName = String(cleanPath.dropFirst("/api/notes/".count))
+            guard !noteName.isEmpty,
+                  !noteName.contains("/"),
+                  !noteName.contains(".."),
+                  !noteName.contains("\\") else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid note name or path traversal detected")
+            }
+
+            let pm = PersistenceManager.shared
+            var targetWorkspaceId: UUID? = nil
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" {
+                        targetWorkspaceId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+
+            if targetWorkspaceId == nil {
+                let appState = try? pm.loadAppState()
+                targetWorkspaceId = appState?.activeWorkspaceId
+            }
+
+            guard let wsId = targetWorkspaceId else {
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+            }
+
+            let notePath = NoteFileManager.shared.managedPath(workspaceId: wsId, noteName: noteName)
+            guard let content = String(data: body, encoding: .utf8) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid UTF-8 body")
+            }
+
+            do {
+                try NoteFileManager.shared.write(filePath: notePath, content: content)
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}")
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to write note: \(error.localizedDescription)")
+            }
         }
 
         return Self.buildHTTPResponse(status: 404, body: "error: not found")
