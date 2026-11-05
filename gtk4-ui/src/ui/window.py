@@ -36,6 +36,7 @@ from maestri_canvas.terminal_themes import apply_terminal_style
 from maestri_canvas.viewport import Viewport
 from maestri_canvas.widget import CanvasWidget, is_terminal, load_vte, terminal_of, terminate_terminal
 from .drawing import DrawingTools
+from .routines_window import install_routines
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
 
@@ -101,6 +102,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         # 4. Setup Shortcuts
         self._setup_shortcuts()
+        self.routines = install_routines(self)   # File → Routines (Ctrl+Shift+R), scheduler on the main loop
 
         bus.connect("workspace-switched", self._on_workspace_switched)
         self.connect("close-request", self._on_close_request)
@@ -350,6 +352,10 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             ("New Terminal", "win.new-terminal"), ("New Note", "win.new-note"),
             ("New Portal", "win.new-portal"), ("New File Tree", "win.new-file-tree"),
         ]))
+        routines_menu = section([("Manage Routines…", "win.routines"), ("New Routine…", "win.new-routine")])
+        routines_section = Gio.Menu()
+        routines_section.append_submenu("Routines", routines_menu)
+        file_menu.append_section(None, routines_section)
         file_menu.append_section(None, section([("Save", "win.save")]))
         file_menu.append_section(None, section([("Preferences…", "win.preferences"), ("Quit", "win.quit")]))
         menubar.append_submenu("_File", file_menu)

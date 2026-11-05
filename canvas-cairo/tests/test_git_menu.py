@@ -1,9 +1,13 @@
 """FileTree git UI: GitBranchButton (branch indicator + Commit/Pull/Push/Checkout/New Branch/Merge/Fetch/Stash menu) and the
 colored DiffView, against a real temporary repository. Needs a display; skipped otherwise."""
 import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # maestri_core, when run from inside canvas-cairo/
 
 gi = pytest.importorskip("gi")
 gi.require_version("Gtk", "4.0")
