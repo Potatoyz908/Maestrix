@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 文件系统目录监控器（FSEvents-based）
 /// 检测到变化时回调，供 FileTreeStateStore 触发 reload

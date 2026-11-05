@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Note 文件管理器
 /// - Note 内容存储为 .md 文件
@@ -62,7 +64,7 @@ final class NoteFileManager {
         )
         let tmp = url.appendingPathExtension("tmp")
         try data.write(to: tmp, options: .atomic)
-        _ = try FileManager.default.replaceItem(at: url, withItemAt: tmp, backupItemName: nil, resultingItemURL: nil)
+        try FileManager.default.atomicReplaceItem(at: url, withItemAt: tmp)
         logger.debug("Note written: \(filePath)")
         DispatchQueue.main.async {
             NotificationCenter.default.post(

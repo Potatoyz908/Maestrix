@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 final class NoteHandler {
     static let shared = NoteHandler()

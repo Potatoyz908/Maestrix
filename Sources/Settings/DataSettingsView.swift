@@ -1,7 +1,9 @@
 import SwiftUI
 import AppKit
 import WebKit
+#if canImport(OSLog)
 import OSLog
+#endif
 
 private let dataSettingsLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "open-maestri", category: "DataSettings")
 

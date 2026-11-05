@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Landing（合并到目标分支）确认界面
 struct LandingView: View {

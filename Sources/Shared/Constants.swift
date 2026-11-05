@@ -1,11 +1,21 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+#if canImport(AppKit)
 import AppKit
+#endif
 
 /// 应用全局常量
 enum Constants {
     static let schemaVersion = 2
     static let appDataDirectoryName = ".open-maestri"
+    /// 平台默认 shell：macOS 为 zsh，Linux（Ubuntu 默认未必安装 zsh）为 bash
+    #if os(Linux)
+    static let defaultShellPath = "/bin/bash"
+    #else
+    static let defaultShellPath = "/bin/zsh"
+    #endif
     static let defaultFontSize: CGFloat = 13
     static let defaultFontFamily = "system"
     static let autosaveInterval: TimeInterval = 30
@@ -15,7 +25,9 @@ enum Constants {
     static let canvasMaxZoom: CGFloat = 3.0
     static let canvasZoomStep: CGFloat = 0.25
     static let canvasGridSpacing: CGFloat = 16
+#if canImport(AppKit)
     static let canvasGridLineColor = NSColor(white: 0.90, alpha: 1)
+#endif
     static let canvasGridLineWidth: CGFloat = 0.5
     static let ropeControlPointCount = 21
     static let ropeBendRatioMin: CGFloat = 1.08

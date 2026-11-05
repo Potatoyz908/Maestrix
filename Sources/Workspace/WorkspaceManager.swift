@@ -1,6 +1,8 @@
 import Foundation
 import Observation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 单个工作区的状态管理（Story 1.4 + 1.5）
 /// - 节点/连接的运行时状态
@@ -106,14 +108,14 @@ final class WorkspaceManager: Identifiable {
         // 停止 Terminal PTY 进程（避免内存泄漏）
         if case .terminal = node.content {
             Task { @MainActor in
-                TerminalManager.shared.removeTerminal(id: nodeId)
+                PlatformHooks.onTerminalRemoved?(nodeId)
             }
         }
 
         // 释放 Portal WKWebView 实例及其所有代理对象（避免内存泄漏）
         if case .portal = node.content {
             Task { @MainActor in
-                PortalWebViewStore.shared.removeWebView(for: nodeId)
+                PlatformHooks.onPortalRemoved?(nodeId)
             }
             portalToPortalConnections.removeAll { $0.portalIdA == nodeId || $0.portalIdB == nodeId }
         }

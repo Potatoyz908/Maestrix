@@ -1,6 +1,75 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
+// MARK: - Linux 移植：OpenMaestriCore
+//
+// OpenMaestriCore 是不依赖 AppKit/SwiftUI/WebKit/Sparkle 的无头核心（模型、持久化、
+// 工作区管理、连接/技能注入、Floor/Git）。
+//
+// 阶段 1（当前）：为避免在没有编译器反馈的情况下给整个代码库批量加 `public`，
+// Core 在 Linux 上直接从 `Sources/` 按白名单取文件编译；macOS 构建完全不变。
+// 阶段 2：待 Linux 构建稳定后，把白名单文件物理迁入 Sources/OpenMaestriCore/，
+// 让 macOS 的 open-maestri 也依赖该 target（届时统一加 `package`/`public` 访问级别）。
+//
+// 白名单之外（InterAgentServer、PTY/终端、DirectoryWatcher…）由 Sentinela 后续移植。
+let coreSources: [String] = [
+    "Shared/AtomicFile.swift",
+    "Shared/Constants.swift",
+    "Shared/NotificationNames.swift",
+    "Shared/ErrorTypes.swift",
+    "Shared/LoggingService.swift",
+    "Shared/LocalizedFallback+Linux.swift",
+    "Shared/PlatformHooks.swift",
+    "Shared/Extensions/CGRect+Frame.swift",
+    "Shared/Extensions/Date+ISO8601.swift",
+    "Shared/Extensions/UUID+Coding.swift",
+    "Workspace/BackupManager.swift",
+    "Workspace/PersistenceManager.swift",
+    "Workspace/SidebarLayout.swift",
+    "Workspace/WorkspaceManager.swift",
+    "Workspace/Migrations/Migration_v1_to_v2.swift",
+    "Workspace/Models/AppState+Models.swift",
+    "Workspace/Models/CanvasNode.swift",
+    "Workspace/Models/NodeContent.swift",
+    "Workspace/Models/Preferences.swift",
+    "Workspace/Models/WorkspaceDocument.swift",
+    "Workspace/Models/WorkspacePayload.swift",
+    "Connection/ConnectionManager.swift",
+    "Connection/RoleInjector.swift",
+    "Connection/SkillInjector.swift",
+    "Floor/FloorManager.swift",
+    "Floor/HooksManager.swift",
+    "Git/GitFileStatus.swift",
+    "Git/GitStatusProvider.swift",
+    "Note/NoteFileManager.swift",
+    "Routine/RoutineModels.swift",
+    "Terminal/ScrollbackStore.swift",
+]
+
+#if os(Linux)
+
+let package = Package(
+    name: "open-maestri",
+    products: [
+        .library(name: "OpenMaestriCore", targets: ["OpenMaestriCore"]),
+        .executable(name: "omaestri", targets: ["omaestri"]),
+    ],
+    targets: [
+        .target(
+            name: "OpenMaestriCore",
+            path: "Sources",
+            sources: coreSources
+        ),
+        .executableTarget(
+            name: "omaestri",
+            dependencies: [],
+            path: "Sources/CLI"
+        ),
+    ]
+)
+
+#else
+
 let package = Package(
     name: "open-maestri",
     platforms: [.macOS(.v14)],
@@ -31,3 +100,5 @@ let package = Package(
         ),
     ]
 )
+
+#endif

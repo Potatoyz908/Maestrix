@@ -1,4 +1,6 @@
+#if canImport(OSLog)
 import OSLog
+#endif
 import Foundation
 
 /// 全局应用状态，使用 @Observable（macOS 14+）

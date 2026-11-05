@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// 用户偏好设置，持久化到 ~/.open-maestri/preferences.json（schemaVersion:1）
 struct Preferences: Codable, Equatable {

@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 终端生命周期管理器
 /// - 为每个 Terminal 节点创建/销毁 PTY 会话

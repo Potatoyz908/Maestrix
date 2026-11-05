@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Floor 总览视图（⌘⇧\ 打开，右下角按钮打开）
 struct FloorOverviewView: View {

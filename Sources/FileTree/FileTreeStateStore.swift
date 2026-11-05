@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 文件树节点（class 保证 NSOutlineView 可用对象身份 === 追踪 item）
 final class FileTreeItem: Identifiable, Hashable {
@@ -22,11 +24,6 @@ final class FileTreeItem: Identifiable, Hashable {
 
     static func == (lhs: FileTreeItem, rhs: FileTreeItem) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
-}
-
-/// Git 文件状态
-enum GitFileStatus {
-    case unmodified, modified, added, deleted, renamed, untracked
 }
 
 /// 文件树状态存储（每个 FileTree 节点独立实例）

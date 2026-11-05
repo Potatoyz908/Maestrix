@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Floor Hooks 执行器（Setup/Run/Teardown 生命周期）
 final class HooksManager {

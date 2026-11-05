@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Agent 运行/空闲状态检测器
 /// 通过 PTY 输出变化判断状态（不依赖 CPU），符合 FR18/Story 3.3 AC

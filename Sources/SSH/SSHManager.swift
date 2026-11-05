@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// SSH 连接配置
 struct SSHConfig: Codable {

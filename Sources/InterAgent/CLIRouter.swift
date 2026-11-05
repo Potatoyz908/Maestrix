@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// CLI 命令路由器：根据 args[0] 分发到对应 Handler
 final class CLIRouter {

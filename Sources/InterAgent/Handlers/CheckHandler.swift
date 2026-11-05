@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 final class CheckHandler {
     static let shared = CheckHandler()

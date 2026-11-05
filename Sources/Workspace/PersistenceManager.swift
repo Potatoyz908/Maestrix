@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 数据持久化管理器
 /// 所有文件 I/O 必须通过此类进行（ScrollbackStore 除外，性能原因）
@@ -132,12 +134,7 @@ final class PersistenceManager {
 
         if FileManager.default.fileExists(atPath: url.path) {
             // 目标文件已存在：使用 replaceItem 保证原子性（含崩溃恢复语义）
-            _ = try FileManager.default.replaceItem(
-                at: url,
-                withItemAt: tmp,
-                backupItemName: nil,
-                resultingItemURL: nil
-            )
+            try FileManager.default.atomicReplaceItem(at: url, withItemAt: tmp)
         } else {
             // 目标文件不存在（首次创建）：直接 move tmp 到目标路径
             try FileManager.default.moveItem(at: tmp, to: url)

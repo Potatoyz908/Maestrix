@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// 工作区数据载体，所有字段与 Maestri camelCase 格式完全一致（schemaVersion:2）
 struct WorkspacePayload: Codable {

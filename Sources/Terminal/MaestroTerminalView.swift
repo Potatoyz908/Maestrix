@@ -1,5 +1,7 @@
 import AppKit
+#if canImport(OSLog)
 import OSLog
+#endif
 import SwiftTerm
 
 /// NSView 直接子类，对标 Maestri 的 MaestroTerminalView。

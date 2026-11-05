@@ -1,6 +1,8 @@
 import Foundation
 import Network
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 本地 HTTP IPC 服务器
 /// - 绑定 127.0.0.1 动态端口，仅接受本机连接（安全约束）

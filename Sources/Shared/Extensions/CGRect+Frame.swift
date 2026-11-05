@@ -1,4 +1,7 @@
+import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// CGRect 与 Maestri [[x,y],[w,h]] 格式的互转
 extension CGRect {

@@ -132,7 +132,7 @@ struct TerminalContent: Codable, Equatable {
         self.icon = "terminal"
         self.color = "#007AFF"
         self.id = UUID()
-        self.shellPath = "/bin/zsh"
+        self.shellPath = Constants.defaultShellPath
         self.workingDirectory = workingDirectory
         self.status = "idle"
         self.isManager = false

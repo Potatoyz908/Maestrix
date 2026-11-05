@@ -1,6 +1,8 @@
 // Sources/Connection/SkillInjector.swift
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 将 open-maestri skill 文件写入用户全局 ~/.claude/skills/ 目录
 /// 在建立 Connection 时调用，确保 Claude Code 能自动加载 omaestri 相关 skill

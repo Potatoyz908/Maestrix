@@ -1,5 +1,7 @@
 import AppKit
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 无限画布主 NSView
 /// - 坐标系原点约 (9800, 8500)，即"无限"画布中心区域

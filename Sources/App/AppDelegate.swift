@@ -1,4 +1,6 @@
+#if canImport(OSLog)
 import OSLog
+#endif
 import AppKit
 import Foundation
 import Sparkle
@@ -19,6 +21,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             logger.error("InterAgentServer failed to start: \(error)")
         }
+
+        // 平台钩子：Core（WorkspaceManager）通过它们回调 UI 层资源清理，保持 Core 无 UI 依赖
+        PlatformHooks.onTerminalRemoved = { TerminalManager.shared.removeTerminal(id: $0) }
+        PlatformHooks.onPortalRemoved = { PortalWebViewStore.shared.removeWebView(for: $0) }
 
         // 2. 写入 omaestri skill 到用户全局 ~/.claude/skills/（幂等，后台执行避免阻塞主线程）
         DispatchQueue.global(qos: .userInitiated).async {

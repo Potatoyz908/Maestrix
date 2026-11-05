@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// 画布节点，frame 使用 Maestri [[x,y],[w,h]] 格式编码
 struct CanvasNode: Codable, Identifiable, Equatable {

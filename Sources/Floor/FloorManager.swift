@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Floor 配置（git worktree 隔离环境）
 struct Floor: Codable, Identifiable {
@@ -74,7 +76,7 @@ final class FloorManager {
     func runHooks(_ hooks: [String], floor: Floor, workingDirectory: String) async throws {
         for hook in hooks {
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.executableURL = URL(fileURLWithPath: Constants.defaultShellPath)
             process.arguments = ["-c", hook]
             process.currentDirectoryURL = URL(fileURLWithPath: floor.worktreePath)
             process.environment = ProcessInfo.processInfo.environment.merging([

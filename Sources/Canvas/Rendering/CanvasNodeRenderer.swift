@@ -1,7 +1,9 @@
 import AppKit
 import SwiftUI
 import SwiftTerm
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 画布节点渲染引擎
 /// 使用单个 CanvasNodesView（NSHostingView）渲染所有节点，无 per-node NSView 管理
