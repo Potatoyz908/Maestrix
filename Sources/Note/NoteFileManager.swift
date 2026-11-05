@@ -103,6 +103,21 @@ final class NoteFileManager {
         return path
     }
 
+    /// 删除 Note 文件
+    func delete(filePath: String) throws {
+        let url = URL(fileURLWithPath: filePath)
+        if FileManager.default.fileExists(atPath: filePath) {
+            try FileManager.default.removeItem(at: url)
+            logger.debug("Note deleted: \(filePath)")
+        }
+    }
+
+    /// 删除指定工作区的 Note
+    func deleteNote(workspaceId: UUID, name: String) throws {
+        let path = managedPath(workspaceId: workspaceId, noteName: name)
+        try delete(filePath: path)
+    }
+
     // MARK: - Note Chain 遍历（FR30）
 
     /// 遍历 Note Chain，收集所有连接的 Note 内容

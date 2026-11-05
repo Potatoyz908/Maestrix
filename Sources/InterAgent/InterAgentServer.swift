@@ -683,6 +683,288 @@ public final class InterAgentServer {
             }
         }
 
+        // 8. DELETE /api/notes/:name
+        if method == "DELETE" && cleanPath.hasPrefix("/api/notes/") {
+            let noteName = String(cleanPath.dropFirst("/api/notes/".count))
+            guard !noteName.isEmpty,
+                  !noteName.contains("/"),
+                  !noteName.contains(".."),
+                  !noteName.contains("\\") else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid note name or path traversal detected")
+            }
+
+            let pm = PersistenceManager.shared
+            var targetWorkspaceId: UUID? = nil
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" {
+                        targetWorkspaceId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+
+            if targetWorkspaceId == nil {
+                let appState = try? pm.loadAppState()
+                targetWorkspaceId = appState?.activeWorkspaceId
+            }
+
+            guard let wsId = targetWorkspaceId else {
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+            }
+
+            let notePath = NoteFileManager.shared.managedPath(workspaceId: wsId, noteName: noteName)
+            do {
+                try NoteFileManager.shared.delete(filePath: notePath)
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}")
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to delete note: \(error.localizedDescription)")
+            }
+        }
+
+        // 9. GET /api/connections
+        if method == "GET" && cleanPath == "/api/connections" {
+            let pm = PersistenceManager.shared
+            var targetWorkspaceId: UUID? = nil
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" {
+                        targetWorkspaceId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+
+            if targetWorkspaceId == nil {
+                let appState = try? pm.loadAppState()
+                targetWorkspaceId = appState?.activeWorkspaceId
+            }
+
+            guard let wsId = targetWorkspaceId else {
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+            }
+
+            guard let doc = try? pm.loadWorkspace(id: wsId) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found")
+            }
+
+            var connList: [[String: Any]] = []
+            for c in doc.payload.connections {
+                connList.append([
+                    "id": c.id.uuidString,
+                    "a": c.terminalIdA.uuidString,
+                    "b": c.terminalIdB.uuidString,
+                    "type": "terminalToTerminal",
+                    "ropePoints": c.ropePoints
+                ])
+            }
+            for c in doc.payload.noteConnections {
+                connList.append([
+                    "id": c.id.uuidString,
+                    "a": c.terminalId.uuidString,
+                    "b": c.noteNodeId.uuidString,
+                    "type": "terminalToNote",
+                    "ropePoints": c.ropePoints
+                ])
+            }
+            for c in doc.payload.portalConnections {
+                connList.append([
+                    "id": c.id.uuidString,
+                    "a": c.terminalId.uuidString,
+                    "b": c.portalNodeId.uuidString,
+                    "type": "terminalToPortal",
+                    "ropePoints": c.ropePoints
+                ])
+            }
+            for c in doc.payload.portalToPortalConnections {
+                connList.append([
+                    "id": c.id.uuidString,
+                    "a": c.portalIdA.uuidString,
+                    "b": c.portalIdB.uuidString,
+                    "type": "portalToPortal",
+                    "ropePoints": c.ropePoints
+                ])
+            }
+            for c in doc.payload.noteToNoteConnections {
+                connList.append([
+                    "id": c.id.uuidString,
+                    "a": c.noteNodeIdA.uuidString,
+                    "b": c.noteNodeIdB.uuidString,
+                    "type": "noteToNote",
+                    "ropePoints": c.ropePoints
+                ])
+            }
+
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: connList, options: [.prettyPrinted]) else {
+                return Self.buildHTTPResponse(status: 500, body: "error: serialization failed")
+            }
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: jsonData)
+        }
+
+        // 10. POST /api/connections
+        if method == "POST" && cleanPath == "/api/connections" {
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid JSON body")
+            }
+
+            guard let aStr = (json["a"] as? String) ?? (json["terminalIdA"] as? String),
+                  let idA = UUID(uuidString: aStr),
+                  let bStr = (json["b"] as? String) ?? (json["terminalIdB"] as? String),
+                  let idB = UUID(uuidString: bStr) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: missing or invalid node IDs 'a' and 'b'")
+            }
+
+            let ropePoints = (json["ropePoints"] as? [[Double]]) ?? []
+            let connId = (json["id"] as? String).flatMap(UUID.init) ?? UUID()
+
+            let pm = PersistenceManager.shared
+            var targetWorkspaceId: UUID? = nil
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" {
+                        targetWorkspaceId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+
+            if targetWorkspaceId == nil {
+                let appState = try? pm.loadAppState()
+                targetWorkspaceId = appState?.activeWorkspaceId
+            }
+
+            guard let wsId = targetWorkspaceId else {
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+            }
+
+            let fileURL = pm.workspaceURL(id: wsId)
+            guard var doc = try? pm.loadWorkspace(id: wsId) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found")
+            }
+
+            // 检查节点类型
+            let nodeA = doc.payload.nodes.first { $0.id == idA }
+            let nodeB = doc.payload.nodes.first { $0.id == idB }
+
+            let isNoteA: Bool
+            let isNoteB: Bool
+            let isPortalA: Bool
+            let isPortalB: Bool
+
+            if let nA = nodeA {
+                switch nA.content {
+                case .stickyNote: isNoteA = true; isPortalA = false
+                case .portal:     isPortalA = true; isNoteA = false
+                default:          isNoteA = false; isPortalA = false
+                }
+            } else {
+                isNoteA = false; isPortalA = false
+            }
+
+            if let nB = nodeB {
+                switch nB.content {
+                case .stickyNote: isNoteB = true; isPortalB = false
+                case .portal:     isPortalB = true; isNoteB = false
+                default:          isNoteB = false; isPortalB = false
+                }
+            } else {
+                isNoteB = false; isPortalB = false
+            }
+
+            Task { @MainActor in
+                let cm = ConnectionManager.shared
+                if isNoteA && isNoteB {
+                    _ = cm.connectNoteToNote(noteNodeIdA: idA, noteNodeIdB: idB, ropePoints: ropePoints)
+                } else if isNoteA || isNoteB {
+                    let termId = isNoteA ? idB : idA
+                    let noteId = isNoteA ? idA : idB
+                    _ = cm.connectTerminalToNote(terminalId: termId, noteNodeId: noteId, ropePoints: ropePoints)
+                } else if isPortalA && isPortalB {
+                    _ = cm.connectPortalToPortal(portalIdA: idA, portalIdB: idB, ropePoints: ropePoints)
+                } else if isPortalA || isPortalB {
+                    let termId = isPortalA ? idB : idA
+                    let portalId = isPortalA ? idA : idB
+                    _ = cm.connectTerminalToPortal(terminalId: termId, portalNodeId: portalId, ropePoints: ropePoints)
+                } else {
+                    _ = cm.connectTerminals(idA: idA, idB: idB, serverPort: PlatformHooks.serverPort(), ropePoints: ropePoints)
+                }
+            }
+
+            if isNoteA && isNoteB {
+                let conn = NoteToNoteConnection(id: connId, noteNodeIdA: idA, noteNodeIdB: idB, ropePoints: ropePoints)
+                doc.payload.noteToNoteConnections.append(conn)
+            } else if isNoteA || isNoteB {
+                let termId = isNoteA ? idB : idA
+                let noteId = isNoteA ? idA : idB
+                let conn = NoteConnection(id: connId, terminalId: termId, noteNodeId: noteId, ropePoints: ropePoints)
+                doc.payload.noteConnections.append(conn)
+            } else if isPortalA && isPortalB {
+                let conn = PortalToPortalConnection(id: connId, portalIdA: idA, portalIdB: idB, ropePoints: ropePoints)
+                doc.payload.portalToPortalConnections.append(conn)
+            } else if isPortalA || isPortalB {
+                let termId = isPortalA ? idB : idA
+                let portalId = isPortalA ? idA : idB
+                let conn = PortalConnection(id: connId, terminalId: termId, portalNodeId: portalId, ropePoints: ropePoints)
+                doc.payload.portalConnections.append(conn)
+            } else {
+                let conn = TerminalConnection(id: connId, terminalIdA: idA, terminalIdB: idB, ropePoints: ropePoints)
+                doc.payload.connections.append(conn)
+            }
+
+            doc.payload.lastModifiedAt = Date()
+            do {
+                try pm.saveSync(doc, to: fileURL)
+                let resp = "{\"id\":\"\(connId.uuidString)\",\"status\":\"ok\"}"
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp)
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save connection to workspace: \(error.localizedDescription)")
+            }
+        }
+
+        // 11. DELETE /api/connections/:id
+        if method == "DELETE" && cleanPath.hasPrefix("/api/connections/") {
+            let rawId = String(cleanPath.dropFirst("/api/connections/".count))
+            guard let connId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid connection ID")
+            }
+
+            Task { @MainActor in
+                ConnectionManager.shared.disconnect(id: connId)
+            }
+
+            let pm = PersistenceManager.shared
+            var targetWorkspaceId: UUID? = nil
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" {
+                        targetWorkspaceId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+
+            if targetWorkspaceId == nil {
+                let appState = try? pm.loadAppState()
+                targetWorkspaceId = appState?.activeWorkspaceId
+            }
+
+            if let wsId = targetWorkspaceId {
+                let fileURL = pm.workspaceURL(id: wsId)
+                if var doc = try? pm.loadWorkspace(id: wsId) {
+                    doc.payload.connections.removeAll { $0.id == connId }
+                    doc.payload.noteConnections.removeAll { $0.id == connId }
+                    doc.payload.portalConnections.removeAll { $0.id == connId }
+                    doc.payload.portalToPortalConnections.removeAll { $0.id == connId }
+                    doc.payload.noteToNoteConnections.removeAll { $0.id == connId }
+                    doc.payload.lastModifiedAt = Date()
+                    try? pm.saveSync(doc, to: fileURL)
+                }
+            }
+
+            let resp = "{\"status\":\"ok\"}"
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp)
+        }
+
         return Self.buildHTTPResponse(status: 404, body: "error: not found")
     }
 

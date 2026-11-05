@@ -124,6 +124,51 @@ final class LinuxPtyAndServerTests: XCTestCase {
             let badResp = try self.tcpExchange(port: port, request: badReq)
             XCTAssertTrue(badResp.hasPrefix("HTTP/1.1 400 Bad Request") || badResp.hasPrefix("HTTP/1.1 404"),
                           "Path traversal should be rejected")
+
+            // 6. DELETE /api/notes/:name
+            let deleteNoteReq = "DELETE /api/notes/my-note HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let deleteNoteResp = try self.tcpExchange(port: port, request: deleteNoteReq)
+            XCTAssertTrue(deleteNoteResp.hasPrefix("HTTP/1.1 200 OK"), "DELETE /api/notes/my-note should return 200 OK")
+
+            let verifyDeletedNoteResp = try self.tcpExchange(port: port, request: getNoteReq)
+            XCTAssertTrue(verifyDeletedNoteResp.hasPrefix("HTTP/1.1 404"), "Deleted note should return 404 Not Found")
+
+            // 7. GET /api/connections, POST /api/connections, DELETE /api/connections/:id
+            let getConnReq = "GET /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let getConnResp = try self.tcpExchange(port: port, request: getConnReq)
+            XCTAssertTrue(getConnResp.hasPrefix("HTTP/1.1 200 OK"), "GET /api/connections should return 200 OK")
+
+            let nodeA = UUID()
+            let nodeB = UUID()
+            let postConnBody = "{\"a\":\"\(nodeA.uuidString)\",\"b\":\"\(nodeB.uuidString)\"}"
+            let postConnReq = "POST /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: \(postConnBody.utf8.count)\r\nConnection: close\r\n\r\n\(postConnBody)"
+            let postConnResp = try self.tcpExchange(port: port, request: postConnReq)
+            XCTAssertTrue(postConnResp.hasPrefix("HTTP/1.1 200 OK"), "POST /api/connections should return 200 OK")
+            XCTAssertTrue(postConnResp.contains("\"id\":"), "POST /api/connections should return id")
+
+            guard let connIdRange = postConnResp.range(of: "\"id\":\"") else {
+                XCTFail("Could not find connection id in: \(postConnResp)")
+                return
+            }
+            let connSub = postConnResp[connIdRange.upperBound...]
+            guard let connEndQuote = connSub.firstIndex(of: "\"") else {
+                XCTFail("Invalid JSON id format")
+                return
+            }
+            let connId = String(connSub[..<connEndQuote])
+
+            // Verify connection in GET
+            let verifyConnResp = try self.tcpExchange(port: port, request: getConnReq)
+            XCTAssertTrue(verifyConnResp.contains(connId), "GET /api/connections should contain created connection")
+
+            // Delete connection
+            let delConnReq = "DELETE /api/connections/\(connId) HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let delConnResp = try self.tcpExchange(port: port, request: delConnReq)
+            XCTAssertTrue(delConnResp.hasPrefix("HTTP/1.1 200 OK"), "DELETE /api/connections/:id should return 200 OK")
+
+            // Verify connection removed
+            let verifyDelConnResp = try self.tcpExchange(port: port, request: getConnReq)
+            XCTAssertFalse(verifyDelConnResp.contains(connId), "Deleted connection should not appear in GET /api/connections")
         }
     }
 
