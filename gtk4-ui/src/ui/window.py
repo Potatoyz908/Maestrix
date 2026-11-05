@@ -25,6 +25,7 @@ from maestri_core.preferences import PreferencesStore
 from maestri_core.signals.bus import bus
 from maestri_core.sync import WorkspaceSync
 from maestri_canvas.connection_rules import plan_connection, purge_node
+from maestri_canvas.file_ops import preview_frames, preview_spec
 from maestri_canvas.geometry import Point, Rect
 from maestri_canvas.interaction import Background
 from maestri_canvas.note_model import unique_name
@@ -78,6 +79,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.canvas_widget.connect("note-meta-changed", self._on_note_meta_changed)
         self.canvas_widget.connect("portal-meta-changed", self._on_portal_meta_changed)
         self.canvas_widget.connect("file-activated", self._on_file_activated)
+        self.canvas_widget.connect("file-tree-changed", self._on_file_tree_changed)
+        self.canvas_widget.connect("files-dropped", self._on_files_dropped)
         self._setup_context_menu()
         self.drawing = DrawingTools(self)   # text / shape / freehand tools + P-tool frames (ui/drawing.py)
         self._header.pack_start(self.drawing.button)
@@ -500,6 +503,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             kwargs["portal"] = node.content.to_dict()
         elif node.node_type == "fileTree":
             kwargs["cwd"] = getattr(node.content, "root_path", "") or os.path.expanduser("~")
+            kwargs["file_tree"] = node.content.to_dict()
         elif node.node_type == "terminal":
             kwargs["cwd"] = (getattr(node.content, "working_directory", "") or self.document.payload.working_directory
                              or os.path.expanduser("~"))
@@ -522,6 +526,35 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         node.content = StickyNoteContent.from_dict(meta)
         node.last_modified_at = current_iso8601()
         bus.emit("node-updated", node.id)   # WorkspaceSync persists the new color/name/mode
+
+    def _on_file_tree_changed(self, _canvas, node_id, d):
+        """Root navigation and List/Grid toggles persist into FileTreeContent (rootPath / viewMode)."""
+        node = self._find_node(node_id)
+        if node is None or node.node_type != "fileTree":
+            return
+        c = node.content
+        if (c.root_path, c.view_mode) == (d["rootPath"], d["viewMode"]):
+            return
+        c.root_path, c.view_mode = d["rootPath"], d["viewMode"]
+        node.last_modified_at = current_iso8601()
+        bus.emit("node-updated", node.id)
+
+    def _on_files_dropped(self, _canvas, paths, x, y):
+        """Files dropped on the empty canvas (FileTree rows, file managers) become preview nodes, stacked from the drop point
+        (macOS Maestri: WorkspaceCanvasView+FileDrop). Text -> sticky note editing that file (storageMode custom); folder -> File
+        Tree rooted there; image / PDF / video / other -> read-only portal on the file:// URI."""
+        if not self.loaded:
+            return
+        for path, (fx, fy, fw, fh) in zip(paths, preview_frames(len(paths), x, y)):
+            spec = preview_spec(path)
+            if spec.kind == "stickyNote":
+                content = StickyNoteContent(name=os.path.splitext(spec.title)[0] or spec.title, file_name=spec.title,
+                                            has_custom_name=True, storage_mode={"custom": {"_0": path}})
+            elif spec.kind == "fileTree":
+                content = FileTreeContent(name=spec.title, root_path=path)
+            else:
+                content = PortalContent(name=spec.title, current_url=Gio.File.new_for_path(path).get_uri())
+            self._create_node(spec.kind, at=Point(fx, fy), size=(fw, fh), content=content)
 
     def _on_file_activated(self, _canvas, _node_id, path):
         try:
@@ -662,10 +695,10 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         cw.viewport.set_zoom_at(Point(w / 2.0, h / 2.0), 1.0)
         cw.controller.dirty = True
 
-    def _create_node(self, node_type: str, at: Point = None, size: tuple = None):
+    def _create_node(self, node_type: str, at: Point = None, size: tuple = None, content=None):
         """Add a node of a valid kind (terminal | stickyNote | portal | fileTree).
         `at` = canvas point for the node's top-left corner (context menu); default: centered in the viewport.
-        `size` = (w, h) of a frame drawn with a tool (default 420x300).
+        `size` = (w, h) of a frame drawn with a tool (default 420x300). `content` overrides the default content (file drops).
         Ignored until the initial workspace is loaded (the placeholder document would be replaced)."""
         if node_type not in WIDGET_KINDS:
             raise ValueError(f"invalid node type: {node_type!r}")
@@ -683,7 +716,9 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         n = len(self.document.payload.nodes) + 1
         max_z = max((x.z_index for x in self.document.payload.nodes), default=0)
 
-        if node_type == "terminal":
+        if content is not None:
+            pass
+        elif node_type == "terminal":
             content = TerminalContent(name=f"Terminal {n}", command="bash")
         elif node_type == "stickyNote":
             taken = {x.content.file_name[:-3] if x.content.file_name.endswith(".md") else x.content.file_name

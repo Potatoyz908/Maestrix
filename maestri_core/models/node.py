@@ -174,7 +174,9 @@ class StickyNoteContent:
 
     def to_dict(self) -> dict:
         d = dict(self._extra)
-        fn = self.file_name if self.file_name.endswith(".md") else f"{self.file_name}.md"
+        custom = isinstance(self.storage_mode, dict) and "custom" in self.storage_mode
+        # managed notes are always <name>.md; a custom note keeps its real file name (Swift: url.lastPathComponent)
+        fn = self.file_name if custom or self.file_name.endswith(".md") else f"{self.file_name}.md"
         d.update({
             "color": self.color,
             "fileName": fn,

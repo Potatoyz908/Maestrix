@@ -23,7 +23,7 @@ import os
 import signal
 
 import cairo
-from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk
+from gi.repository import Gdk, Gio, GLib, GObject, Graphene, Gsk, Gtk
 
 from .constants import CANVAS_GRID_SPACING  # noqa: F401
 from .geometry import Point, Rect, round_half_away
@@ -311,6 +311,14 @@ CSS = b"""
 .maestri-pin { background: #3b82f6; border: 2px solid white; border-radius: 50%; opacity: 0; transition: opacity 120ms; }
 .maestri-file-tree-list > row { padding: 2px 6px; min-height: 22px; }
 .maestri-drop-hover { box-shadow: inset 0 0 0 2px #3b82f6; }
+.maestri-canvas-drop-hover { box-shadow: inset 0 0 0 3px alpha(#3b82f6, .6); }
+.maestri-git-badge { font-family: monospace; font-weight: bold; font-size: 0.85em; padding: 0 4px; border-radius: 4px; }
+.maestri-git-badge.git-modified { color: #f59e0b; } .maestri-git-badge.git-added { color: #22c55e; }
+.maestri-git-badge.git-deleted { color: #ef4444; } .maestri-git-badge.git-renamed { color: #3b82f6; }
+.maestri-git-badge.git-conflict { color: white; background: #ef4444; } .maestri-git-badge.git-untracked { color: alpha(currentColor, .55); }
+.maestri-git-branch { font-size: 0.85em; padding: 0 6px; opacity: .8; }
+.maestri-file-grid > child { padding: 6px; border-radius: 8px; }
+.maestri-file-thumb { border-radius: 4px; }
 .maestri-drag-icon { background: alpha(@window_bg_color, .9); border-radius: 6px; padding: 4px 8px; }
 .maestri-node:hover .maestri-pin, .maestri-connecting .maestri-pin { opacity: 1; }
 """
@@ -333,6 +341,8 @@ class CanvasWidget(Gtk.Overlay):
         "viewport-changed": (GObject.SignalFlags.RUN_FIRST, None, (float, float, float)),
         "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
         "file-activated": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                             # fileTree id, path
+        "file-tree-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                       # fileTree id, {rootPath, viewMode}
+        "files-dropped": (GObject.SignalFlags.RUN_FIRST, None, (object, float, float)),                  # [paths], canvas x, y
         "note-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                       # stickyNote id, StickyNoteContent dict
         "portal-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                     # portal id, PortalContent dict
         "portal-popup": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                               # portal id, url (target=_blank)
@@ -398,14 +408,16 @@ class CanvasWidget(Gtk.Overlay):
         keys.connect("key-released", lambda _c, kv, *_: self.controller.key_release((Gdk.keyval_name(kv) or "").lower()))
         self.add_controller(keys)
 
+        self._install_file_drop()
         self.add_tick_callback(self._tick)
 
     # ---- public API ---------------------------------------------------------------------------
     def add_node(self, item: NodeItem, content: Gtk.Widget | None = None, cwd: str | None = None,
                  env: dict[str, str] | None = None, focus: bool = False, note: dict | None = None,
-                 portal: dict | None = None) -> None:
+                 portal: dict | None = None, file_tree: dict | None = None) -> None:
         """`content=None` builds the native content: a VTE login shell for "terminal" (cwd/env apply to it), a FileTreeView rooted at
-        `cwd` (default ~) for "fileTree", a StickyNoteView for "stickyNote" (`note` = the persisted StickyNoteContent dict).
+        `cwd` (default ~) for "fileTree" (`file_tree` = the persisted FileTreeContent dict: viewMode), a StickyNoteView for
+        "stickyNote" (`note` = the persisted StickyNoteContent dict).
         `focus` gives the content the keyboard."""
         self.scene.add_node(item)
         self.controller.dirty = True
@@ -416,8 +428,10 @@ class CanvasWidget(Gtk.Overlay):
                 content = Gtk.Label(label="Vte 3.91 (GTK 4) not available")
         elif item.kind == "fileTree" and content is None:
             nid = item.id
-            content = FileTreeView(cwd)
+            content = FileTreeView(cwd, view_mode=(file_tree or {}).get("viewMode", "list"))
             content.connect("file-activated", lambda _v, path: self.emit("file-activated", nid, path))
+            content.connect("root-changed", lambda v, _p: self.emit("file-tree-changed", nid, {"rootPath": v.root, "viewMode": v.view_mode}))
+            content.connect("view-mode-changed", lambda v, _m: self.emit("file-tree-changed", nid, {"rootPath": v.root, "viewMode": v.view_mode}))
         elif item.kind == "stickyNote" and content is None:
             nid = item.id
             meta = NoteMeta.from_dict(note) if note else NoteMeta(file_name=f"{item.title or 'Note'}.md")
@@ -549,6 +563,35 @@ class CanvasWidget(Gtk.Overlay):
 
     def set_tool(self, tool: str) -> None:
         self.controller.set_tool(tool)
+
+    # ---- files dropped on the empty canvas (FileTree rows, Nautilus...) -> preview nodes -------------
+    def _install_file_drop(self) -> None:
+        """Bubble-phase DropTarget: a terminal / sticky note under the pointer has its own target and wins; only drops on the empty
+        background reach this one, which emits `files-dropped(paths, canvas_x, canvas_y)` for the app to create preview nodes."""
+        t = Gtk.DropTarget.new(GObject.TYPE_NONE, Gdk.DragAction.COPY)
+        t.set_gtypes([Gdk.FileList, Gio.File])
+        t.connect("motion", self._file_drop_motion)
+        t.connect("leave", lambda *_: self.remove_css_class("maestri-canvas-drop-hover"))
+        t.connect("drop", self._file_drop)
+        self.add_controller(t)
+        self.file_drop_target = t
+
+    def _file_drop_motion(self, _t, x: float, y: float) -> Gdk.DragAction:
+        ok = isinstance(self.target_at(x, y), Background)
+        (self.add_css_class if ok else self.remove_css_class)("maestri-canvas-drop-hover")
+        return Gdk.DragAction.COPY if ok else 0
+
+    def _file_drop(self, _t, value, x: float, y: float) -> bool:
+        self.remove_css_class("maestri-canvas-drop-hover")
+        if not isinstance(self.target_at(x, y), Background):
+            return False   # over a node without its own drop target (portal, file tree): not a canvas drop
+        files = value.get_files() if isinstance(value, Gdk.FileList) else [value] if isinstance(value, Gio.File) else []
+        paths = [f.get_path() for f in files if f.get_path()]   # local (or FUSE-mounted) files only
+        if not paths:
+            return False
+        p = self.viewport.to_canvas(Point(x, y))
+        self.emit("files-dropped", paths, p.x, p.y)
+        return True
 
     # ---- canvas-drawn nodes (text / shape / freehand: painted by Cairo, no NodeFrame) ------------------
     def set_node_content(self, node_id: str, content: dict) -> None:
