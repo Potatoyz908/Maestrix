@@ -5,6 +5,10 @@ set -e
 DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 REPO_DIR="$(cd "$DIR/.." && pwd)"
 
+# Set up local GObject introspection typelibs and Python extensions
+export GI_TYPELIB_PATH="$HOME/.local/lib/girepository-1.0:${GI_TYPELIB_PATH:-}"
+export PYTHONPATH="$HOME/.local/lib/python3.14/site-packages:$REPO_DIR/canvas-cairo:$REPO_DIR/canvas-cairo/src:$REPO_DIR:$PYTHONPATH"
+
 # Ensure backend server binary exists
 SERVER_BIN=""
 if [ -f "$REPO_DIR/.build/release/open-maestri-server" ]; then
@@ -34,5 +38,4 @@ if [ -n "$SERVER_BIN" ] && [ ! -S "$SOCK_PATH" ]; then
 fi
 
 # Launch Native GTK 4 Desktop Application
-export PYTHONPATH="$REPO_DIR/canvas-cairo/src:$REPO_DIR:$PYTHONPATH"
 exec python3 "$REPO_DIR/gtk4-ui/src/app.py" "$@"
