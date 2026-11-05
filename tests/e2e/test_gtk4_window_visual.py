@@ -34,6 +34,8 @@ from maestri_canvas.geometry import Point, Rect  # noqa: E402
 from maestri_canvas.interaction import Mods, NodeHeader, NodeEdge  # noqa: E402
 from maestri_canvas.resize import Edge  # noqa: E402
 from maestri_canvas.demo import screenshot  # noqa: E402
+from maestri_canvas.sticky_note import StickyNoteView  # noqa: E402
+from maestri_canvas.file_tree_node import FileTreeView  # noqa: E402
 from maestri_core.client.api import MaestriClient  # noqa: E402
 from ui.window import OpenMaestriWindow  # noqa: E402
 
@@ -143,6 +145,7 @@ class TestGTK4WindowVisualE2E:
         note_node = window.document.payload.nodes[-1]
         assert note_node.node_type == "stickyNote"
         assert note_node.id in cw.frames
+        assert isinstance(cw.frames[note_node.id].content, StickyNoteView)
 
         # 3. Add Portal
         window._create_node("portal")
@@ -159,6 +162,7 @@ class TestGTK4WindowVisualE2E:
         tree_node = window.document.payload.nodes[-1]
         assert tree_node.node_type == "fileTree"
         assert tree_node.id in cw.frames
+        assert isinstance(cw.frames[tree_node.id].content, FileTreeView)
 
         # 5. Capture visual snapshot with all 4 newly created nodes
         shot_path = str(artifacts_dir / "02_canvas_with_all_node_types.png")
@@ -292,3 +296,121 @@ class TestGTK4WindowVisualE2E:
         # Resize back to 1280x800
         window.set_default_size(1280, 800)
         pump_events(0.25)
+
+    def test_sticky_note_real_widget_rendering_and_interaction(self, window, artifacts_dir):
+        """Validates real StickyNoteView widget rendering: Markdown editor, Raw/Formatted modes, live color styling, and Cairo snapshot."""
+        cw = window.canvas_widget
+
+        # 1. Create a real Sticky Note
+        window._create_node("stickyNote")
+        pump_events(0.25)
+        note_node = [n for n in window.document.payload.nodes if n.node_type == "stickyNote"][-1]
+        note_frame = cw.frames[note_node.id]
+        note_view = note_frame.content
+
+        # 2. Verify instance and structure
+        assert isinstance(note_view, StickyNoteView)
+        assert note_frame.has_css_class("maestri-note")
+        assert note_view.raw_btn is not None
+        assert note_view.fmt_btn is not None
+        assert note_view.title_label is not None
+        assert note_view.menu_btn is not None
+
+        # 3. Test Markdown editing
+        test_markdown = "# Sprint 3 Real Widget E2E\n\n- [x] StickyNoteView native\n- [x] FileTreeView native\n- [ ] Portal next #e2e #linux"
+        note_view._set_text(test_markdown)
+        pump_events(0.2)
+        assert "Sprint 3 Real Widget E2E" in note_view.text()
+
+        # 4. Test Mode Toggling (Raw <-> Formatted Preview)
+        assert note_view.raw_btn.get_active() is True
+        assert note_view.stack.get_visible_child_name() == "raw"
+
+        note_view.set_previewing(True)
+        pump_events(0.15)
+        assert note_view.fmt_btn.get_active() is True
+        assert note_view.stack.get_visible_child_name() == "formatted"
+
+        note_view.set_previewing(False)
+        pump_events(0.15)
+        assert note_view.raw_btn.get_active() is True
+        assert note_view.stack.get_visible_child_name() == "raw"
+
+        # 5. Test Live Color Switching
+        note_view.set_color("teal")
+        pump_events(0.15)
+        assert note_view.meta.color == "teal"
+
+        # 6. Test Font Size Adjustment
+        note_view.set_font_size(16)
+        pump_events(0.1)
+        assert note_view.meta.font_size == 16
+
+        # 7. Visual Snapshot of the real Sticky Note on Canvas
+        shot_path = str(artifacts_dir / "04_sticky_note_real_widget.png")
+        screenshot(cw, shot_path)
+        assert os.path.isfile(shot_path)
+        assert os.path.getsize(shot_path) > 1000
+
+        import cairo
+        surf = cairo.ImageSurface.create_from_png(shot_path)
+        assert surf.get_width() > 800
+        assert surf.get_height() > 500
+
+    def test_file_tree_real_widget_rendering_and_interaction(self, window, artifacts_dir):
+        """Validates real FileTreeView widget rendering: Navigation toolbar, lazy DirectoryList, Gtk.ListView, and Cairo snapshot."""
+        cw = window.canvas_widget
+
+        # 1. Create a real FileTree node
+        window._create_node("fileTree")
+        pump_events(0.25)
+        tree_node = [n for n in window.document.payload.nodes if n.node_type == "fileTree"][-1]
+        tree_frame = cw.frames[tree_node.id]
+        tree_view = tree_frame.content
+
+        # 2. Verify instance and toolbar hierarchy
+        assert isinstance(tree_view, FileTreeView)
+        assert tree_view.has_css_class("maestri-file-tree")
+        assert tree_view.btn_back is not None
+        assert tree_view.btn_forward is not None
+        assert tree_view.btn_up is not None
+        assert tree_view.path_label is not None
+        assert tree_view.btn_hidden is not None
+        assert tree_view.list_view is not None
+        assert isinstance(tree_view.list_view, Gtk.ListView)
+        assert isinstance(tree_view.selection, Gtk.SingleSelection)
+
+        # 3. Test Re-rooting to repo root directory
+        tree_view.set_root(str(ROOT_DIR))
+        pump_events(0.3)
+        assert tree_view.root == str(ROOT_DIR)
+
+        # 4. Test Toggling Show Hidden Files
+        assert tree_view.btn_hidden.get_active() is False
+        tree_view.set_show_hidden(True)
+        pump_events(0.15)
+        assert tree_view.btn_hidden.get_active() is True
+        tree_view.set_show_hidden(False)
+        pump_events(0.15)
+        assert tree_view.btn_hidden.get_active() is False
+
+        # 5. Test Navigation Up and Back
+        tree_view.go_up()
+        pump_events(0.2)
+        assert tree_view.root != str(ROOT_DIR)
+
+        tree_view.go_back()
+        pump_events(0.2)
+        assert tree_view.root == str(ROOT_DIR)
+
+        # 6. Visual Snapshot of the real FileTree on Canvas
+        shot_path = str(artifacts_dir / "05_file_tree_real_widget.png")
+        screenshot(cw, shot_path)
+        assert os.path.isfile(shot_path)
+        assert os.path.getsize(shot_path) > 1000
+
+        import cairo
+        surf = cairo.ImageSurface.create_from_png(shot_path)
+        assert surf.get_width() > 800
+        assert surf.get_height() > 500
+
