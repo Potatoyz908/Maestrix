@@ -111,3 +111,33 @@ def test_get_workspace_rejects_other_schema_versions():
         assert client.get_workspace() is None
         get.return_value.json.return_value = WorkspaceDocument().to_dict()
         assert client.get_workspace() is not None
+
+
+# ---- periodic autosave (preferences autosaveIntervalSeconds) -------------------------------------------------------
+def test_autosave_is_a_noop_when_everything_is_saved(setup):
+    _doc, _node, _bus, client, sync, _ = setup
+    assert not sync.dirty
+    assert sync.autosave() is False
+    pump(100)
+    assert client.saved == []
+
+
+def test_dirty_clears_only_after_a_confirmed_save(setup):
+    _doc, node, bus, client, sync, _ = setup
+    bus.emit("node-moved", node.id, 1.0, 2.0)
+    assert sync.dirty
+    pump(300); sync.wait_idle(); pump(50)
+    assert len(client.saved) == 1 and not sync.dirty
+    assert sync.autosave() is False
+
+
+def test_autosave_retries_a_failed_save(setup):
+    _doc, node, bus, client, sync, _ = setup
+    client.ok = False
+    bus.emit("node-moved", node.id, 1.0, 2.0)
+    pump(300); sync.wait_idle(); pump(50)
+    assert len(client.saved) == 1 and sync.dirty, "a failed save keeps the workspace dirty"
+    client.ok = True
+    assert sync.autosave() is True
+    sync.wait_idle(); pump(50)
+    assert len(client.saved) == 2 and not sync.dirty

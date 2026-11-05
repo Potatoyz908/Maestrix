@@ -12,39 +12,35 @@ from .gi_env import ensure_typelib_paths
 ensure_typelib_paths()
 gi.require_version("Gtk", "4.0")
 gi.require_version("Vte", "3.91")
-from gi.repository import Gdk, Gtk, Pango, Vte
+from gi.repository import Gtk, Pango, Vte
 
 from .file_dnd import install_terminal_drop
 from .pty_transport import PtyTransport
 from .replay import normalize_replay
+from .terminal_themes import THEMES, apply_terminal_style
 
-BG = "#1e1e1e"
-FG = "#d4d4d4"
-# VS Code Dark+ ANSI palette: the VTE default dark blue is nearly unreadable on #1e1e1e.
-PALETTE = ["#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
-           "#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#e5e5e5"]
+BG = THEMES["dark"].bg
+FG = THEMES["dark"].fg
+PALETTE = list(THEMES["dark"].palette)
 
 
 class VteTerminalView(Gtk.ScrolledWindow):
     """`canvas.add_node(item, VteTerminalView(transport))`. Takes ownership of `transport` (closed on `dispose`)."""
 
-    def __init__(self, transport: PtyTransport, scrollback_lines: int = 5000, font: str = "Monospace 11") -> None:
+    def __init__(self, transport: PtyTransport, scrollback_lines: int = 5000, font: str = "Monospace 11",
+                 theme: str = "dark") -> None:
         super().__init__()
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.term = Vte.Terminal()
         self.term.set_scrollback_lines(scrollback_lines)
-        self.term.set_font(Pango.FontDescription(font))
         self.term.set_scroll_on_output(True)
         self.term.set_scroll_on_keystroke(True)
         self.term.set_mouse_autohide(True)
-        fg, bg = Gdk.RGBA(), Gdk.RGBA()
-        fg.parse(FG); bg.parse(BG)
-        palette = []
-        for hex_ in PALETTE:
-            c = Gdk.RGBA(); c.parse(hex_); palette.append(c)
-        self.term.set_colors(fg, bg, palette)
-        self.term.set_bold_is_bright(True)   # "bold blue" (ls directories, prompts) uses the bright blue
+        self.term.set_size_request(80, 40)   # keep the node shrinkable (VTE's natural 80x24 must not become a minimum)
+        fd = Pango.FontDescription.from_string(font)
+        apply_terminal_style(self.term, fd.get_family(), (fd.get_size() / Pango.SCALE) or None, theme)
         self.set_child(self.term)
+        self.disposed = False
 
         self.transport = transport
         self._size: tuple[int, int] = (0, 0)
@@ -88,5 +84,9 @@ class VteTerminalView(Gtk.ScrolledWindow):
         out = self.term.get_text_range_format(Vte.Format.TEXT, 0, 0, 10_000_000, cols - 1)
         return (out[0] if isinstance(out, tuple) else out) or ""
 
+    def set_style(self, family: str | None, size: float | None, theme: str | None) -> None:
+        apply_terminal_style(self.term, family, size, theme)
+
     def dispose(self) -> None:
+        self.disposed = True
         self.transport.close()

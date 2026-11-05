@@ -150,6 +150,14 @@ def is_terminal(w: Gtk.Widget | None) -> bool:
     return Vte is not None and isinstance(w, Vte.Terminal)
 
 
+def terminal_of(w: Gtk.Widget | None):
+    """The Vte.Terminal behind a node's content: the widget itself (local shell) or `.term` of a core-backed VteTerminalView."""
+    if is_terminal(w):
+        return w
+    t = getattr(w, "term", None)
+    return t if is_terminal(t) else None
+
+
 def terminate_terminal(w: Gtk.Widget) -> None:
     """SIGHUP the shell, like closing a terminal window."""
     pid = getattr(w, "maestri_pid", -1)
@@ -440,11 +448,13 @@ class CanvasWidget(Gtk.Overlay):
         frame = self.frames.pop(k, None)
         if frame is not None:
             if is_terminal(frame.content):
-                terminate_terminal(frame.content)
-            elif isinstance(frame.content, StickyNoteView):
-                frame.content.dispose()   # flush the last edit, stop the file monitor
-            elif hasattr(frame.content, "web"):
-                frame.content.dispose()   # PortalView: stop loading, close the WebView
+                terminate_terminal(frame.content)   # local shell: SIGHUP
+            else:
+                # One protocol for every content view: StickyNoteView flushes + stops its monitor, PortalView closes the
+                # WebView, VteTerminalView closes its /ws/pty socket (the core owns that shell). GTK widgets have no `dispose`.
+                dispose = getattr(frame.content, "dispose", None)
+                if callable(dispose):
+                    dispose()
             self.fixed.remove(frame)
         for c in self.scene.connections_of({k}):
             self.controller.ropes.remove(c.id)
@@ -655,8 +665,9 @@ class CanvasWidget(Gtk.Overlay):
         target = self.target_at(x, y)
         self._header_double_click(g, target, x, y)
         frame = self.frames.get(target.id) if isinstance(target, NodeContent) else None
-        if frame is not None and is_terminal(frame.content):
-            frame.content.grab_focus()   # click into a terminal = keyboard goes to the shell
+        term = terminal_of(frame.content) if frame is not None else None
+        if term is not None:
+            term.grab_focus()   # click into a terminal = keyboard goes to the shell
         elif not self._focus_in_node():
             self.grab_focus()
         ev = g.get_current_event()

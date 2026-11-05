@@ -22,6 +22,7 @@ ROPE = (0.54, 0.54, 0.56)
 ACCENT = (0.231, 0.510, 0.965)
 KIND_FILL = {"terminal": (0.12, 0.12, 0.12), "stickyNote": (1.0, 0.953, 0.639), "portal": (1.0, 1.0, 1.0), "fileTree": (0.98, 0.98, 0.99)}
 GRID_STEP = 40.0
+BACKGROUNDS = ("dotGrid", "solid", "transparent")   # preferences.json `canvasBackground`
 MIN_GRID_PX = 12.0
 
 
@@ -37,15 +38,18 @@ def _polyline_smooth(cr: cairo.Context, pts: list[Point]) -> None:
 
 
 class CairoRenderer:
-    def __init__(self, placeholders: bool = False) -> None:
+    def __init__(self, placeholders: bool = False, background: str = "dotGrid") -> None:
         self.placeholders = placeholders
+        self.background = background if background in BACKGROUNDS else "dotGrid"
 
     def draw(self, cr: cairo.Context, scene: Scene, vp: Viewport, width: float, height: float,
              ropes: RopeSimulation | None = None, overlay: Overlay | None = None) -> None:
         """Base layer (+ the overlay when given, for headless use). The widget passes overlay=None and draws it on a top layer."""
-        cr.set_source_rgb(*BG)
-        cr.paint()
-        self._grid(cr, vp, width, height)
+        if self.background != "transparent":   # transparent: the window background shows through
+            cr.set_source_rgb(*BG)
+            cr.paint()
+        if self.background == "dotGrid":
+            self._grid(cr, vp, width, height)
         cr.save()
         # Everything below is in canvas units: one transform instead of converting every coordinate.
         cr.scale(vp.zoom, vp.zoom)

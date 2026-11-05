@@ -354,3 +354,32 @@ def test_pty_websocket_handshake_and_framing():
     ws.close()
     assert ws.is_open is False
     t.join(timeout=2.0)
+
+
+def test_create_terminal_pins_id_and_display_name(client):
+    resp = MagicMock(ok=True, status_code=200)
+    resp.json.return_value = {"id": "AAAAAAAA-0000-0000-0000-000000000001"}
+    with patch.object(client.session, "post", return_value=resp) as post:
+        client.create_terminal(name="T", command="bash", terminal_id="AAAAAAAA-0000-0000-0000-000000000001", display_name="T")
+    body = post.call_args.kwargs["json"]
+    assert body["id"] == "AAAAAAAA-0000-0000-0000-000000000001" and body["displayName"] == "T"
+
+
+def test_ensure_terminal_reuses_a_running_session(client):
+    meta = MagicMock(ok=True, status_code=200)
+    meta.json.return_value = {"id": "X", "running": True}
+    with patch.object(client.session, "get", return_value=meta), patch.object(client.session, "post") as post:
+        assert client.ensure_terminal("X") is False
+    post.assert_not_called()   # POST would replace (kill) the live shell
+
+
+@pytest.mark.parametrize("get_status, meta", [(404, None), (200, {"id": "X", "running": False})])
+def test_ensure_terminal_creates_missing_or_exited_session(client, get_status, meta):
+    got = MagicMock(ok=get_status == 200, status_code=get_status)
+    got.json.return_value = meta
+    created = MagicMock(ok=True, status_code=200)
+    created.json.return_value = {"id": "X"}
+    with patch.object(client.session, "get", return_value=got), patch.object(client.session, "post", return_value=created) as post:
+        assert client.ensure_terminal("X", command="bash", working_directory="/tmp", workspace_id="W") is True
+    body = post.call_args.kwargs["json"]
+    assert body["id"] == "X" and body["workingDirectory"] == "/tmp" and body["workspaceId"] == "W"

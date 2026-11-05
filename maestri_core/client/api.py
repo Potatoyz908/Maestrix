@@ -602,8 +602,12 @@ class MaestriClient:
         role: str = "generic_shell",
         working_directory: str = "",
         workspace_id: Optional[str] = None,
+        terminal_id: Optional[str] = None,
+        display_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Creates a headless PTY terminal session on the server."""
+        """Creates a headless PTY terminal session on the server. `terminal_id` pins the id (a canvas node's
+        terminalId), otherwise the core generates one. NOTE: the core replaces an existing session with the same id;
+        use `ensure_terminal` to attach to a node's shell without killing it."""
         payload: Dict[str, Any] = {
             "name": name,
             "command": command,
@@ -612,6 +616,10 @@ class MaestriClient:
         }
         if workspace_id:
             payload["workspaceId"] = workspace_id
+        if terminal_id:
+            payload["id"] = terminal_id
+        if display_name:
+            payload["displayName"] = display_name
 
         resp = self.session.post(
             f"{self.base_url}/api/terminals",
@@ -620,6 +628,40 @@ class MaestriClient:
             timeout=self.timeout,
         )
         return self._handle_response(resp).json()
+
+    def get_terminal(self, terminal_id: str) -> Optional[Dict[str, Any]]:
+        """PTY metadata (pid/cols/rows/running/exitCode...) or None when the core has no such session (404)."""
+        resp = self.session.get(
+            f"{self.base_url}/api/terminals/{terminal_id}",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        if resp.status_code == 404:
+            return None
+        return self._handle_response(resp).json()
+
+    def ensure_terminal(
+        self,
+        terminal_id: str,
+        command: str = "bash",
+        working_directory: str = "",
+        workspace_id: Optional[str] = None,
+        display_name: Optional[str] = None,
+    ) -> bool:
+        """Make sure the core runs a PTY for `terminal_id`: reuse a live one (its shell and scrollback survive a UI
+        restart), create it otherwise. Returns True when a new session was created."""
+        meta = self.get_terminal(terminal_id)
+        if meta is not None and meta.get("running", True):
+            return False
+        self.create_terminal(
+            name=display_name or "Terminal",
+            command=command,
+            working_directory=working_directory,
+            workspace_id=workspace_id,
+            terminal_id=terminal_id,
+            display_name=display_name,
+        )
+        return True
 
     def delete_terminal(self, terminal_id: str) -> bool:
         """Terminates and removes a PTY terminal session."""

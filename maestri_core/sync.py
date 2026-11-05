@@ -60,6 +60,8 @@ class WorkspaceSync:
         self._pending: Optional[tuple] = None  # (workspace_id, data)
         self._worker: Optional[threading.Thread] = None
         self._handler_ids = []
+        self._dirty_gen = 0   # bumped by every change; a save confirms the generation it snapshotted
+        self._saved_gen = 0
 
         for name in DIRTY_SIGNALS:
             self._handler_ids.append(self._bus.connect(name, self._on_dirty))
@@ -67,12 +69,27 @@ class WorkspaceSync:
 
     # -- signal handlers ----------------------------------------------------
     def _on_dirty(self, *_args) -> None:
+        self._dirty_gen += 1
         self.schedule()
 
     def _on_selected(self, _bus, node_id: str) -> None:
         # Selecting raises z_index; deselecting ("") changes nothing.
         if node_id:
+            self._dirty_gen += 1
             self.schedule()
+
+    @property
+    def dirty(self) -> bool:
+        """True while some change has not been confirmed saved by the core (pending debounce, in flight, or failed)."""
+        return self._dirty_gen != self._saved_gen
+
+    def autosave(self) -> bool:
+        """Periodic autosave tick (preferences `autosaveIntervalSeconds`): flush only when dirty, which also retries a
+        save that failed while the core was unreachable. Returns True when a save was dispatched. Main thread only."""
+        if not self.dirty:
+            return False
+        self.flush()
+        return True
 
     # -- scheduling ---------------------------------------------------------
     def schedule(self) -> None:
@@ -128,7 +145,7 @@ class WorkspaceSync:
     def _dispatch(self) -> None:
         workspace_id, data = self.snapshot()
         with self._lock:
-            self._pending = (workspace_id, data)
+            self._pending = (workspace_id, data, self._dirty_gen)
             if self._worker is not None and self._worker.is_alive():
                 return  # running worker will pick up the newest snapshot
             self._worker = threading.Thread(
@@ -142,19 +159,21 @@ class WorkspaceSync:
                 item, self._pending = self._pending, None
             if item is None:
                 return
-            workspace_id, data = item
+            workspace_id, data, gen = item
             ok = False
             try:
                 ok = bool(self.client.save_workspace_dict(data, workspace_id))
             except Exception:
                 ok = False
             if ok:
-                GLib.idle_add(self._emit_saved, workspace_id)
+                GLib.idle_add(self._emit_saved, workspace_id, gen)
             else:
                 GLib.idle_add(self._emit_failed)
 
-    def _emit_saved(self, workspace_id: str) -> bool:
+    def _emit_saved(self, workspace_id: str, gen: int = 0) -> bool:
+        self._saved_gen = max(self._saved_gen, gen)
         self._bus.emit("workspace-saved", workspace_id)
+        self._bus.emit("status-changed", "idle", True)
         return GLib.SOURCE_REMOVE
 
     def _emit_failed(self) -> bool:

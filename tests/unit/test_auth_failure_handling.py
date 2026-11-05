@@ -43,6 +43,7 @@ def test_auth_failure_disables_sync_and_does_not_save(maestri_app):
     with patch.object(client.session, "get", return_value=err_401):
         with patch.object(client.session, "post") as mock_post:
             win = OpenMaestriWindow(maestri_app, client)
+            assert win.wait_loaded(), "the initial load (background thread) must finish"
 
             # 1. Auth failure flag must be True
             assert win.auth_failed is True

@@ -29,7 +29,9 @@ from maestri_canvas.geometry import Point, Rect
 from maestri_canvas.interaction import Background
 from maestri_canvas.note_model import unique_name
 from maestri_canvas.note_storage import CoreNotesClient
-from maestri_canvas.scene import WIDGET_KINDS, ConnItem, NodeItem
+from maestri_canvas.pty_transport import SoupPtyTransport
+from maestri_canvas.scene import WIDGET_KINDS, ConnItem, NodeItem, norm
+from maestri_canvas.terminal_themes import apply_terminal_style
 from maestri_canvas.viewport import Viewport
 from maestri_canvas.widget import CanvasWidget
 from .settings_window import SettingsWindow
@@ -45,28 +47,102 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.settings_window = None
         self.set_default_size(1280, 800)
 
-        # 1. Load initial workspace or create default
+        # 1. The workspace is fetched off the main thread (_start_initial_load): the window shows at once with an empty
+        #    placeholder document and a "Conectando..." overlay, and is filled in by _apply_initial_load.
         self.auth_failed = False
-        try:
-            doc = self.client.get_workspace()
-        except AuthenticationError:
-            self.auth_failed = True
-            doc = None
+        self.core_connected = False
+        self.loaded = False
+        self.sync = None
+        self._autosave_id = 0
+        self.document = WorkspaceDocument(payload=WorkspacePayload(name="Conectando...", working_directory=os.path.expanduser("~")))
+        load_vte()   # so is_terminal()/terminal_of() recognise VTE widgets before the first terminal exists
+
+        # 2. Setup HeaderBar
+        self._setup_header_bar()
+
+        # 3. Main Paned Layout (Sidebar + Canvas)
+        self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        self.paned.set_position(250)
+
+        self.sidebar = SidebarView(self.client)
+        self.canvas_widget = CanvasWidget(viewport=self._viewport_from_payload())
+        self.canvas_widget.set_hexpand(True)
+        self.canvas_widget.set_vexpand(True)
+        self.canvas_widget.renderer.background = self.preferences.canvas_background
+        self.canvas_widget.connect("node-moved", self._on_canvas_frame_changed)
+        self.canvas_widget.connect("node-resized", self._on_canvas_frame_changed)
+        self.canvas_widget.connect("viewport-changed", lambda _c, x, y, z: bus.emit("viewport-changed", x, y, z))
+        self.canvas_widget.connect("delete-requested", self._on_canvas_delete_requested)
+        self.canvas_widget.connect("connect-requested", self._on_canvas_connect_requested)
+        self.canvas_widget.connect("note-meta-changed", self._on_note_meta_changed)
+        self.canvas_widget.connect("portal-meta-changed", self._on_portal_meta_changed)
+        self.canvas_widget.connect("file-activated", self._on_file_activated)
+        self._setup_context_menu()
+
+        self.paned.set_start_child(self.sidebar)
+        canvas_stack = Gtk.Overlay()
+        canvas_stack.set_child(self.canvas_widget)
+        self.loading_label = Gtk.Label(label="Conectando...", halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
+                                       css_classes=["maestri-loading"])
+        self.loading_label.set_can_target(False)
+        canvas_stack.add_overlay(self.loading_label)
+        self.paned.set_end_child(canvas_stack)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        root.append(Gtk.PopoverMenuBar.new_from_model(self._build_menu_model()))
+        self.paned.set_vexpand(True)
+        root.append(self.paned)
+        self.set_child(root)
+
+        # 4. Setup Shortcuts
+        self._setup_shortcuts()
+
+        bus.connect("workspace-switched", self._on_workspace_switched)
+        self.connect("close-request", self._on_close_request)
+
+        # Apply dark theme styling
+        self._setup_theme()
+        self._start_initial_load()
+
+    # ---- initial load (background thread -> main loop) ------------------------------------------
+    def _start_initial_load(self) -> None:
+        def worker():
+            status, doc = "offline", None
+            try:
+                status = self.client.check_connection_status()
+                if status == "connected":
+                    doc = self.client.get_workspace()
+            except AuthenticationError:
+                status = "unauthorized"
+            except Exception:
+                status = "offline"
+            GLib.idle_add(self._apply_initial_load, status, doc)
+
+        threading.Thread(target=worker, name="maestri-initial-load", daemon=True).start()
+
+    def wait_loaded(self, timeout: float = 10.0) -> bool:
+        """Pump the main loop until the initial workspace is on the canvas (tests, scripted startup)."""
+        import time
+        ctx = GLib.MainContext.default()
+        end = time.monotonic() + timeout
+        while not self.loaded and time.monotonic() < end:
+            ctx.iteration(False)
+            time.sleep(0.005)
+        return self.loaded
+
+    def _apply_initial_load(self, status: str, doc) -> bool:
+        if self.loaded:
+            return GLib.SOURCE_REMOVE
+        self.auth_failed = status == "unauthorized"
+        self.core_connected = status == "connected"
 
         if self.auth_failed:
             # When authentication fails, do not create demo workspace or enable sync
-            payload = WorkspacePayload(
-                name="Não Conectado",
-                working_directory=os.path.expanduser("~")
-            )
+            payload = WorkspacePayload(name="Não Conectado", working_directory=os.path.expanduser("~"))
             self.document = WorkspaceDocument(payload=payload)
         elif doc and doc.payload:
             self.document = doc
         else:
-            payload = WorkspacePayload(
-                name="Default",
-                working_directory=os.path.expanduser("~")
-            )
+            payload = WorkspacePayload(name="Default", working_directory=os.path.expanduser("~"))
             # Add demo terminals if empty
             term_a = CanvasNode(
                 frame=NodeFrame(x=9900, y=8600, width=420, height=300),
@@ -83,41 +159,22 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             payload.nodes = [term_a, term_b]
             self.document = WorkspaceDocument(payload=payload)
 
-        # 2. Setup HeaderBar
-        self._setup_header_bar()
+        if self.auth_failed:
+            self._update_status_label("🔴 Token Inválido")
+            self.lbl_status.set_tooltip_text("Falha de autenticação: token inválido ou ausente.")
+        elif self.core_connected:
+            self._update_status_label(f"🟢 Porta {self.client.port}")
+        else:
+            self._update_status_label("⚪ Standalone")
 
-        # 3. Main Paned Layout (Sidebar + Canvas)
-        self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        self.paned.set_position(250)
-
-        self.sidebar = SidebarView(self.client)
-        self.canvas_widget = CanvasWidget(viewport=self._viewport_from_payload())
-        self.canvas_widget.set_hexpand(True)
-        self.canvas_widget.set_vexpand(True)
+        cw = self.canvas_widget
+        vp = self._viewport_from_payload()
+        cw.viewport.origin, cw.viewport.zoom = vp.origin, vp.zoom
         self._configure_notes_backend()
         self._load_payload_into_canvas()
-        self.canvas_widget.connect("node-moved", self._on_canvas_frame_changed)
-        self.canvas_widget.connect("node-resized", self._on_canvas_frame_changed)
-        self.canvas_widget.connect("viewport-changed", lambda _c, x, y, z: bus.emit("viewport-changed", x, y, z))
-        self.canvas_widget.connect("delete-requested", self._on_canvas_delete_requested)
-        self.canvas_widget.connect("connect-requested", self._on_canvas_connect_requested)
-        self.canvas_widget.connect("note-meta-changed", self._on_note_meta_changed)
-        self.canvas_widget.connect("portal-meta-changed", self._on_portal_meta_changed)
-        self.canvas_widget.connect("file-activated", self._on_file_activated)
-        self._setup_context_menu()
+        cw.controller.dirty = True
 
-        self.paned.set_start_child(self.sidebar)
-        self.paned.set_end_child(self.canvas_widget)
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        root.append(Gtk.PopoverMenuBar.new_from_model(self._build_menu_model()))
-        self.paned.set_vexpand(True)
-        root.append(self.paned)
-        self.set_child(root)
-
-        # 4. Setup Shortcuts
-        self._setup_shortcuts()
-
-        # 5. Real-time sync: bus events -> debounced snapshot -> REST (schemaVersion 2)
+        # Real-time sync: bus events -> debounced snapshot -> REST (schemaVersion 2)
         if not self.auth_failed:
             self.sync = WorkspaceSync(
                 self.client,
@@ -129,13 +186,28 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 ),
             )
             bus.connect("status-changed", self._on_sync_status_changed)
-        else:
-            self.sync = None
-        bus.connect("workspace-switched", self._on_workspace_switched)
-        self.connect("close-request", self._on_close_request)
+            self._restart_autosave()
 
-        # Apply dark theme styling
-        self._setup_theme()
+        self.loading_label.set_visible(False)
+        self.loaded = True
+        bus.emit("workspace-loaded", self.document.payload)
+        return GLib.SOURCE_REMOVE
+
+    def _restart_autosave(self) -> None:
+        """Periodic autosave every `autosaveIntervalSeconds` on top of the debounced real-time sync: it persists anything still
+        unsaved (e.g. a save that failed while the core was down)."""
+        if self._autosave_id:
+            GLib.source_remove(self._autosave_id)
+            self._autosave_id = 0
+        if self.sync is not None:
+            self._autosave_id = GLib.timeout_add_seconds(max(1, int(self.preferences.autosave_interval_seconds)), self._autosave_tick)
+
+    def _autosave_tick(self) -> bool:
+        if self.sync is None:
+            self._autosave_id = 0
+            return GLib.SOURCE_REMOVE
+        self.sync.autosave()
+        return GLib.SOURCE_CONTINUE
 
     def _setup_theme(self):
         css_provider = Gtk.CssProvider()
@@ -148,6 +220,13 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             background-color: #1f1f22;
             border-bottom: 1px solid #2d2d30;
             color: #ffffff;
+        }
+        .maestri-loading {
+            font-size: 18px;
+            color: #9a9aa0;
+            background-color: alpha(#161618, 0.85);
+            padding: 12px 24px;
+            border-radius: 10px;
         }
         .sidebar-view {
             background-color: #1a1a1c;
@@ -219,17 +298,13 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         btn_zoom.connect("clicked", lambda b: self.reset_zoom())
         header.pack_end(btn_zoom)
 
-        # Backend Connection status indicator (checked asynchronously)
-        if self.auth_failed:
-            self.lbl_status = Gtk.Label(label="🔴 Token Inválido")
-            self.lbl_status.set_tooltip_text("Falha de autenticação: token inválido ou ausente.")
-        else:
-            self.lbl_status = Gtk.Label(label="⚪ Conectando...")
-            self._check_connection_async()
+        # Backend Connection status indicator (resolved by the asynchronous initial load)
+        self.lbl_status = Gtk.Label(label="⚪ Conectando...")
         self.lbl_status.set_margin_end(8)
         header.pack_end(self.lbl_status)
 
     def _check_connection_async(self):
+        """Re-probe the core off the main thread and refresh the header label (the initial load sets it the first time)."""
         def worker():
             status = self.client.check_connection_status()
             if status == "connected":
@@ -242,12 +317,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_sync_status_changed(self, _sync, status: str):
-        if status == "save-failed":
+    def _on_sync_status_changed(self, _emitter, status: str, ok: bool = True, *args):
+        if status == "save-failed" or not ok:
             self.lbl_status.set_label("⚠️ Falha ao Salvar")
             self.lbl_status.set_tooltip_text("O último salvamento para o servidor falhou.")
-        elif status == "idle":
-            if self.client.is_connected():
+        elif status in ("idle", "saved", "save-ok") or ok:
+            if getattr(self, "core_connected", False) and not getattr(self, "auth_failed", False):
                 self.lbl_status.set_label(f"🟢 Porta {self.client.port}")
                 self.lbl_status.set_tooltip_text("Conectado e sincronizado.")
 
@@ -322,8 +397,61 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         return False
 
     def _on_preferences_changed(self, prefs):
-        # Persisted by SettingsWindow already; consumers (terminal font/theme, canvas background) read self.preferences.
+        """Persisted by SettingsWindow already; apply live: terminal font/theme, canvas background, autosave interval."""
+        old = self.preferences
         self.preferences = prefs
+        cw = self.canvas_widget
+        cw.renderer.background = prefs.canvas_background
+        cw.controller.dirty = True
+        cw.queue_draw()
+        for node in self.document.payload.nodes:
+            if node.node_type == "terminal":
+                self._style_terminal(node)
+        if old.autosave_interval_seconds != prefs.autosave_interval_seconds or not self._autosave_id:
+            self._restart_autosave()
+
+    # ---- terminals -------------------------------------------------------------------------------
+    def _terminal_style(self, node: CanvasNode):
+        """(family, size, theme): the node's own overrides (fontFamily/fontSize/themeId) win over preferences."""
+        c, p = node.content, self.preferences
+        return (getattr(c, "font_family", None) or p.terminal_font_family,
+                getattr(c, "font_size", None) or p.terminal_font_size,
+                getattr(c, "theme_id", None) or p.terminal_theme)
+
+    def _style_terminal(self, node: CanvasNode) -> None:
+        frame = self.canvas_widget.frames.get(norm(node.id))
+        term = terminal_of(frame.content) if frame is not None else None
+        if term is not None:
+            apply_terminal_style(term, *self._terminal_style(node))
+
+    @staticmethod
+    def _terminal_id(node: CanvasNode) -> str:
+        return (getattr(node.content, "terminal_id", "") or node.id).upper()
+
+    def _make_core_terminal(self, node: CanvasNode):
+        """VteTerminalView streaming the core's PTY over /ws/pty/<terminalId>. The core owns the shell, so `omaestri ask`,
+        scrollback persistence and agent features keep working, and the shell survives a UI restart. The session is ensured
+        (GET, POST only when missing) off the main thread; the socket opens once that is done."""
+        from maestri_canvas.terminal_node import VteTerminalView   # needs the Vte 3.91 typelib
+        c = node.content
+        tid = self._terminal_id(node)
+        family, size, theme = self._terminal_style(node)
+        transport = SoupPtyTransport(tid, self.client.port, self.client.token or "")
+        view = VteTerminalView(transport, font=f"{family} {size:g}", theme=theme)
+        cwd = getattr(c, "working_directory", "") or self.document.payload.working_directory or os.path.expanduser("~")
+        command = getattr(c, "command", "") or "bash"
+        workspace_id = self.document.payload.id
+
+        def worker():
+            try:
+                self.client.ensure_terminal(tid, command=command, working_directory=cwd,
+                                            workspace_id=workspace_id, display_name=getattr(c, "name", None))
+            except Exception:
+                pass   # the socket still tries (and reconnects with backoff) - the core may come back
+            GLib.idle_add(lambda: (None if view.disposed else transport.connect(), GLib.SOURCE_REMOVE)[1])
+
+        threading.Thread(target=worker, name=f"maestri-pty-{tid[:8]}", daemon=True).start()
+        return view
 
     def _show_about(self):
         about = Gtk.AboutDialog(transient_for=self, modal=True, program_name="Open Maestri",
@@ -344,23 +472,18 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
     def _configure_notes_backend(self) -> None:
         """Managed notes go through the core REST API when it is reachable; offline they live in memory."""
         cw = self.canvas_widget
-        if self.client.is_connected():
+        if self.core_connected:
             cw.notes_client = CoreNotesClient(self.client.port, self.client.token)
         ws_dir = Path.home() / ".open-maestri" / "workspaces" / self.document.payload.id
         cw.notes_dir = str(ws_dir / "notes")
 
     def _make_content_widget(self, node: CanvasNode):
-        """Content for a node. stickyNote -> StickyNoteView and fileTree -> FileTreeView are built natively by
-        CanvasWidget.add_node (it also wires their meta-changed / delete-requested / file-activated signals), so
-        this returns None for them. Portal/terminal keep a placeholder body until their native views land."""
-        if node.node_type in ("stickyNote", "fileTree", "portal"):
+        """Content for a node. None = CanvasWidget.add_node builds the native view (StickyNoteView, FileTreeView,
+        PortalView, and for terminals a local VTE login shell). A terminal is core-backed (VteTerminalView over /ws/pty)
+        whenever the core is reachable; offline (standalone) it falls back to the local shell."""
+        if node.node_type != "terminal" or not self.core_connected or load_vte() is None:
             return None
-        c = node.content
-        if node.node_type == "portal":
-            text = getattr(c, "current_url", "") or "about:blank"
-        else:
-            text = getattr(c, "command", "") or "bash"
-        return Gtk.Label(label=text, xalign=0, yalign=0, margin_start=8, margin_top=8, selectable=False)
+        return self._make_core_terminal(node)
 
     def _add_node_to_canvas(self, node: CanvasNode, focus: bool = False) -> None:
         f = node.frame
@@ -372,7 +495,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             kwargs["portal"] = node.content.to_dict()
         elif node.node_type == "fileTree":
             kwargs["cwd"] = getattr(node.content, "root_path", "") or os.path.expanduser("~")
+        elif node.node_type == "terminal":
+            kwargs["cwd"] = (getattr(node.content, "working_directory", "") or self.document.payload.working_directory
+                             or os.path.expanduser("~"))
         self.canvas_widget.add_node(item, self._make_content_widget(node), focus=focus, **kwargs)
+        if node.node_type == "terminal":
+            self._style_terminal(node)
 
     def _on_portal_meta_changed(self, _canvas, node_id, meta):
         node = self._find_node(node_id)
@@ -456,7 +584,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             bus.emit("node-resized", node.id, x, y, w, h)
         else:
             bus.emit("node-moved", node.id, x, y)
-        if final:
+        if final and self.sync is not None:   # None before the initial load and with an invalid token
             self.sync.flush()
 
     def _on_canvas_delete_requested(self, _canvas, ids):
@@ -467,8 +595,18 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 self.document.payload.last_modified_at = current_iso8601()
             purge_node(self.document.payload, nid)   # all 6 connection lists (the canvas scene is cleaned by remove_node)
 
+            core_tid = (self._terminal_id(node) if node is not None and node.node_type == "terminal"
+                        and self.core_connected else None)
             self.canvas_widget.remove_node(nid)
             bus.emit("node-removed", nid)
+            if core_tid:   # deleting the node ends its shell, like closing a local terminal
+                threading.Thread(target=self._delete_core_terminal, args=(core_tid,), daemon=True).start()
+
+    def _delete_core_terminal(self, tid: str) -> None:
+        try:
+            self.client.delete_terminal(tid)
+        except Exception:
+            pass
 
     def _on_canvas_connect_requested(self, _canvas, a, side_a, b, side_b):
         if not self.canvas_widget.scene.can_connect(a, b):
@@ -521,9 +659,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
     def _create_node(self, node_type: str, at: Point = None):
         """Add a node of a valid kind (terminal | stickyNote | portal | fileTree).
-        `at` = canvas point for the node's top-left corner (context menu); default: centered in the viewport."""
+        `at` = canvas point for the node's top-left corner (context menu); default: centered in the viewport.
+        Ignored until the initial workspace is loaded (the placeholder document would be replaced)."""
         if node_type not in WIDGET_KINDS:
             raise ValueError(f"invalid node type: {node_type!r}")
+        if not self.loaded:
+            return
         cw = self.canvas_widget
         w = cw.get_width() or 1200
         h = cw.get_height() or 800
@@ -564,11 +705,26 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self.sync.flush()
 
     def _on_close_request(self, *_args):
+        if self._autosave_id:
+            GLib.source_remove(self._autosave_id)
+            self._autosave_id = 0
         if self.sync is not None:
             self.sync.close()
+        self._release_terminals()
         return False
 
+    def _release_terminals(self) -> None:
+        """Window closing: hang up local shells; core-backed terminals only close their socket (the core keeps the shell)."""
+        for frame in list(self.canvas_widget.frames.values()):
+            content = frame.content
+            if is_terminal(content):
+                terminate_terminal(content)
+            elif getattr(content, "transport", None) is not None:
+                content.dispose()
+
     def _on_workspace_switched(self, bus_obj, workspace_id: str):
+        if not self.loaded:
+            return
         # Persist the workspace we are leaving before replacing the document.
         if self.sync is not None:
             self.sync.flush()
@@ -590,6 +746,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 cw.remove_node(nid)
             cw.viewport.origin = self._viewport_from_payload().origin
             cw.viewport.zoom = self._viewport_from_payload().zoom
+            self._configure_notes_backend()   # notes_dir must follow the new workspace id
             self._load_payload_into_canvas()
             cw.controller.dirty = True
             bus.emit("workspace-loaded", doc.payload)

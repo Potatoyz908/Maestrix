@@ -74,6 +74,7 @@ def window(maestri_app):
     client = MaestriClient(port=0)  # offline standalone mode
     win = OpenMaestriWindow(maestri_app, client)
     win.present()
+    assert win.wait_loaded(), "initial workspace load did not finish"
     pump_events(0.3)
     yield win
     win.close()
