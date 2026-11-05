@@ -36,12 +36,12 @@ _BASE_CSS = """
 .maestri-note .maestri-node-header { padding: 0 6px; }
 .maestri-note .maestri-node-header button, .maestri-note .maestri-node-header togglebutton { min-height: 0; min-width: 0; padding: 0 7px; }
 .maestri-note .maestri-node-header editablelabel { background: transparent; }
-.note-bar { padding: 3px 8px; border-radius: 0 0 9px 9px; }
-button.note-swatch { min-width: 15px; min-height: 15px; padding: 0; border-radius: 50%; border: 1px solid alpha(black, .35); box-shadow: none; }
+.note-bar { padding: 3px 6px; border-radius: 0 0 9px 9px; }
+.note-bar colorbutton, .note-bar colorbutton button { min-width: 0; min-height: 0; padding: 0 2px; }
+button.note-swatch { min-width: 14px; min-height: 14px; padding: 0; border-radius: 50%; border: 1px solid alpha(black, .35); box-shadow: none; }
 button.note-swatch.active { outline: 2px solid alpha(currentColor, .85); outline-offset: 1px; }
 .note-status { font-size: 11px; opacity: .65; }
 .note-status.error { color: #c01c28; opacity: 1; }
-.note-size { font-size: 11px; opacity: .8; min-width: 18px; }
 """
 
 
@@ -64,7 +64,10 @@ class _NoteCss:
         css = _BASE_CSS + css_font_size_rule() + swatches + "".join(css_rule(c) for c in sorted(self.colors))
         if self.provider is None:
             self.provider = Gtk.CssProvider()
-            Gtk.StyleContext.add_provider_for_display(display, self.provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+            # USER priority on purpose: themes installed as ~/.config/gtk-4.0/gtk.css load at USER (800) and would beat anything lower,
+            # painting the note body with the theme's dark `textview` background and flattening the swatches. Only note-specific
+            # classes are styled here, so winning over the theme cannot affect other widgets.
+            Gtk.StyleContext.add_provider_for_display(display, self.provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
         self.provider.load_from_string(css)
 
 
@@ -112,7 +115,6 @@ class StickyNoteView(Gtk.Box):
         self.add_css_class("maestri-note-content")
         _css.ensure(self.meta.color)
         self._set_mode(self.meta.is_previewing, emit=False)
-        self._update_size_label()
         self._update_swatches()
         self.status.set_text("Loading…")
         self.storage.read(self._on_loaded)
@@ -141,10 +143,13 @@ class StickyNoteView(Gtk.Box):
         menu = Gio.Menu()
         menu.append("Rename", "note.rename")
         menu.append("Move to…", "note.move")
+        menu.append("Larger text", "note.larger")
+        menu.append("Smaller text", "note.smaller")
         menu.append("Delete", "note.delete")
         self.menu_btn = Gtk.MenuButton(label="⋯", menu_model=menu, has_frame=False)
         group = Gio.SimpleActionGroup()
-        for name, fn in (("rename", self.begin_rename), ("move", self.choose_folder_and_move), ("delete", self.request_delete)):
+        for name, fn in (("rename", self.begin_rename), ("move", self.choose_folder_and_move), ("delete", self.request_delete),
+                         ("larger", lambda: self.set_font_size(self.meta.font_size + 1)), ("smaller", lambda: self.set_font_size(self.meta.font_size - 1))):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda _a, _p, f=fn: f())
             group.add_action(act)
@@ -229,16 +234,9 @@ class StickyNoteView(Gtk.Box):
         self.color_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(), tooltip_text="Custom colour")
         self.color_btn.connect("notify::rgba", self._on_custom_color)
         bar.append(self.color_btn)
-        spacer = Gtk.Box(hexpand=True)
-        smaller, bigger = Gtk.Button(label="A−", has_frame=False), Gtk.Button(label="A+", has_frame=False)
-        smaller.connect("clicked", lambda _b: self.set_font_size(self.meta.font_size - 1))
-        bigger.connect("clicked", lambda _b: self.set_font_size(self.meta.font_size + 1))
-        self.size_label = Gtk.Label()
-        self.size_label.add_css_class("note-size")
-        self.status = Gtk.Label(xalign=1)
+        self.status = Gtk.Label(xalign=1, hexpand=True, ellipsize=3, width_chars=0)   # ellipsized: it must never widen the card
         self.status.add_css_class("note-status")
-        for w in (spacer, smaller, self.size_label, bigger, self.status):
-            bar.append(w)
+        bar.append(self.status)
         self.footer = bar
         self.append(bar)
 
@@ -413,11 +411,7 @@ class StickyNoteView(Gtk.Box):
             return
         self.meta.font_size = n
         self._apply_style()
-        self._update_size_label()
         self._emit_meta()
-
-    def _update_size_label(self) -> None:
-        self.size_label.set_text(str(self.meta.font_size))
 
     def _apply_style(self) -> None:
         f = self._frame
@@ -706,7 +700,6 @@ class StickyNoteView(Gtk.Box):
         _css.ensure(new.color)
         self._apply_style()
         self._update_swatches()
-        self._update_size_label()
         self._set_mode(new.is_previewing, emit=False)
         self._last_meta = self.meta.to_dict()
         self._shown_title = ""
