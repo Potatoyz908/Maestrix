@@ -112,3 +112,7 @@ Achados ordenados por severidade. **R1 bloqueia a Sprint 4.**
 | R8 | `widget.py:589` | `_place_nodes` indexa `self.scene.nodes[i]` para cada frame. Se alguém remover um nó só da cena (fora de `remove_node`), o tick lança `KeyError` a cada frame | `item = self.scene.nodes.get(i)` e `continue` quando for `None` |
 
 **Coordenação para evitar novos conflitos nestes dois arquivos:** as features da Sprint 4 **não** devem crescer `window.py`, que já tem cerca de 600 linhas. Criar `gtk4-ui/src/ui/floors.py`, `routines_window.py` e `ssh_settings.py`. Em `window.py` entram só três pontos de ligação: uma action no menu, o overlay do botão de floor e o binding. Em `widget.py` só entra a API pública `add_overlay_control()`, sem lógica de feature.
+
+**Working tree não commitado, observado em 2026-11-05 durante a revisão:**
+- O `InterAgentServer.swift` adiciona `DELETE /api/floors/:id?removeWorktree=` e o evento `floorCreated`. O padrão continua sendo load → modify → save, então **R1 permanece**. O novo `WorkspaceSync.autosave()` periódico **agrava** o R1, porque reenvia o documento inteiro a cada tick. Alinhar a query com esta spec: `deleteBranch` (o worktree sempre é removido, conforme a referência) ou documentar `removeWorktree` aqui.
+- `widget.py` ganha mais um ramo ad-hoc de `dispose()` em `remove_node` (`transport`), o que reforça o R7: unificar em `getattr(content, "dispose", None)`.
