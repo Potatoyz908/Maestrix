@@ -1141,36 +1141,87 @@ public final class InterAgentServer {
         // 12. GET /api/sidebar-layout
         if method == "GET" && cleanPath == "/api/sidebar-layout" {
             let pm = PersistenceManager.shared
-            if let layout = try? pm.loadSidebarLayout() {
-                if let data = try? JSONEncoder().encode(layout) {
-                    return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
-                }
+            let layout = (try? pm.loadSidebarLayout()) ?? SidebarLayout()
+            if let data = try? pm.encoder.encode(layout) {
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
             }
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"schemaVersion\":2,\"topLevelItems\":[],\"groups\":[]}", allowedOrigin: allowedOrigin)
         }
 
         // 13. PUT /api/sidebar-layout
         if method == "PUT" && cleanPath == "/api/sidebar-layout" {
-            guard let layout = try? JSONDecoder().decode(SidebarLayout.self, from: body) else {
-                return Self.buildHTTPResponse(status: 400, body: "error: invalid sidebar layout JSON", allowedOrigin: allowedOrigin)
+            let pm = PersistenceManager.shared
+            guard let layout = try? pm.decoder.decode(SidebarLayout.self, from: body) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid sidebar-layout json", allowedOrigin: allowedOrigin)
             }
             guard layout.schemaVersion == 2 else {
-                return Self.buildHTTPResponse(status: 400, body: "error: schemaVersion must be 2", allowedOrigin: allowedOrigin)
+                return Self.buildHTTPResponse(status: 400, body: "error: unsupported schemaVersion, must be 2", allowedOrigin: allowedOrigin)
             }
+
+            let manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+            var knownIds = Set(manifest.workspaces.map(\.id))
+            let workspacesDir = pm.appDataURL.appendingPathComponent("workspaces")
+            if let dirs = try? FileManager.default.contentsOfDirectory(atPath: workspacesDir.path) {
+                for d in dirs {
+                    if let u = UUID(uuidString: d) {
+                        knownIds.insert(u)
+                    }
+                }
+            }
+
+            for id in layout.topLevelItems {
+                if !knownIds.contains(id) {
+                    return Self.buildHTTPResponse(status: 400, body: "error: unknown workspace id \(id) in topLevelItems", allowedOrigin: allowedOrigin)
+                }
+            }
+            for group in layout.groups {
+                for id in group.items {
+                    if !knownIds.contains(id) {
+                        return Self.buildHTTPResponse(status: 400, body: "error: unknown workspace id \(id) in group \(group.name)", allowedOrigin: allowedOrigin)
+                    }
+                }
+            }
+
             do {
-                try PersistenceManager.shared.saveSidebarLayout(layout)
+                try pm.saveSidebarLayout(layout)
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
             } catch {
-                return Self.buildHTTPResponse(status: 500, body: "error: failed to save sidebar layout: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save sidebar layout - \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
         }
 
         // 14. GET /api/workspaces
         if method == "GET" && cleanPath == "/api/workspaces" {
             let pm = PersistenceManager.shared
-            let manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+            var manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
             let isoFormatter = ISO8601DateFormatter()
             isoFormatter.formatOptions = [.withInternetDateTime]
+
+            var entriesById: [UUID: WorkspaceEntry] = [:]
+            for w in manifest.workspaces {
+                entriesById[w.id] = w
+            }
+
+            // Scan ~/.open-maestri/workspaces/ for any workspaces on disk not yet in manifest
+            let workspacesDir = pm.appDataURL.appendingPathComponent("workspaces")
+            if let dirs = try? FileManager.default.contentsOfDirectory(atPath: workspacesDir.path) {
+                for dirName in dirs {
+                    if let wsId = UUID(uuidString: dirName), entriesById[wsId] == nil {
+                        if let doc = try? pm.loadWorkspace(id: wsId) {
+                            let entry = WorkspaceEntry(
+                                id: wsId,
+                                name: doc.payload.name,
+                                workingDirectory: doc.payload.workingDirectory,
+                                icon: "folder",
+                                color: "blue"
+                            )
+                            entriesById[wsId] = entry
+                            manifest.workspaces.append(entry)
+                        }
+                    }
+                }
+            }
+
             var list: [[String: Any]] = []
             for w in manifest.workspaces {
                 list.append([
@@ -1207,22 +1258,26 @@ public final class InterAgentServer {
             entry.locationType = locationType
 
             let pm = PersistenceManager.shared
+            try? pm.ensureWorkspaceDirectoryExists(id: id)
+
+            // Create initial workspace document via WorkspaceManager
+            let wsManager = WorkspaceManager(entry: entry)
+            try? wsManager.saveSync()
+
             var manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+            manifest.workspaces.removeAll { $0.id == id }
             manifest.workspaces.append(entry)
             try? pm.saveManifest(manifest)
-
-            let payload = WorkspacePayload(
-                id: id,
-                name: name,
-                workingDirectory: workingDirectory
-            )
-            let initialDoc = WorkspaceDocument(payload: payload)
-            try? pm.ensureWorkspaceDirectoryExists(id: id)
-            try? pm.saveSync(initialDoc, to: pm.workspaceURL(id: id))
 
             var appState = (try? pm.loadAppState()) ?? AppStateData()
             appState.activeWorkspaceId = id
             try? pm.saveAppState(appState)
+
+            var sidebar = (try? pm.loadSidebarLayout()) ?? SidebarLayout()
+            if !sidebar.topLevelItems.contains(id) && !sidebar.groups.contains(where: { $0.items.contains(id) }) {
+                sidebar.topLevelItems.append(id)
+                try? pm.saveSidebarLayout(sidebar)
+            }
 
             let isoFormatter = ISO8601DateFormatter()
             isoFormatter.formatOptions = [.withInternetDateTime]
@@ -1258,6 +1313,10 @@ public final class InterAgentServer {
                 let appState = try? pm.loadAppState()
                 targetWorkspaceId = appState?.activeWorkspaceId
             }
+            if targetWorkspaceId == nil {
+                let manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+                targetWorkspaceId = manifest.workspaces.first?.id
+            }
 
             var floorsList: [[String: Any]] = []
             let isoFormatter = ISO8601DateFormatter()
@@ -1277,6 +1336,72 @@ public final class InterAgentServer {
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
             }
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "[]", allowedOrigin: allowedOrigin)
+        }
+
+        // POST /api/floors
+        if method == "POST" && cleanPath == "/api/floors" {
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+                  let name = json["name"] as? String, !name.isEmpty else {
+                return Self.buildHTTPResponse(status: 400, body: "error: missing floor name", allowedOrigin: allowedOrigin)
+            }
+
+            let pm = PersistenceManager.shared
+            var targetWorkspaceId: UUID? = (json["workspaceId"] as? String).flatMap(UUID.init)
+            if targetWorkspaceId == nil && pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" {
+                        targetWorkspaceId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+            if targetWorkspaceId == nil {
+                let appState = try? pm.loadAppState()
+                targetWorkspaceId = appState?.activeWorkspaceId
+            }
+            if targetWorkspaceId == nil {
+                let manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+                targetWorkspaceId = manifest.workspaces.first?.id
+            }
+
+            guard let wsId = targetWorkspaceId,
+                  var doc = try? pm.loadWorkspace(id: wsId) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: active workspace not found", allowedOrigin: allowedOrigin)
+            }
+
+            let workingDirectory = (json["workingDirectory"] as? String) ?? doc.payload.workingDirectory
+            let branchName = (json["branchName"] as? String) ?? "floor/\(name)"
+
+            do {
+                let floor = try FloorManager.shared.createFloor(name: name, branchName: branchName, workingDirectory: workingDirectory)
+                let floorEntry = FloorEntry(
+                    id: floor.id,
+                    name: floor.name,
+                    branchName: floor.branchName,
+                    worktreePath: floor.worktreePath,
+                    hooks: floor.hooks,
+                    createdAt: floor.createdAt
+                )
+                doc.payload.floors.append(floorEntry)
+                doc.payload.lastModifiedAt = Date()
+                try pm.saveSync(doc, to: pm.workspaceURL(id: wsId))
+
+                let isoFormatter = ISO8601DateFormatter()
+                isoFormatter.formatOptions = [.withInternetDateTime]
+                let respObj: [String: Any] = [
+                    "id": floor.id.uuidString,
+                    "name": floor.name,
+                    "branchName": floor.branchName,
+                    "worktreePath": floor.worktreePath,
+                    "createdAt": isoFormatter.string(from: floor.createdAt)
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: respObj) {
+                    return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+                }
+                return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", body: "{\"id\":\"\(floor.id.uuidString)\"}", allowedOrigin: allowedOrigin)
+            } catch {
+                return Self.buildHTTPResponse(status: 400, body: "error: failed to create floor - \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
         }
 
         // 17. GET /api/agents
@@ -1316,8 +1441,14 @@ public final class InterAgentServer {
                     }
                 }
             }
+            if root.isEmpty && relPath.hasPrefix("/") {
+                root = relPath
+                relPath = ""
+            } else if !root.isEmpty && relPath.hasPrefix("/") {
+                relPath = String(relPath.dropFirst())
+            }
             if root.isEmpty { root = FileManager.default.currentDirectoryPath }
-            guard !relPath.contains("..") else {
+            guard !relPath.contains(".."), !relPath.contains("\\"), !relPath.contains("\0") else {
                 return Self.buildHTTPResponse(status: 400, body: "error: path traversal detected", allowedOrigin: allowedOrigin)
             }
             let targetDir = relPath.isEmpty ? root : "\(root)/\(relPath)"
@@ -1329,19 +1460,52 @@ public final class InterAgentServer {
             guard let contents = try? fm.contentsOfDirectory(atPath: targetDir) else {
                 return Self.buildHTTPResponse(status: 500, body: "error: failed to read directory", allowedOrigin: allowedOrigin)
             }
+
+            let gitProvider = GitStatusProvider(workingDirectory: root)
+            let gitChanges = (try? gitProvider.status()) ?? []
+            var gitMap: [String: String] = [:]
+            for change in gitChanges {
+                let badge: String
+                switch change.status {
+                case .modified: badge = "M"
+                case .added:    badge = "A"
+                case .deleted:  badge = "D"
+                case .renamed:  badge = "R"
+                case .untracked: badge = "?"
+                default: continue
+                }
+                gitMap[change.path] = badge
+            }
+
             var items: [[String: Any]] = []
-            for item in contents.sorted() {
+            for item in contents {
                 if item.hasPrefix(".") { continue }
                 let fullPath = "\(targetDir)/\(item)"
                 var subDir: ObjCBool = false
                 _ = fm.fileExists(atPath: fullPath, isDirectory: &subDir)
                 let itemRelPath = relPath.isEmpty ? item : "\(relPath)/\(item)"
-                items.append([
+                var itemObj: [String: Any] = [
                     "name": item,
                     "path": itemRelPath,
                     "isDir": subDir.boolValue
-                ])
+                ]
+                if let badge = gitMap[itemRelPath] {
+                    itemObj["gitStatus"] = badge
+                }
+                items.append(itemObj)
             }
+
+            items.sort { a, b in
+                let aIsDir = (a["isDir"] as? Bool) ?? false
+                let bIsDir = (b["isDir"] as? Bool) ?? false
+                if aIsDir != bIsDir {
+                    return aIsDir && !bIsDir
+                }
+                let aName = (a["name"] as? String) ?? ""
+                let bName = (b["name"] as? String) ?? ""
+                return aName.localizedStandardCompare(bName) == .orderedAscending
+            }
+
             if let data = try? JSONSerialization.data(withJSONObject: items) {
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
             }
@@ -1431,33 +1595,44 @@ public final class InterAgentServer {
             let frameH = frameArray.count > 1 && frameArray[1].count > 1 ? frameArray[1][1] : 350
             let frame = CGRect(x: frameX, y: frameY, width: frameW, height: frameH)
 
-            let content: NodeContent
-            switch nodeType {
-            case "terminal":
-                content = .terminal(TerminalContent(
-                    name: "Terminal",
-                    agentType: "generic_shell",
-                    command: "bash",
-                    workingDirectory: doc.payload.workingDirectory
-                ))
-            case "stickyNote":
-                let noteName = "Note-\(nodeId.uuidString.prefix(6))"
-                content = .stickyNote(StickyNoteContent(name: noteName))
-            case "portal":
-                content = .portal(PortalContent(name: "Portal", url: "https://google.com"))
-            case "fileTree":
-                content = .fileTree(FileTreeContent(name: "Files", rootPath: doc.payload.workingDirectory))
-            default:
-                content = .terminal(TerminalContent(
-                    name: "Terminal",
-                    agentType: "generic_shell",
-                    command: "bash",
-                    workingDirectory: doc.payload.workingDirectory
-                ))
+            var content: NodeContent? = nil
+            if let contentObj = json["content"],
+               let contentData = try? JSONSerialization.data(withJSONObject: contentObj) {
+                content = try? pm.decoder.decode(NodeContent.self, from: contentData)
+            }
+
+            if content == nil {
+                switch nodeType {
+                case "terminal":
+                    content = .terminal(TerminalContent(
+                        name: "Terminal",
+                        agentType: "generic_shell",
+                        command: "bash",
+                        workingDirectory: doc.payload.workingDirectory
+                    ))
+                case "stickyNote":
+                    let noteName = (json["name"] as? String) ?? "Note-\(nodeId.uuidString.prefix(6))"
+                    content = .stickyNote(StickyNoteContent(name: noteName))
+                case "portal":
+                    let portalName = (json["name"] as? String) ?? "Portal"
+                    let portalUrl = (json["url"] as? String) ?? (json["currentURL"] as? String) ?? ""
+                    content = .portal(PortalContent(name: portalName, url: portalUrl))
+                case "fileTree":
+                    let ftName = (json["name"] as? String) ?? "Files"
+                    let rootPath = (json["rootPath"] as? String) ?? doc.payload.workingDirectory
+                    content = .fileTree(FileTreeContent(name: ftName, rootPath: rootPath))
+                default:
+                    content = .terminal(TerminalContent(
+                        name: "Terminal",
+                        agentType: "generic_shell",
+                        command: "bash",
+                        workingDirectory: doc.payload.workingDirectory
+                    ))
+                }
             }
 
             let maxZ = doc.payload.nodes.map(\.zIndex).max() ?? 0
-            let node = CanvasNode(id: nodeId, frame: frame, content: content, zIndex: maxZ + 1)
+            let node = CanvasNode(id: nodeId, frame: frame, content: content!, zIndex: maxZ + 1)
             doc.payload.nodes.append(node)
             doc.payload.lastModifiedAt = Date()
             let fileURL = pm.workspaceURL(id: wsId)

@@ -379,6 +379,106 @@ final class LinuxPtyAndServerTests: XCTestCase {
         }
     }
 
+    func testPhase4SidebarLayoutValidation() async throws {
+        try await MainActor.run {
+            let server = InterAgentServer.shared
+            try server.start()
+            defer { server.stop() }
+
+            let auth = "Authorization: Bearer \(server.authToken)\r\n"
+            let port = server.port
+
+            // 1. Invalid schemaVersion == 1 should be rejected with 400
+            let badVersionBody = "{\"schemaVersion\":1,\"topLevelItems\":[],\"groups\":[]}"
+            let badVersionReq = "PUT /api/sidebar-layout HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(badVersionBody.utf8.count)\r\nConnection: close\r\n\r\n\(badVersionBody)"
+            let badVersionResp = try self.tcpExchange(port: port, request: badVersionReq)
+            XCTAssertTrue(badVersionResp.hasPrefix("HTTP/1.1 400 Bad Request"))
+
+            // 2. Unknown workspace UUID should be rejected with 400
+            let unknownId = UUID().uuidString
+            let badIdBody = "{\"schemaVersion\":2,\"topLevelItems\":[\"\(unknownId)\"],\"groups\":[]}"
+            let badIdReq = "PUT /api/sidebar-layout HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(badIdBody.utf8.count)\r\nConnection: close\r\n\r\n\(badIdBody)"
+            let badIdResp = try self.tcpExchange(port: port, request: badIdReq)
+            XCTAssertTrue(badIdResp.hasPrefix("HTTP/1.1 400 Bad Request"))
+        }
+    }
+
+    func testPhase4FilesTraversalAndSort() async throws {
+        try await MainActor.run {
+            let server = InterAgentServer.shared
+            try server.start()
+            defer { server.stop() }
+
+            let auth = "Authorization: Bearer \(server.authToken)\r\n"
+            let port = server.port
+
+            // Path traversal should be rejected with 400
+            let badPathReq = "GET /api/files?path=../etc HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+            let badPathResp = try self.tcpExchange(port: port, request: badPathReq)
+            XCTAssertTrue(badPathResp.hasPrefix("HTTP/1.1 400 Bad Request"))
+
+            // Listing current directory should be sorted and return 200 OK
+            let listReq = "GET /api/files?root=\(FileManager.default.currentDirectoryPath) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+            let listResp = try self.tcpExchange(port: port, request: listReq)
+            XCTAssertTrue(listResp.hasPrefix("HTTP/1.1 200 OK"))
+            XCTAssertTrue(listResp.contains("\"name\" : \"Sources\"") || listResp.contains("\"name\":\"Sources\""))
+        }
+    }
+
+    func testPortalAndFileTreeContractRoundTrip() throws {
+        let pm = PersistenceManager.shared
+
+        // 1. PortalContent round-trip with none source
+        let portalNone = PortalContent(name: "Test None", url: "")
+        let nodeNone = CanvasNode(frame: CGRect(x: 10, y: 10, width: 400, height: 300), content: .portal(portalNone))
+        let encodedNone = try pm.encoder.encode(nodeNone)
+        let jsonStrNone = String(data: encodedNone, encoding: .utf8)!
+        XCTAssertFalse(jsonStrNone.contains("\"url\" : {"))
+        XCTAssertTrue(jsonStrNone.contains("\"currentURL\" : \"\"") || jsonStrNone.contains("\"currentURL\":\"\""))
+
+        let decodedNone = try pm.decoder.decode(CanvasNode.self, from: encodedNone)
+        if case .portal(let p) = decodedNone.content {
+            XCTAssertEqual(p.name, "Test None")
+            XCTAssertEqual(p.source, .none)
+            XCTAssertEqual(p.status, "idle")
+            XCTAssertFalse(p.chromeHidden)
+            XCTAssertEqual(p.storageScope, "isolated")
+        } else {
+            XCTFail("Decoded node is not portal")
+        }
+
+        // 2. PortalContent round-trip with URL source
+        let portalUrl = PortalContent(name: "Test Web", url: "https://example.com")
+        let nodeUrl = CanvasNode(frame: CGRect(x: 10, y: 10, width: 400, height: 300), content: .portal(portalUrl))
+        let encodedUrl = try pm.encoder.encode(nodeUrl)
+        let jsonStrUrl = String(data: encodedUrl, encoding: .utf8)!
+        XCTAssertTrue(jsonStrUrl.contains("example.com"))
+
+        let decodedUrl = try pm.decoder.decode(CanvasNode.self, from: encodedUrl)
+        if case .portal(let p) = decodedUrl.content {
+            XCTAssertEqual(p.currentURL, "https://example.com")
+            XCTAssertEqual(p.source, .url("https://example.com"))
+        } else {
+            XCTFail("Decoded node is not portal")
+        }
+
+        // 3. FileTreeContent round-trip (no expandedPaths key)
+        let fileTree = FileTreeContent(name: "Root Tree", rootPath: "/workspace")
+        let nodeFt = CanvasNode(frame: CGRect(x: 20, y: 20, width: 300, height: 500), content: .fileTree(fileTree))
+        let encodedFt = try pm.encoder.encode(nodeFt)
+        let jsonStrFt = String(data: encodedFt, encoding: .utf8)!
+        XCTAssertFalse(jsonStrFt.contains("expandedPaths"))
+
+        let decodedFt = try pm.decoder.decode(CanvasNode.self, from: encodedFt)
+        if case .fileTree(let ft) = decodedFt.content {
+            XCTAssertEqual(ft.name, "Root Tree")
+            XCTAssertEqual(ft.rootPath, "/workspace")
+            XCTAssertEqual(ft.viewMode, "list")
+        } else {
+            XCTFail("Decoded node is not fileTree")
+        }
+    }
+
     // MARK: - Helpers
 
     private func tcpExchange(port: UInt16, request: String) throws -> String {
