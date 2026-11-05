@@ -20,13 +20,15 @@ from .workspace import (
     SidebarLayout,
 )
 
+from typing import Any
+
 # Aliases for backward/forward compatibility
 Workspace = WorkspaceDocument
 Terminal = TerminalContent
 StickyNote = StickyNoteContent
 Portal = PortalContent
 FileTree = FileTreeContent
-NodeContent = Any = object
+NodeContent = Any
 NodeType = str
 
 __all__ = [

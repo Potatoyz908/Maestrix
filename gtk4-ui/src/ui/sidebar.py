@@ -97,7 +97,10 @@ class SidebarView(Gtk.Box):
         while self.agents_list_box.get_first_child():
             self.agents_list_box.remove(self.agents_list_box.get_first_child())
 
-        agents = self.client.get_agents()
+        try:
+            agents = self.client.get_agents()
+        except Exception:
+            agents = []
         if not agents:
             # Show canvas squad
             default_agents = [
@@ -107,7 +110,8 @@ class SidebarView(Gtk.Box):
                 ("⚙️ Forja", "QA & Toolchain"),
             ]
             for a_name, a_role in default_agents:
-                lbl = Gtk.Label(label=f"{a_name}\n<small>{a_role}</small>", use_markup=True, xalign=0.0)
+                escaped_role = GLib.markup_escape_text(a_role)
+                lbl = Gtk.Label(label=f"{a_name}\n<small>{escaped_role}</small>", use_markup=True, xalign=0.0)
                 lbl.set_margin_start(8)
                 lbl.set_margin_top(3)
                 lbl.set_margin_bottom(3)
