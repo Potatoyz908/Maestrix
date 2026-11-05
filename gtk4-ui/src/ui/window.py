@@ -33,7 +33,7 @@ from maestri_canvas.pty_transport import SoupPtyTransport
 from maestri_canvas.scene import WIDGET_KINDS, ConnItem, NodeItem, norm
 from maestri_canvas.terminal_themes import apply_terminal_style
 from maestri_canvas.viewport import Viewport
-from maestri_canvas.widget import CanvasWidget
+from maestri_canvas.widget import CanvasWidget, is_terminal, load_vte, terminal_of, terminate_terminal
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
 
