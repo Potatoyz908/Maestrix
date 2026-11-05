@@ -67,9 +67,19 @@ def build_window(app: Gtk.Application) -> tuple[Gtk.ApplicationWindow, CanvasWid
 
 def screenshot(widget: Gtk.Widget, path: str) -> None:
     paint = Gtk.WidgetPaintable.new(widget)
-    snap = Gtk.Snapshot()
-    paint.snapshot(snap, widget.get_width(), widget.get_height())
-    node = snap.to_node()
+    ctx = GLib.MainContext.default()
+    node = None
+    for _ in range(40):   # to_node() is None until the widget has produced a frame: let the main loop run and retry (was flaky)
+        snap = Gtk.Snapshot()
+        paint.snapshot(snap, widget.get_width(), widget.get_height())
+        node = snap.to_node()
+        if node is not None:
+            break
+        for _i in range(20):
+            ctx.iteration(False)
+        GLib.usleep(10_000)
+    if node is None:
+        raise RuntimeError("widget produced no render node (not realized or zero-sized)")
     widget.get_native().get_renderer().render_texture(node, None).save_to_png(path)
 
 

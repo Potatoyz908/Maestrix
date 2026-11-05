@@ -39,6 +39,14 @@ class NoteSaver:
             self._timer = None
         self._pump()
 
+    def cancel(self) -> None:
+        """Drop the pending text and its timer (the note is being deleted: a late write would resurrect the file). A write already in
+        flight cannot be recalled: use flush(done) afterwards to wait for it."""
+        if self._timer is not None:
+            self._clear(self._timer)
+            self._timer = None
+        self._pending = None
+
     @property
     def dirty(self) -> bool:
         return self._pending is not None or self._in_flight

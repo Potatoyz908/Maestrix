@@ -158,3 +158,17 @@ def test_saver_error_keeps_the_text_and_retries_on_next_flush():
     assert h.states[-1] == "error" and h.saver.last_error is not None and done == [1] and h.saver.dirty
     h.saver.flush()
     assert h.writes == ["keep", "keep"] and h.states[-1] == "saved"
+
+
+def test_saver_cancel_drops_pending_text_and_timer_but_not_what_is_in_flight():
+    h = Harness()
+    h.saver.schedule("never"); h.saver.cancel()
+    h.timers[-1]()                                                   # the (cleared) timer firing late must do nothing
+    assert h.writes == [] and not h.saver.dirty
+    h2 = Harness(); h2.manual = True; done = []
+    h2.saver.schedule("in-flight"); h2.timers[-1]()
+    h2.saver.schedule("later"); h2.saver.cancel()                    # "later" is dropped, "in-flight" cannot be recalled
+    h2.saver.flush(lambda: done.append(1))
+    assert h2.writes == ["in-flight"] and done == []                 # waiters wait for the in-flight write
+    h2.pending_done.pop(0)(None)
+    assert h2.writes == ["in-flight"] and done == [1]

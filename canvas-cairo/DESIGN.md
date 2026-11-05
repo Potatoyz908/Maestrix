@@ -1,6 +1,6 @@
 # CanvasWidget (GTK 4 + Cairo): design and status
 
-Package: `canvas-cairo/maestri_canvas/`. Run the tests with `python3 -m pytest canvas-cairo` (64 tests; `test_widget.py` and `test_terminal.py` need a display, the
+Package: `canvas-cairo/maestri_canvas/`. Run the tests with `python3 -m pytest canvas-cairo` (142 tests; `test_widget.py`, `test_terminal.py` and `test_sticky_note.py` need a display, the
 Vte 3.91 typelib and, for the end-to-end ones, the built `open-maestri-server`; each skips with a reason when its prerequisite is missing). Demo: `cd canvas-cairo && python3 -m maestri_canvas.demo`
 (`--screenshot out.png --seconds 2` renders the real GTK widget tree to a PNG).
 
@@ -56,6 +56,34 @@ Test isolation: the core resolves its data dir with `getpwuid`, NOT `$HOME`, so 
 (`unshare -Urm`, bind-mounting a temp dir over the account home) after a harmless pre-flight that proves the isolation, and always
 terminates it.
 
+## Sticky note (`sticky_note.py`, `note_*.py`, `markdown_spans.py`)
+
+`canvas.add_node(item, note={...StickyNoteContent...})` builds a `StickyNoteView`; the card is styled through the node frame, the header
+widgets come from a small protocol (`header_left` / `header_title` / `header_right` / `frame_attached`) that `NodeFrame` honours for any content.
+
+| Piece | How |
+|---|---|
+| Header | `Raw|Formatted` toggles <-> `isPreviewing`; title (first line, or the custom name); `⋯` menu: Rename, Move to…, Larger/Smaller text, Delete. Double-click on the header starts renaming (`CanvasWidget._header_double_click`: 400 ms / 6 px). While the title is edited it is retagged `content` so the caret works; otherwise it drags the node. |
+| Body | `Gtk.Stack`: `raw` = monospace `TextView`; `formatted` = read-only `TextView` with `Gtk.TextTag`s from `parse_markdown` (h1-h3, bold/italic/strike, code, fenced code, lists/tasks, quotes, tables in monospace with display-width alignment, links, inline images). No GtkSource. |
+| Colours | 7 preset swatches + `Gtk.ColorDialogButton`, in a footer. The persisted `color` string is kept VERBATIM ("yellow" stays "yellow"); it is resolved only to render. One CSS rule per resolved colour (two spellings share it); text colour flips on dark colours. |
+| Persistence | debounce 500 ms (`NoteSaver`: latest text only, one write in flight, error keeps the text for retry, `cancel()` for delete) -> `NoteStorage`: `CoreNoteStorage` (REST `/api/notes/{name WITHOUT .md}`, libsoup async, Bearer header) or `LocalNoteStorage` (custom path; Gio `replace_contents`: temp file + rename, verified by a new inode and no leftovers). |
+| Metadata | `NoteMeta` round-trips unknown keys; `meta-changed` fires only when the persisted dict really changes (`bind()` does not echo). |
+| External edits | `Gio.FileMonitor` on the file; applied only when the buffer is clean, as a minimal diff so the cursor follows its text (tested: append keeps offset 7, prepend moves it to 11); with unsaved edits the user's text wins and the status says so. |
+| Rename / Move / Delete | rename = flush, then core `get` + `put` new + `delete` old (no rename endpoint), or `set_display_name` for a custom file; Move = atomic write to the folder, old copy deleted only after; Delete = cancel pending save, wait for an in-flight write, delete, then `delete-requested`. `request_delete()` shows the `Gtk.AlertDialog`; `delete_file()` does not. |
+| Images | paste (Ctrl+V with an image and no text) saves `<name>-<ms>.png` NEXT TO the .md and inserts `![](<…>)` (angle brackets when the name has a space); rendering never fetches the network. Needs a folder: `notes_dir` for managed notes, else the custom file's folder. |
+
+Findings that cost time and are worth knowing:
+
+| Finding | Handling |
+|---|---|
+| The user theme (`WhiteSur-Dark-purple`) is installed as `~/.config/gtk-4.0/gtk.css`, which loads at **USER** priority (800) and beats a provider at APPLICATION+1 whatever the selector specificity; the note body stayed dark and the swatches grey | the note CSS provider is added at USER priority (only note-specific classes are styled, so nothing else is affected) |
+| The expected "text goes blurry above 1.5x zoom" does not happen: GSK re-renders text at the transform's scale | no re-render at font-size x zoom; checked at 1.6 on a screenshot |
+| Footer controls (font +/-, status) pushed the card wider than its frame (340) and it slid under the neighbour | font size moved to the menu; status is ellipsized; swatches 14 px |
+| `bind()` re-emitted `meta-changed` (flipping the toggle buttons fired `toggled`) | `_mode_sync` guard; an echo would loop app -> core -> bind -> app |
+| Delete with a pending debounced save recreated the file | `NoteSaver.cancel()` + wait for the in-flight write; a failed delete re-queues the cancelled text |
+| The core's note name must not contain `.md` (it appends it: `x.md` -> `x.md.md`) | `NoteMeta.name` strips it; e2e asserts `Ideas.md` exists and `Ideas.md.md` does not |
+| `Gtk.EditableLabel` has no `set_xalign`; a screenshot helper intermittently got no render node before the first frame | removed; `demo.screenshot` now retries while the main loop runs |
+
 ## Input routing
 
 One `Gtk.GestureDrag` (capture phase, any button) resolves `target_at(x, y)` and calls the engine; chrome roles are claimed,
@@ -91,10 +119,12 @@ Mapping to `maestri_core.signals.bus` (not wired: that package does not import y
 
 ## Not done / not verified
 
+- Sticky note: no real pointer or keyboard input was injected either: clicks on swatches/toggles are `emit("clicked")`/`set_active`, double-click is fed to `_header_double_click`, Ctrl+V image paste is exercised through `paste_texture` (the key handler and `Gdk.Clipboard.read_texture_async` path are not). `Gtk.FileDialog` (Move to…) and `Gtk.AlertDialog` (Delete) were not driven; their callbacks (`move_to`, `delete_file`) are tested.
+- Sticky note: dropping a file emits `file-dropped` and the app must call `adopt_file` (the spec is ambiguous about replacing an existing note's storage); a managed note is watched only if the app passes `watch_path` (the core's notes folder path is not known to the widget); managed-note Rename is copy + delete, not atomic across the two requests.
 - No real pointer or touchpad input was injected (not possible on Wayland from a test): the engine is unit-tested with resolved targets,
   and `target_at` and placement are tested against real GTK, but `GestureDrag`/`GestureZoom` wiring is untested by input.
 - HiDPI (scale factor 2) and X11 are untested; only scale 1 on Wayland was run.
-- Node content: the terminal is done; the note editor, portal and file tree are not (the demo uses labels and a TextView).
+- Node content: the terminal and the sticky note are done (the file tree is another agent's `file_tree_node.py`); the portal is not.
 - Canvas-drawn kinds (shape, stroke, freehand, text) are placeholders; no minimap, context menu, toolbar, or hold-Ctrl terminal numbering.
 - The `L` shortcut (start a connection from the selected terminal) is not implemented.
 - Mouse text selection and caret placement inside VTE/TextView while the zoom is not 1 are untested (no pointer injection). Rendering at zoom 1.6 was checked on a screenshot only.

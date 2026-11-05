@@ -34,12 +34,13 @@ _BASE_CSS = """
 .maestri-note textview { padding: 6px 8px; }
 .maestri-note textview.note-raw { font-family: monospace; }
 .maestri-note .maestri-node-header { padding: 0 6px; }
+.maestri-note .maestri-node-header button { color: inherit; }   /* the theme's light button text vanishes on a pastel header */
 .maestri-note .maestri-node-header button, .maestri-note .maestri-node-header togglebutton { min-height: 0; min-width: 0; padding: 0 7px; }
 .maestri-note .maestri-node-header editablelabel { background: transparent; }
 .note-bar { padding: 3px 6px; border-radius: 0 0 9px 9px; }
 .note-bar colorbutton, .note-bar colorbutton button { min-width: 0; min-height: 0; padding: 0 2px; }
 button.note-swatch { min-width: 14px; min-height: 14px; padding: 0; border-radius: 50%; border: 1px solid alpha(black, .35); box-shadow: none; }
-button.note-swatch.active { outline: 2px solid alpha(currentColor, .85); outline-offset: 1px; }
+button.note-swatch.active { outline: 2px solid #3b82f6; outline-offset: 1px; }
 .note-status { font-size: 11px; opacity: .65; }
 .note-status.error { color: #c01c28; opacity: 1; }
 """
@@ -129,8 +130,9 @@ class StickyNoteView(Gtk.Box):
         self.raw_btn = Gtk.ToggleButton(label="Raw")
         self.fmt_btn = Gtk.ToggleButton(label="Formatted")
         self.fmt_btn.set_group(self.raw_btn)
-        self.fmt_btn.connect("toggled", lambda b: b.get_active() and self._set_mode(True))
-        self.raw_btn.connect("toggled", lambda b: b.get_active() and self._set_mode(False))
+        self._mode_sync = False   # True while WE flip the buttons: their "toggled" must not be mistaken for a user click
+        self.fmt_btn.connect("toggled", lambda b: b.get_active() and not self._mode_sync and self._set_mode(True))
+        self.raw_btn.connect("toggled", lambda b: b.get_active() and not self._mode_sync and self._set_mode(False))
         mode = Gtk.Box()
         mode.add_css_class("linked")
         mode.append(self.raw_btn)
@@ -293,7 +295,9 @@ class StickyNoteView(Gtk.Box):
 
     def _set_mode(self, previewing: bool, emit: bool = True) -> None:
         self.meta.is_previewing = previewing
+        self._mode_sync = True
         (self.fmt_btn if previewing else self.raw_btn).set_active(True)
+        self._mode_sync = False
         self.stack.set_visible_child_name("formatted" if previewing else "raw")
         if previewing:
             self._render_formatted()
@@ -600,20 +604,25 @@ class StickyNoteView(Gtk.Box):
         dialog.choose(root if isinstance(root, Gtk.Window) else None, None, chosen)
 
     def delete_file(self, done: Callable[[Exception | None], None] | None = None) -> None:
-        """Delete the note's file (no confirmation: use request_delete for the dialog) and ask for the node to be removed."""
-        self._disposed = True   # nothing may be written after this
+        """Delete the note's file (no confirmation: use request_delete for the dialog) and ask for the node to be removed.
+        Pending edits are dropped first (a late debounced write would recreate the file) and a write already in flight is awaited."""
+        self._disposed = True   # nothing new may be written after this
         self._stop_watch()
+        self.saver.cancel()
 
         def deleted(err: Exception | None) -> None:
             if err is not None:
                 self._disposed = False
                 self._start_watch()
+                if self.text() != self._saved_text:
+                    self.saver.schedule(self.text())   # the delete failed: the edit we cancelled must not be lost
                 self.status.set_text(f"Delete failed: {err}")
                 self.status.add_css_class("error")
             else:
                 self.emit("delete-requested")
             if done: done(err)
-        self.storage.delete(deleted)
+
+        self.saver.flush(lambda: self.storage.delete(deleted))
 
     # ---- external changes --------------------------------------------------------------------------------
     def _start_watch(self) -> None:
