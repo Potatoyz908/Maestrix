@@ -641,9 +641,15 @@ class MaestriClient:
     # Notes Management (/api/notes)
     # ------------------------------------------------------------------------
 
+    @staticmethod
+    def _sanitize_note_name(name: str) -> str:
+        """Strips trailing .md extension if present to prevent .md.md duplicate paths."""
+        return name[:-3] if name.lower().endswith(".md") else name
+
     def get_note(self, name: str) -> str:
         """Reads a Markdown sticky note's content."""
-        safe_name = urllib.parse.quote(name)
+        clean = self._sanitize_note_name(name)
+        safe_name = urllib.parse.quote(clean)
         try:
             resp = self.session.get(
                 f"{self.base_url}/api/notes/{safe_name}",
@@ -656,7 +662,8 @@ class MaestriClient:
 
     def put_note(self, name: str, content: str) -> bool:
         """Writes Markdown content to a sticky note atomically."""
-        safe_name = urllib.parse.quote(name)
+        clean = self._sanitize_note_name(name)
+        safe_name = urllib.parse.quote(clean)
         resp = self.session.put(
             f"{self.base_url}/api/notes/{safe_name}",
             data=content.encode("utf-8"),
@@ -668,7 +675,8 @@ class MaestriClient:
 
     def delete_note(self, name: str) -> bool:
         """Deletes a sticky note file."""
-        safe_name = urllib.parse.quote(name)
+        clean = self._sanitize_note_name(name)
+        safe_name = urllib.parse.quote(clean)
         resp = self.session.delete(
             f"{self.base_url}/api/notes/{safe_name}",
             headers=self._headers(),

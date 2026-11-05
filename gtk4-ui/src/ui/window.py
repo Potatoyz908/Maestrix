@@ -6,7 +6,7 @@ Integrates HeaderBar, Sidebar, CanvasWidget, and REST synchronization.
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Gio
 
 import os
 import sys
@@ -19,21 +19,27 @@ sys.path.insert(0, str(ROOT_DIR / "canvas-cairo"))  # provides the canonical `ma
 sys.path.insert(0, str(ROOT_DIR))
 
 from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload
-from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent
+from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent, current_iso8601
 from maestri_core.client.api import MaestriClient
+from maestri_core.preferences import PreferencesStore
 from maestri_core.signals.bus import bus
 from maestri_core.sync import WorkspaceSync
 from maestri_canvas.geometry import Point, Rect
 from maestri_canvas.scene import WIDGET_KINDS, ConnItem, NodeItem
 from maestri_canvas.viewport import Viewport
 from maestri_canvas.widget import CanvasWidget
+from .settings_window import SettingsWindow
 from .sidebar import SidebarView
+from .filetree import FileTreeWidget
 
 
 class OpenMaestriWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, client: MaestriClient):
         super().__init__(application=app, title="Open Maestri (Native GTK 4)")
         self.client = client
+        self.prefs_store = PreferencesStore()
+        self.preferences = self.prefs_store.load()
+        self.settings_window = None
         self.set_default_size(1280, 800)
 
         # 1. Load initial workspace or create default
@@ -81,7 +87,11 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         self.paned.set_start_child(self.sidebar)
         self.paned.set_end_child(self.canvas_widget)
-        self.set_child(self.paned)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        root.append(Gtk.PopoverMenuBar.new_from_model(self._build_menu_model()))
+        self.paned.set_vexpand(True)
+        root.append(self.paned)
+        self.set_child(root)
 
         # 4. Setup Shortcuts
         self._setup_shortcuts()
@@ -202,24 +212,80 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.lbl_status.set_label(status_text)
         return GLib.SOURCE_REMOVE
 
+    def _build_menu_model(self) -> Gio.Menu:
+        def section(items):
+            m = Gio.Menu()
+            for label, action in items:
+                m.append(label, action)
+            return m
+
+        menubar = Gio.Menu()
+        file_menu = Gio.Menu()
+        file_menu.append_section(None, section([
+            ("New Terminal", "win.new-terminal"), ("New Note", "win.new-note"),
+            ("New Portal", "win.new-portal"), ("New File Tree", "win.new-file-tree"),
+        ]))
+        file_menu.append_section(None, section([("Save", "win.save")]))
+        file_menu.append_section(None, section([("Preferences…", "win.preferences"), ("Quit", "win.quit")]))
+        menubar.append_submenu("_File", file_menu)
+
+        view_menu = Gio.Menu()
+        view_menu.append_section(None, section([("Toggle Sidebar", "win.toggle-sidebar"), ("Reset Zoom", "win.reset-zoom")]))
+        menubar.append_submenu("_View", view_menu)
+
+        help_menu = Gio.Menu()
+        help_menu.append_section(None, section([("About Open Maestri", "win.about")]))
+        menubar.append_submenu("_Help", help_menu)
+        return menubar
+
     def _setup_shortcuts(self):
-        """Ctrl+N (new terminal), Ctrl+S (save), Ctrl+0 (reset zoom), Ctrl+Q (quit).
-        CAPTURE phase so they work even while a node's content widget (terminal/text view) has focus."""
-        controller = Gtk.ShortcutController()
-        controller.set_scope(Gtk.ShortcutScope.GLOBAL)
-        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        bindings = (
-            ("<Control>n", lambda: self._create_node("terminal")),
-            ("<Control>s", lambda: self._save_to_backend()),
-            ("<Control>0", lambda: self.reset_zoom()),
-            ("<Control>q", lambda: self.close()),
-        )
-        for accel, fn in bindings:
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(accel),
-                Gtk.CallbackAction.new(lambda _w, _a, f=fn: (f(), True)[1]),
-            ))
-        self.add_controller(controller)
+        """Menu actions + accelerators: Ctrl+N new terminal, Ctrl+S save, Ctrl+0 reset zoom, Ctrl+Q quit,
+        Ctrl+, preferences, Ctrl+B sidebar. Application accels run before focused widgets, so they work inside terminals."""
+        handlers = {
+            "new-terminal": lambda: self._create_node("terminal"),
+            "new-note": lambda: self._create_node("stickyNote"),
+            "new-portal": lambda: self._create_node("portal"),
+            "new-file-tree": lambda: self._create_node("fileTree"),
+            "save": lambda: self._save_to_backend(),
+            "preferences": lambda: self.show_preferences(),
+            "quit": lambda: self.close(),
+            "toggle-sidebar": lambda: self._on_toggle_sidebar(None),
+            "reset-zoom": lambda: self.reset_zoom(),
+            "about": lambda: self._show_about(),
+        }
+        self._actions = handlers
+        for name, fn in handlers.items():
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda _a, _p, f=fn: f())
+            self.add_action(action)
+
+        app = self.get_application()
+        if app is not None:
+            for action, accel in (
+                ("win.new-terminal", "<Control>n"), ("win.save", "<Control>s"), ("win.reset-zoom", "<Control>0"),
+                ("win.quit", "<Control>q"), ("win.preferences", "<Control>comma"), ("win.toggle-sidebar", "<Control>b"),
+            ):
+                app.set_accels_for_action(action, [accel])
+
+    def show_preferences(self):
+        """Open (or raise) the SettingsWindow."""
+        if self.settings_window is None:
+            self.settings_window = SettingsWindow(self, self.prefs_store, self._on_preferences_changed)
+            self.settings_window.connect("close-request", self._on_settings_closed)
+        self.settings_window.present()
+
+    def _on_settings_closed(self, *_args):
+        self.settings_window = None
+        return False
+
+    def _on_preferences_changed(self, prefs):
+        # Persisted by SettingsWindow already; consumers (terminal font/theme, canvas background) read self.preferences.
+        self.preferences = prefs
+
+    def _show_about(self):
+        about = Gtk.AboutDialog(transient_for=self, modal=True, program_name="Open Maestri",
+                                comments="Native GTK 4 port of Maestri for Linux.")
+        about.present()
 
     def _on_toggle_sidebar(self, btn):
         is_visible = self.sidebar.get_visible()
@@ -232,8 +298,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         oy = p.canvas_origin[1] if len(p.canvas_origin) > 1 else 8500.0
         return Viewport(Point(ox, oy), p.canvas_zoom or 1.0)
 
-    @staticmethod
-    def _make_content_widget(node: CanvasNode) -> Gtk.Widget:
+    def _make_content_widget(self, node: CanvasNode) -> Gtk.Widget:
         """Placeholder body per node kind (real PTY/WebKit/file-tree widgets plug in here)."""
         c = node.content
         if node.node_type == "stickyNote":
@@ -241,10 +306,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             view.set_left_margin(8)
             view.set_top_margin(8)
             return view
+        if node.node_type == "fileTree":
+            if not c.root_path:
+                c.root_path = os.path.expanduser("~")
+            return FileTreeWidget(self.client, c)
         if node.node_type == "portal":
             text = getattr(c, "current_url", "") or "about:blank"
-        elif node.node_type == "fileTree":
-            text = getattr(c, "root_path", "") or "~"
         else:
             text = getattr(c, "command", "") or "bash"
         return Gtk.Label(label=text, xalign=0, yalign=0, margin_start=8, margin_top=8, selectable=False)
@@ -316,11 +383,13 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             target_list = payload.note_connections
             if type_a != "terminal":
                 a, b = b, a
+                side_a, side_b = side_b, side_a
         elif (type_a == "terminal" and type_b == "portal") or (type_a == "portal" and type_b == "terminal"):
             kind = "terminalToPortal"
             target_list = payload.portal_connections
             if type_a != "terminal":
                 a, b = b, a
+                side_a, side_b = side_b, side_a
         elif type_a == "portal" and type_b == "portal":
             kind = "portalToPortal"
             target_list = payload.portal_to_portal_connections
@@ -328,8 +397,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             kind = "noteToNote"
             target_list = payload.note_to_note_connections
         else:
-            kind = "terminal"
-            target_list = payload.connections
+            # Other combinations (e.g. fileTree, note-to-portal) are unsupported in schema v2
+            return
 
         cid = f"local-{a[:8]}-{b[:8]}"
         self.canvas_widget.add_connection(ConnItem(cid, a, b, side_a, side_b, pending=True))

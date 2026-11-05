@@ -27,6 +27,7 @@ from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk
 
 from .constants import CANVAS_GRID_SPACING  # noqa: F401
 from .geometry import Point, Rect, round_half_away
+from .file_tree_node import FileTreeView
 from .interaction import (WHEEL_NOTCH_PX, Background, CanvasController, ConnectRequested, DeleteRequested, DrawRequested,
                           DuplicateRequested, Event, Mods, NodeContent, NodeEdge, NodeHeader, NodePin, NodeResized, NodesMoved,
                           SelectionChanged, Target, ToolChanged, ViewportChanged)
@@ -269,6 +270,7 @@ CSS = b"""
 .maestri-node.selected { border: 2px dashed #3b82f6; }
 .maestri-node-header { background: alpha(currentColor, .06); padding: 0 8px; border-radius: 7px 7px 0 0; }
 .maestri-pin { background: #3b82f6; border: 2px solid white; border-radius: 50%; opacity: 0; transition: opacity 120ms; }
+.maestri-file-tree-list > row { padding: 2px 6px; min-height: 22px; }
 .maestri-node:hover .maestri-pin, .maestri-connecting .maestri-pin { opacity: 1; }
 """
 
@@ -287,6 +289,7 @@ class CanvasWidget(Gtk.Overlay):
         "tool-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "viewport-changed": (GObject.SignalFlags.RUN_FIRST, None, (float, float, float)),
         "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
+        "file-activated": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                             # fileTree id, path
     }
 
     def __init__(self, scene: Scene | None = None, viewport: Viewport | None = None) -> None:
@@ -347,7 +350,8 @@ class CanvasWidget(Gtk.Overlay):
     # ---- public API ---------------------------------------------------------------------------
     def add_node(self, item: NodeItem, content: Gtk.Widget | None = None, cwd: str | None = None,
                  env: dict[str, str] | None = None, focus: bool = False) -> None:
-        """`content=None` on a "terminal" node spawns a native VTE login shell (cwd/env apply to it); `focus` gives it the keyboard."""
+        """`content=None` builds the native content: a VTE login shell for "terminal" (cwd/env apply to it), a FileTreeView rooted at
+        `cwd` (default ~) for "fileTree". `focus` gives the content the keyboard."""
         self.scene.add_node(item)
         self.controller.dirty = True
         if item.kind == "terminal" and content is None:
@@ -355,6 +359,10 @@ class CanvasWidget(Gtk.Overlay):
             content = create_terminal(cwd=cwd, env=env, on_exit=lambda st: self.emit("terminal-exited", nid, st))
             if content is None:
                 content = Gtk.Label(label="Vte 3.91 (GTK 4) not available")
+        elif item.kind == "fileTree" and content is None:
+            nid = item.id
+            content = FileTreeView(cwd)
+            content.connect("file-activated", lambda _v, path: self.emit("file-activated", nid, path))
         if item.kind in WIDGET_KINDS and content is not None:
             frame = NodeFrame(item, content, on_close=lambda i: self.emit("delete-requested", (i,)))
             self.frames[item.id] = frame

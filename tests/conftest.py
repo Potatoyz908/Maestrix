@@ -14,6 +14,7 @@ import pytest
 # Add project directories to path for imports
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "canvas-cairo"))
 sys.path.insert(0, str(REPO_ROOT / "canvas-cairo" / "src"))
 sys.path.insert(0, str(REPO_ROOT / "gtk4-ui" / "src"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
