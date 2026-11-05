@@ -50,6 +50,7 @@ let coreSources: [String] = [
     "InterAgent/CLIRouter.swift",
     "InterAgent/InterAgentServer.swift",
     "InterAgent/WebSocketServer.swift",
+    "InterAgent/EventBroadcaster.swift",
     "InterAgent/Handlers/AskHandler.swift",
     "InterAgent/Handlers/CheckHandler.swift",
     "InterAgent/Handlers/ListHandler.swift",
@@ -66,6 +67,7 @@ let coreTestSources: [String] = [
     "Workspace/PersistenceManagerTests.swift",
     "Workspace/MigrationTests.swift",
     "InterAgent/LinuxPtyAndServerTests.swift",
+    "InterAgent/EventStreamTests.swift",
     "Workspace/CrossLanguageDecodingTests.swift",
 ]
 

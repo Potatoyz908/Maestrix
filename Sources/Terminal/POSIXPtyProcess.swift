@@ -22,6 +22,12 @@ final class POSIXPtyProcess: @unchecked Sendable {
     private var readSource: DispatchSourceRead?
     private(set) var isRunning: Bool = false
 
+    /// PTY 元数据 (供 /api/terminals 与 /ws/events 使用)
+    private(set) var cols: Int = 80
+    private(set) var rows: Int = 24
+    private(set) var startedAt: Date?
+    private(set) var exitCode: Int32?
+
     /// SwiftTerm 无头终端实例，用于 ANSI 解析与屏幕缓冲区快照
     private var headlessTerminal: Terminal?
     private let terminalDelegate = HeadlessTerminalDelegate()
@@ -166,6 +172,7 @@ final class POSIXPtyProcess: @unchecked Sendable {
         self.childPid = pid
         self.masterFd = master
         self.isRunning = true
+        self.startedAt = Date()
 
         // 设置非阻塞
         let flags = fcntl(master, F_GETFL, 0)
@@ -242,6 +249,7 @@ final class POSIXPtyProcess: @unchecked Sendable {
             }
             #endif
         }
+        self.exitCode = exitCode
         logger.info("POSIX PTY terminated for \(self.terminalId.uuidString.prefix(8)), exitCode=\(exitCode ?? -1)")
         onProcessExit?(exitCode)
     }
@@ -284,7 +292,9 @@ final class POSIXPtyProcess: @unchecked Sendable {
     }
 
     func resize(cols: Int, rows: Int) {
-        guard masterFd >= 0 else { return }
+        guard masterFd >= 0, cols > 0, rows > 0, cols <= 1000, rows <= 1000 else { return }
+        self.cols = cols
+        self.rows = rows
         var ws = winsize(ws_row: UInt16(rows), ws_col: UInt16(cols), ws_xpixel: 0, ws_ypixel: 0)
         #if canImport(Glibc)
         _ = ioctl(masterFd, UInt(TIOCSWINSZ), &ws)

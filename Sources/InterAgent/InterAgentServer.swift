@@ -24,6 +24,9 @@ private let sockStreamType: Int32 = Int32(SOCK_STREAM.rawValue)
 ///   - POST /api/workspace -> 保存工作区 JSON
 ///   - POST /api/terminals -> 创建新终端会话
 ///   - DELETE /api/terminals/:id -> 删除终端会话
+///   - GET /api/terminals[/:id] -> PTY 元数据 (pid/cols/rows/running/exitCode/...)
+///   - DELETE /api/nodes/:id -> 删除节点及其连接并广播 nodeRemoved
+///   - WS /ws/events[?workspace=UUID] -> 节点/终端生命周期事件 (JSON 文本帧)
 ///   - WS /ws/pty/:id -> RFC 6455 WebSocket 双向流式 PTY 与尺寸控制
 public final class InterAgentServer {
     public static let shared = InterAgentServer()
@@ -383,6 +386,7 @@ public final class InterAgentServer {
         for session in sessionsToClose {
             session.close()
         }
+        EventBroadcaster.shared.closeAll()
 #else
         listener?.cancel()
         listener = nil
@@ -551,6 +555,26 @@ public final class InterAgentServer {
                 // 检测 WebSocket Upgrade (/ws/pty/:id)
                 let isUpgrade = (headerMap["upgrade"]?.lowercased() == "websocket") ||
                                 (headerMap["connection"]?.lowercased().contains("upgrade") == true)
+
+                if isUpgrade && (path == "/ws/events" || path.hasPrefix("/ws/events?")) {
+                    guard let clientKey = headerMap["sec-websocket-key"] else {
+                        let resp = Self.buildHTTPResponse(status: 400, body: "error: missing Sec-WebSocket-Key", allowedOrigin: allowedOrigin)
+                        _ = resp.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
+                        close(fd)
+                        return
+                    }
+                    var filter: UUID? = nil
+                    if let q = path.components(separatedBy: "?").dropFirst().first {
+                        for item in q.components(separatedBy: "&") {
+                            let kv = item.components(separatedBy: "=")
+                            if kv.count == 2, kv[0] == "workspace" { filter = UUID(uuidString: kv[1]) }
+                        }
+                    }
+                    let session = EventsWebSocketSession(fd: fd, workspaceFilter: filter)
+                    EventBroadcaster.shared.register(session)
+                    session.start(acceptKey: WebSocketHandshake.acceptKey(for: clientKey))
+                    return
+                }
 
                 if isUpgrade && path.hasPrefix("/ws/pty/") {
                     let cleanPtyPath = path.components(separatedBy: "?").first ?? path
@@ -736,6 +760,26 @@ public final class InterAgentServer {
             }
             let resp = "{\"id\":\"\(newId.uuidString)\"}"
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp)
+        }
+
+        // 4b. GET /api/terminals (PTY 元数据列表) 与 GET /api/terminals/:id
+        if method == "GET" && (cleanPath == "/api/terminals" || cleanPath.hasPrefix("/api/terminals/")) {
+            let rawId = cleanPath == "/api/terminals" ? "" : String(cleanPath.dropFirst("/api/terminals/".count))
+            if rawId.isEmpty {
+                let list: [[String: Any]] = await MainActor.run { LinuxTerminalManager.shared.allMetadata() }
+                if let data = try? JSONSerialization.data(withJSONObject: list, options: [.sortedKeys]) {
+                    return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+                }
+                return Self.buildHTTPResponse(status: 500, body: "error: encode failed", allowedOrigin: allowedOrigin)
+            }
+            guard let tid = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid terminal ID", allowedOrigin: allowedOrigin)
+            }
+            let meta: [String: Any]? = await MainActor.run { LinuxTerminalManager.shared.metadata(for: tid) }
+            guard let meta, let data = try? JSONSerialization.data(withJSONObject: meta, options: [.sortedKeys]) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: terminal not found", allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
         }
 
         // 5. DELETE /api/terminals/:id
@@ -1661,10 +1705,57 @@ public final class InterAgentServer {
             let fileURL = pm.workspaceURL(id: wsId)
             try? pm.saveSync(doc, to: fileURL)
 
+            var nodePayload: [String: Any] = ["nodeId": nodeId.uuidString, "nodeType": nodeType]
+            if let enc = try? pm.encoder.encode(node),
+               let obj = try? JSONSerialization.jsonObject(with: enc) {
+                nodePayload["node"] = obj
+            }
+            EventBroadcaster.shared.publish(type: "nodeAdded", workspaceId: wsId, payload: nodePayload)
+
             if let encoded = try? pm.encoder.encode(node) {
                 return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: encoded, allowedOrigin: allowedOrigin)
             }
             return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", body: "{\"id\":\"\(nodeId.uuidString)\"}", allowedOrigin: allowedOrigin)
+        }
+
+        // 21. DELETE /api/nodes/:id  (?workspace=UUID 可选)
+        if method == "DELETE" && cleanPath.hasPrefix("/api/nodes/") {
+            let rawId = String(cleanPath.dropFirst("/api/nodes/".count))
+            guard let nodeId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid node ID", allowedOrigin: allowedOrigin)
+            }
+            let pm = PersistenceManager.shared
+            var wsId: UUID? = nil
+            if pathParts.count > 1 {
+                for pair in pathParts[1].components(separatedBy: "&") {
+                    let kv = pair.components(separatedBy: "=")
+                    if kv.count == 2 && kv[0] == "workspace" { wsId = UUID(uuidString: kv[1]) }
+                }
+            }
+            if wsId == nil {
+                wsId = (try? pm.loadAppState())?.activeWorkspaceId ?? (try? pm.loadManifest())?.workspaces.first?.id
+            }
+            guard let wsId, var doc = try? pm.loadWorkspace(id: wsId),
+                  let idx = doc.payload.nodes.firstIndex(where: { $0.id == nodeId }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: node not found", allowedOrigin: allowedOrigin)
+            }
+            let removed = doc.payload.nodes.remove(at: idx)
+            var ids: Set<UUID> = [nodeId]
+            if case .terminal(let t) = removed.content { ids.insert(t.id) }
+            doc.payload.connections.removeAll { ids.contains($0.terminalIdA) || ids.contains($0.terminalIdB) }
+            doc.payload.noteConnections.removeAll { ids.contains($0.terminalId) || ids.contains($0.noteNodeId) }
+            doc.payload.portalConnections.removeAll { ids.contains($0.terminalId) || ids.contains($0.portalNodeId) }
+            doc.payload.portalToPortalConnections.removeAll { ids.contains($0.portalIdA) || ids.contains($0.portalIdB) }
+            doc.payload.noteToNoteConnections.removeAll { ids.contains($0.noteNodeIdA) || ids.contains($0.noteNodeIdB) }
+            doc.payload.crossFloorConnections.removeAll { ids.contains($0.nodeIdA) || ids.contains($0.nodeIdB) }
+            doc.payload.lastModifiedAt = Date()
+            do {
+                try pm.saveSync(doc, to: pm.workspaceURL(id: wsId))
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace", allowedOrigin: allowedOrigin)
+            }
+            EventBroadcaster.shared.publish(type: "nodeRemoved", workspaceId: wsId, payload: ["nodeId": nodeId.uuidString])
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
         }
 
         return Self.buildHTTPResponse(status: 404, body: "error: not found", allowedOrigin: allowedOrigin)

@@ -46,9 +46,14 @@ final class LinuxTerminalManager: TerminalManaging {
                 session?.recordOutput(text)
             }
         }
-        proc.onProcessExit = { [weak session] _ in
+        proc.onProcessExit = { [weak session] code in
             Task { @MainActor in
                 session?.terminate()
+                EventBroadcaster.shared.publish(
+                    type: "terminalExited",
+                    workspaceId: self.terminalWorkspaceMap[id],
+                    payload: ["terminalId": id.uuidString, "exitCode": code.map { Int($0) } ?? -1]
+                )
             }
         }
 
@@ -64,16 +69,26 @@ final class LinuxTerminalManager: TerminalManaging {
         }
 
         logger.info("Linux terminal \(id.uuidString.prefix(8)) created and PTY started")
+        EventBroadcaster.shared.publish(
+            type: "terminalCreated",
+            workspaceId: workspaceId,
+            payload: metadata(for: id) ?? ["terminalId": id.uuidString]
+        )
         return session
     }
 
     func removeTerminal(id: UUID) {
+        let wsId = terminalWorkspaceMap[id]
+        let existed = terminals[id] != nil
         processes[id]?.terminate()
         processes.removeValue(forKey: id)
         terminals[id]?.terminate()
         terminals.removeValue(forKey: id)
         terminalWorkspaceMap.removeValue(forKey: id)
         logger.info("Linux terminal \(id.uuidString.prefix(8)) removed")
+        if existed {
+            EventBroadcaster.shared.publish(type: "terminalRemoved", workspaceId: wsId, payload: ["terminalId": id.uuidString])
+        }
     }
 
     func write(to terminalId: UUID, text: String) {
@@ -93,7 +108,43 @@ final class LinuxTerminalManager: TerminalManaging {
     }
 
     func resize(terminalId: UUID, cols: Int, rows: Int) {
-        processes[terminalId]?.resize(cols: cols, rows: rows)
+        guard let proc = processes[terminalId] else { return }
+        let before = (proc.cols, proc.rows)
+        proc.resize(cols: cols, rows: rows)
+        if (proc.cols, proc.rows) != before {
+            EventBroadcaster.shared.publish(
+                type: "terminalResized",
+                workspaceId: terminalWorkspaceMap[terminalId],
+                payload: ["terminalId": terminalId.uuidString, "cols": proc.cols, "rows": proc.rows]
+            )
+        }
+    }
+
+    /// PTY 元数据快照（JSON 可序列化）。无此终端时返回 nil。
+    func metadata(for terminalId: UUID) -> [String: Any]? {
+        guard let session = terminals[terminalId] else { return nil }
+        let proc = processes[terminalId]
+        var m: [String: Any] = [
+            "terminalId": terminalId.uuidString,
+            "command": session.command,
+            "workingDirectory": session.workingDirectory,
+            "running": proc?.isRunning ?? false,
+            "cols": proc?.cols ?? 80,
+            "rows": proc?.rows ?? 24,
+            "agentType": session.agentType,
+        ]
+        if let pid = proc?.childPid, pid > 0 { m["pid"] = Int(pid) }
+        if let started = proc?.startedAt { m["startedAt"] = ISO8601DateFormatter().string(from: started) }
+        if let code = proc?.exitCode { m["exitCode"] = Int(code) }
+        if let name = session.displayName { m["displayName"] = name }
+        if let role = session.roleName { m["roleName"] = role }
+        if let ws = terminalWorkspaceMap[terminalId] { m["workspaceId"] = ws.uuidString }
+        return m
+    }
+
+    func allMetadata() -> [[String: Any]] {
+        terminals.keys.compactMap { metadata(for: $0) }
+            .sorted { ($0["terminalId"] as? String ?? "") < ($1["terminalId"] as? String ?? "") }
     }
 
     func bufferText(for terminalId: UUID) -> String? {
