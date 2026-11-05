@@ -5,13 +5,13 @@ import OSLog
 
 /// 数据持久化管理器
 /// 所有文件 I/O 必须通过此类进行（ScrollbackStore 除外，性能原因）
-final class PersistenceManager {
-    static let shared = PersistenceManager()
+public final class PersistenceManager {
+    public static let shared = PersistenceManager()
 
     private let logger = Logger.make(category: "PersistenceManager")
 
     /// 应用数据根目录 ~/.open-maestri/
-    var appDataURL: URL {
+    public var appDataURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(Constants.appDataDirectoryName)
     }
@@ -57,7 +57,7 @@ final class PersistenceManager {
 
     // MARK: - 目录初始化
 
-    func ensureDirectoriesExist() throws {
+    public func ensureDirectoriesExist() throws {
         let dirs: [URL] = [
             appDataURL,
             appDataURL.appendingPathComponent("workspaces"),

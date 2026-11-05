@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 const corePort = process.env.CORE_PORT ?? "0";
 
 export default defineConfig({
+  base: "./",
   server: {
     proxy: {
       "/cli": `http://127.0.0.1:${corePort}`,

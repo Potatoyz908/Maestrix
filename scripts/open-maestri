@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Open Maestri desktop launcher
+set -e
+
+# Resolve repository directory or fallback to standard share directory
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+if [ -f "$DIR/open_maestri_app.py" ]; then
+    APP_RUNNER="$DIR/open_maestri_app.py"
+elif [ -f "$DIR/../scripts/open_maestri_app.py" ]; then
+    APP_RUNNER="$DIR/../scripts/open_maestri_app.py"
+elif [ -f "$HOME/.local/share/open-maestri/scripts/open_maestri_app.py" ]; then
+    APP_RUNNER="$HOME/.local/share/open-maestri/scripts/open_maestri_app.py"
+else
+    APP_RUNNER="/home/euller/open-maestri-linux/scripts/open_maestri_app.py"
+fi
+
+exec python3 "$APP_RUNNER" "$@"

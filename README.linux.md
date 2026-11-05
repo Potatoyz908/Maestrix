@@ -20,7 +20,36 @@ npm --version
 
 ---
 
-## 🚀 1. Como Rodar os Testes Unitários do Core Swift
+## 🖥️ 1. Como Executar o Open Maestri como Aplicativo Desktop no Linux
+
+O Open Maestri no Linux foi empacotado como um executável de desktop nativo (GTK3 + WebKit2 com aceleração WebGL) integrado ao backend Swift Core e terminais PTY:
+
+### 1.1 Instalação rápida no sistema (user space)
+```bash
+./scripts/install-desktop.sh
+```
+Isso instala:
+- O executável `open-maestri` em `~/.local/bin/open-maestri`
+- O CLI `omaestri` em `~/.local/bin/omaestri`
+- O daemon `open-maestri-server` em `~/.local/bin/open-maestri-server`
+- O ícone oficial de alta resolução em `~/.local/share/icons/hicolor/512x512/apps/open-maestri.png`
+- O atalho `.desktop` em `~/.local/share/applications/open-maestri.desktop` (aparece no menu de aplicativos do Ubuntu/GNOME)
+
+### 1.2 Rodar pelo terminal ou menu
+```bash
+# Rodar direto pelo terminal (já no PATH):
+open-maestri
+
+# Ou buscar por "Open Maestri" no Dash / menu de aplicativos do Ubuntu
+```
+
+Ao abrir, a janela nativa do Open Maestri carrega o Canvas interativo, inicia o Core Server e disponibiliza o socket Unix em `~/.open-maestri/run/agent.sock`.
+
+Pressione `F12` dentro do app a qualquer momento para abrir o Developer Tools / Inspector do WebKit.
+
+---
+
+## 🚀 2. Como Rodar os Testes Unitários do Core Swift
 
 Todos os 27 testes do **OpenMaestriCore** (Workspace, Persistência atômica, Formato de frames, Migrações e Servidor POSIX/PTY) rodam via SwiftPM:
 
@@ -35,7 +64,7 @@ swift test -Xswiftc -use-ld=lld
 
 ---
 
-## 💻 2. Como Compilar e Usar o CLI `omaestri` Nativo
+## 💻 3. Como Compilar e Usar o CLI `omaestri` Nativo
 
 O CLI `omaestri` opera sobre sockets POSIX (`AF_UNIX` em `~/.open-maestri/run/agent.sock`):
 
@@ -44,15 +73,15 @@ O CLI `omaestri` opera sobre sockets POSIX (`AF_UNIX` em `~/.open-maestri/run/ag
 swift build --product omaestri -Xswiftc -use-ld=lld
 
 # Visualizar o menu de ajuda do CLI compilado
-.build/x86_64-unknown-linux-gnu/debug/omaestri --help
+omaestri --help
 
 # Testar comunicação com o daemon/servidor
-.build/x86_64-unknown-linux-gnu/debug/omaestri list
+omaestri list
 ```
 
 ---
 
-## 🎨 3. Como Rodar e Testar a Web Shell (Canvas + Terminais)
+## 🎨 4. Como Rodar e Testar a Web Shell (Canvas + Terminais)
 
 A camada de apresentação do Linux fica dentro do diretório `Web/` e implementa o canvas com renderização via Canvas2D + emulação de terminais via `@xterm/xterm`.
 

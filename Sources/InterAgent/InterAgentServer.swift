@@ -20,21 +20,21 @@ private let sockStreamType: Int32 = Int32(SOCK_STREAM.rawValue)
 /// - 支持 Unix Domain Socket (~/.open-maestri/run/agent.sock)
 /// - 单一路由：POST /cli
 /// - 所有 omaestri CLI 命令通过此服务路由
-final class InterAgentServer {
-    static let shared = InterAgentServer()
+public final class InterAgentServer {
+    public static let shared = InterAgentServer()
     private let logger = Logger.make(category: "InterAgentServer")
 
-    private(set) var port: UInt16 = 0
+    public private(set) var port: UInt16 = 0
 
     // MARK: - Unix Socket 支持
     private var unixSocketFd: Int32 = -1
     private var unixSocketSource: DispatchSourceRead?
 
     /// 当前活跃的 Unix socket 路径（供 SwiftTermProvider / PTY 注入 MAESTRI_SOCKET）
-    private(set) var currentSocketPath: String?
+    public private(set) var currentSocketPath: String?
 
     /// 全局固定 socket 路径（不再绑定 workspace UUID，避免切换工作区后旧终端 CLI 断联）
-    static var globalSocketPath: String {
+    public static var globalSocketPath: String {
         let runDir = PersistenceManager.shared.appDataURL
             .appendingPathComponent("run").path
         return "\(runDir)/agent.sock"
@@ -49,7 +49,7 @@ final class InterAgentServer {
     private var tcpSocketSource: DispatchSourceRead?
 
     /// Starts the TCP HTTP server on a dynamic port on Linux via POSIX sockets.
-    func start() throws {
+    public func start() throws {
         MainActor.assumeIsolated {
             if PlatformHooks.terminalsService == nil {
                 PlatformHooks.terminalsService = LinuxTerminalManager.shared

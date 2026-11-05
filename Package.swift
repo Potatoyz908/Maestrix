@@ -74,6 +74,7 @@ let package = Package(
     products: [
         .library(name: "OpenMaestriCore", targets: ["OpenMaestriCore"]),
         .executable(name: "omaestri", targets: ["omaestri"]),
+        .executable(name: "open-maestri-server", targets: ["open-maestri-server"]),
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", "1.4.0"..<"2.0.0"),
@@ -86,6 +87,13 @@ let package = Package(
             ],
             path: "Sources",
             sources: coreSources
+        ),
+        .executableTarget(
+            name: "open-maestri-server",
+            dependencies: [
+                "OpenMaestriCore",
+            ],
+            path: "Sources/Server"
         ),
         .executableTarget(
             name: "omaestri",
