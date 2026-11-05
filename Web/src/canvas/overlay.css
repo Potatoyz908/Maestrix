@@ -1,19 +1,62 @@
 .overlay { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-.tnode { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: auto; display: flex; flex-direction: column;
-  background: #1e1e1e; border: 1px solid #555; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); will-change: transform; }
-.tnode.selected { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6, 0 4px 16px rgba(0,0,0,.25); }
-.tnode-header { flex: 0 0 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #2b2b2b; color: #ddd;
-  border-radius: 7px 7px 0 0; cursor: grab; user-select: none; touch-action: none; }
-.tnode-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.tnode-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.tnode-status { font-size: 11px; color: #9aa; }
-.tnode-close { all: unset; cursor: pointer; width: 20px; height: 20px; text-align: center; line-height: 20px; border-radius: 4px; color: #bbb; }
-.tnode-close:hover { background: #f85149; color: #fff; }
-.tnode-body { flex: 1; min-height: 0; padding: 4px; overflow: hidden; }
-.tnode-handle { position: absolute; touch-action: none; z-index: 2; }
+.dnode { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: auto; display: flex; flex-direction: column;
+  border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); will-change: transform; }
+.dnode.selected { box-shadow: 0 0 0 2px #3b82f6, 0 4px 16px rgba(0,0,0,.25); }
+.dnode-header { flex: 0 0 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 7px 7px 0 0;
+  cursor: grab; user-select: none; touch-action: none; }
+.dnode-hl, .dnode-hr { display: flex; align-items: center; gap: 6px; }
+.dnode-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.dnode-close { all: unset; cursor: pointer; width: 20px; height: 20px; text-align: center; line-height: 20px; border-radius: 4px; }
+.dnode-close:hover { background: #f85149; color: #fff; }
+.dnode-body { flex: 1; min-height: 0; overflow: hidden; }
+.dnode-handle { position: absolute; touch-action: none; z-index: 2; }
 .h-left, .h-right { top: 8px; bottom: 8px; width: 8px; }
 .h-top, .h-bottom { left: 8px; right: 8px; height: 8px; }
 .h-left { left: -4px; } .h-right { right: -4px; } .h-top { top: -4px; } .h-bottom { bottom: -4px; }
 .h-topLeft, .h-topRight, .h-bottomLeft, .h-bottomRight { width: 14px; height: 14px; }
 .h-topLeft { left: -6px; top: -6px; } .h-topRight { right: -6px; top: -6px; }
 .h-bottomLeft { left: -6px; bottom: -6px; } .h-bottomRight { right: -6px; bottom: -6px; }
+
+/* connection pins */
+.pin { position: absolute; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%; z-index: 3; cursor: crosshair;
+  background: #3b82f6; border: 2px solid #fff; opacity: 0; transition: opacity .12s, transform .12s; touch-action: none; }
+.pin-left { left: -7px; } .pin-right { right: -7px; }
+.dnode:hover .pin, .overlay.connecting .pin { opacity: 1; }
+.pin:hover { transform: scale(1.35); }
+
+/* terminal */
+.tnode { background: #1e1e1e; border: 1px solid #555; color: #ddd; }
+.tnode .dnode-header { background: #2b2b2b; }
+.tnode .dnode-close { color: #bbb; }
+.tnode-body { padding: 4px; }
+.tnode-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.tnode-status { font-size: 11px; color: #9aa; }
+
+/* sticky note */
+.nnode { background: var(--note-color, #fff3a3); border: 1px solid rgba(0,0,0,.18); color: #222; }
+.nnode .dnode-header { background: rgba(0,0,0,.06); }
+.nnode-swatch { all: unset; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,.3); cursor: pointer; }
+.nnode-toggle { all: unset; cursor: pointer; padding: 0 4px; }
+.nnode-status { font-size: 11px; opacity: .6; }
+.nnode-status.err { color: #c62828; opacity: 1; }
+.nnode-body { padding: 0; }
+.nnode .dnode-body { display: flex; }
+.nnode-editor { flex: 1; width: 100%; resize: none; border: 0; outline: 0; padding: 8px; background: transparent; color: inherit;
+  font: var(--note-size, 14px)/1.45 ui-monospace, monospace; }
+.nnode-preview { display: none; flex: 1; overflow: auto; padding: 8px; font-size: var(--note-size, 14px); line-height: 1.45; user-select: text; }
+.nnode.previewing .nnode-editor { display: none; }
+.nnode.previewing .nnode-preview { display: block; }
+.nnode-preview pre { background: rgba(0,0,0,.08); padding: 6px; border-radius: 4px; overflow: auto; }
+.nnode-preview code { background: rgba(0,0,0,.08); padding: 0 3px; border-radius: 3px; }
+.nnode-preview pre code { background: none; padding: 0; }
+.nnode-preview blockquote { margin: 4px 0; padding-left: 8px; border-left: 3px solid rgba(0,0,0,.25); }
+.nnode-preview h1, .nnode-preview h2, .nnode-preview h3 { margin: 6px 0 4px; }
+.nnode-preview p { margin: 4px 0; }
+
+/* toolbar */
+.toolbar { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); display: flex; gap: 6px; padding: 6px;
+  background: rgba(255,255,255,.92); border: 1px solid rgba(0,0,0,.15); border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.15); z-index: 10; }
+.toolbar button { all: unset; cursor: pointer; padding: 5px 10px; border-radius: 6px; font: 13px system-ui, sans-serif; }
+.toolbar button:hover:not(:disabled) { background: rgba(0,0,0,.08); }
+.toolbar button:disabled { opacity: .4; cursor: not-allowed; }
+.toolbar .toast { align-self: center; padding: 0 8px; color: #c62828; font: 12px system-ui, sans-serif; }

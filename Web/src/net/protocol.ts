@@ -4,7 +4,15 @@
  *
  *   POST /cli  body {"args":[...]}  header X-Terminal-ID  -> text/plain   (existing)
  *   GET  /api/workspaces/:id        -> WorkspaceDocument (schemaVersion 2)
- *   GET|PUT /api/notes/:name        -> note markdown (text lives in notes/{name}.md, not workspace.json)
+ *   GET|PUT /api/notes/:name        -> note markdown. :name = fileName WITHOUT ".md" (the core appends it),
+ *                                      percent-encoded; text lives in notes/{name}.md, not workspace.json
+ *   POST /api/nodes                 -> create a node (body CreateNodeRequest) -> CanvasNodeDTO
+ *   POST /api/connections           -> body ConnectionLink (kind-discriminated) -> {id}
+ *
+ * SECURITY (blocking, core side): every /api and TCP /cli request needs
+ * "Authorization: Bearer <token>" (constant-time compare), Origin/Host validation
+ * (anti DNS-rebinding) and NO "Access-Control-Allow-Origin: *". The web shell already
+ * sends the Bearer header on every fetch.
  *   WS   /ws/events?workspace=:id   -> ServerEvent (text JSON frames)
  *   WS   /ws/pty/:terminalId        -> binary = raw PTY bytes; text = ClientPtyControl / ServerPtyControl
  *
@@ -53,11 +61,52 @@ export const sameId = (a: string, b: string): boolean => normId(a) === normId(b)
 /** The node's type key, e.g. "terminal". */
 export const nodeType = (c: NodeContent): NodeType | undefined => NODE_TYPES.find((t) => c[t] !== undefined);
 
+/**
+ * Connections are NOT [a,b]: workspace.json keeps 6 typed arrays, each item
+ * {id, createdAt, <id pair>, ropePoints:[[x,y]*21]}. A/B order is preserved by the core.
+ */
+export type ConnectionLink =
+  | { kind: "terminal"; terminalIdA: string; terminalIdB: string }
+  | { kind: "note"; terminalId: string; noteNodeId: string }
+  | { kind: "portal"; terminalId: string; portalNodeId: string }
+  | { kind: "portalToPortal"; portalIdA: string; portalIdB: string }
+  | { kind: "noteToNote"; noteNodeIdA: string; noteNodeIdB: string }
+  | { kind: "crossFloor"; nodeIdA: string; floorIdA?: string; nodeIdB: string; floorIdB?: string };
+
+export type ConnectionDTO = ConnectionLink & { id: string; createdAt: string; ropePoints: [number, number][] };
+
+/** The two node ids a link joins, in the order stored by the core. */
+export function endpointsOf(l: ConnectionLink): [string, string] {
+  switch (l.kind) {
+    case "terminal": return [l.terminalIdA, l.terminalIdB];
+    case "note": return [l.terminalId, l.noteNodeId];
+    case "portal": return [l.terminalId, l.portalNodeId];
+    case "portalToPortal": return [l.portalIdA, l.portalIdB];
+    case "noteToNote": return [l.noteNodeIdA, l.noteNodeIdB];
+    case "crossFloor": return [l.nodeIdA, l.nodeIdB];
+  }
+}
+
+/**
+ * Link for a gesture between two nodes the web shell knows how to draw.
+ * terminal<->note is normalized to (terminal, note) whichever pin the user started from.
+ * Returns null for pairs the core has no array for (e.g. note<->portal) or kinds not built yet.
+ */
+export function linkFor(a: { id: string; kind?: string }, b: { id: string; kind?: string }): ConnectionLink | null {
+  const k = `${a.kind}|${b.kind}`;
+  if (k === "terminal|terminal") return { kind: "terminal", terminalIdA: a.id, terminalIdB: b.id };
+  if (k === "note|note") return { kind: "noteToNote", noteNodeIdA: a.id, noteNodeIdB: b.id };
+  if (k === "terminal|note") return { kind: "note", terminalId: a.id, noteNodeId: b.id };
+  if (k === "note|terminal") return { kind: "note", terminalId: b.id, noteNodeId: a.id };
+  return null;
+}
+
 export type ServerEvent =
   | { type: "nodeAdded"; node: CanvasNodeDTO }
   | { type: "nodeUpdated"; node: CanvasNodeDTO }
   | { type: "nodeRemoved"; id: string }
-  | { type: "connectionChanged"; id: string; a: string; b: string; removed?: boolean };
+  | { type: "connectionAdded"; connection: ConnectionDTO }
+  | { type: "connectionRemoved"; id: string };
 
 /**
  * Nodes are created/removed/edited by the server only (via WorkspaceManager, so
@@ -72,7 +121,7 @@ export type ClientCommand =
   | { type: "addNode"; nodeType: NodeType; frame: FrameTuple; content?: NodeContent }
   | { type: "removeNode"; id: string }
   | { type: "updateContent"; id: string; content: NodeContent }
-  | { type: "addConnection"; a: string; b: string }
+  | { type: "addConnection"; link: ConnectionLink }
   | { type: "removeConnection"; id: string };
 
 /** Text frames the server may send on /ws/pty (PROPOSED, needs Sentinela ack). */

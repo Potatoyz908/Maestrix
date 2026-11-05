@@ -45,6 +45,9 @@ export class Toolbar {
     const btnTerm = this.createButton("➕ Terminal", "Criar novo terminal bash interativo", () => callbacks.onAddTerminal());
     this.element.appendChild(btnTerm);
 
+    const btnNote = this.createButton("📝 Nota", "Criar nova nota adesiva Markdown", () => callbacks.onAddNote());
+    this.element.appendChild(btnNote);
+
     const btnZoom = this.createButton("🔍 100%", "Restaurar zoom e enquadramento", () => callbacks.onResetZoom());
     this.element.appendChild(btnZoom);
 
