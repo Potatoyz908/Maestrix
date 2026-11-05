@@ -390,11 +390,24 @@ class MaestriClient:
         return self._headers()
 
     def is_connected(self) -> bool:
+        return self.check_connection_status() == "connected"
+
+    def check_connection_status(self) -> str:
+        """Checks server reachability and credentials:
+        Returns:
+            'connected': Server reachable, token valid (200 OK)
+            'unauthorized': Server reachable, but rejected credentials (401 Unauthorized)
+            'offline': Server unreachable or timed out
+        """
         try:
             r = self.session.get(f"{self.base_url}/api/workspace", headers=self._headers(), timeout=1.5)
-            return r.status_code == 200
+            if r.status_code == 200:
+                return "connected"
+            if r.status_code == 401:
+                return "unauthorized"
+            return "offline"
         except Exception:
-            return False
+            return "offline"
 
     def _resolve_auth_token(self, provided_token: Optional[str]) -> str:
         if provided_token:
@@ -495,10 +508,12 @@ class MaestriClient:
                 headers=self._headers(),
                 timeout=self.timeout,
             )
-        except requests.RequestException:
+            data = self._handle_response(resp).json()
+            return [WorkspaceEntry.from_dict(item) for item in data]
+        except AuthenticationError:
+            raise
+        except (requests.RequestException, ValueError):
             return []
-        data = self._handle_response(resp).json()
-        return [WorkspaceEntry.from_dict(item) for item in data]
 
     def create_workspace(
         self,
@@ -533,7 +548,8 @@ class MaestriClient:
 
     def get_workspace(self, workspace_id: Optional[str] = None) -> Optional[WorkspaceDocument]:
         """Fetches a full WorkspaceDocument. Returns None if offline or if the
-        document is not schemaVersion 2 (never silently reinterpret other schemas)."""
+        document is not schemaVersion 2 (never silently reinterpret other schemas).
+        Raises AuthenticationError on 401 Unauthorized."""
         url = f"{self.base_url}/api/workspace"
         if workspace_id:
             url += f"?id={urllib.parse.quote(workspace_id)}"
@@ -541,6 +557,8 @@ class MaestriClient:
         try:
             resp = self.session.get(url, headers=self._headers(), timeout=self.timeout)
             data = self._handle_response(resp).json()
+        except AuthenticationError:
+            raise
         except (requests.RequestException, ValueError):
             return None
         if not isinstance(data, dict) or int(data.get("schemaVersion", 0) or 0) != SCHEMA_VERSION:
@@ -656,9 +674,11 @@ class MaestriClient:
                 headers=self._headers(),
                 timeout=self.timeout,
             )
-        except requests.RequestException:
+            return self._handle_response(resp).text
+        except (AuthenticationError, NotFoundError, MaestriAPIError):
+            raise
+        except (requests.RequestException, ValueError):
             return ""
-        return self._handle_response(resp).text
 
     def put_note(self, name: str, content: str) -> bool:
         """Writes Markdown content to a sticky note atomically."""

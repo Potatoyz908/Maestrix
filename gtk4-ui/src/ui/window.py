@@ -128,7 +128,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                     self.canvas_widget.viewport.zoom,
                 ),
             )
-            self.sync.connect("status-changed", self._on_sync_status_changed)
+            bus.connect("status-changed", self._on_sync_status_changed)
         else:
             self.sync = None
         bus.connect("workspace-switched", self._on_workspace_switched)
@@ -220,18 +220,36 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         header.pack_end(btn_zoom)
 
         # Backend Connection status indicator (checked asynchronously)
-        self.lbl_status = Gtk.Label(label="⚪ Conectando...")
+        if self.auth_failed:
+            self.lbl_status = Gtk.Label(label="🔴 Token Inválido")
+            self.lbl_status.set_tooltip_text("Falha de autenticação: token inválido ou ausente.")
+        else:
+            self.lbl_status = Gtk.Label(label="⚪ Conectando...")
+            self._check_connection_async()
         self.lbl_status.set_margin_end(8)
         header.pack_end(self.lbl_status)
-        self._check_connection_async()
 
     def _check_connection_async(self):
         def worker():
-            is_online = self.client.is_connected()
-            status_text = f"🟢 Porta {self.client.port}" if is_online else "⚪ Standalone"
+            status = self.client.check_connection_status()
+            if status == "connected":
+                status_text = f"🟢 Porta {self.client.port}"
+            elif status == "unauthorized":
+                status_text = "🔴 Token Inválido"
+            else:
+                status_text = "⚪ Standalone"
             GLib.idle_add(self._update_status_label, status_text)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_sync_status_changed(self, _sync, status: str):
+        if status == "save-failed":
+            self.lbl_status.set_label("⚠️ Falha ao Salvar")
+            self.lbl_status.set_tooltip_text("O último salvamento para o servidor falhou.")
+        elif status == "idle":
+            if self.client.is_connected():
+                self.lbl_status.set_label(f"🟢 Porta {self.client.port}")
+                self.lbl_status.set_tooltip_text("Conectado e sincronizado.")
 
     def _update_status_label(self, status_text: str):
         self.lbl_status.set_label(status_text)
@@ -542,15 +560,18 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
     def _save_to_backend(self):
         """Ctrl+S: flush any pending change immediately."""
-        self.sync.flush()
+        if self.sync is not None:
+            self.sync.flush()
 
     def _on_close_request(self, *_args):
-        self.sync.close()
+        if self.sync is not None:
+            self.sync.close()
         return False
 
     def _on_workspace_switched(self, bus_obj, workspace_id: str):
         # Persist the workspace we are leaving before replacing the document.
-        self.sync.flush()
+        if self.sync is not None:
+            self.sync.flush()
 
         def switch_worker():
             try:
