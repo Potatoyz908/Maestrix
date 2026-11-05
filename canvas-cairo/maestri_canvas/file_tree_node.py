@@ -18,7 +18,9 @@ from pathlib import Path
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gio, GObject, Gtk, Pango
+from gi.repository import Gdk, Gio, GObject, Gtk, Pango
+
+from .file_dnd import file_content_provider
 
 ATTRS = ",".join((
     "standard::name", "standard::display-name", "standard::type", "standard::icon", "standard::symbolic-icon",
@@ -206,9 +208,13 @@ class FileTreeView(Gtk.Box):
         return "~" + p[len(home):] if p == home or p.startswith(home + os.sep) else p
 
     # ---- rows -------------------------------------------------------------------------------------
-    @staticmethod
-    def _setup_row(_f, list_item: Gtk.ListItem) -> None:
+    def _setup_row(self, _f, list_item: Gtk.ListItem) -> None:
         expander = Gtk.TreeExpander()
+        # Each row is a drag source: drop it on a terminal to type its (quoted) path, or on a note / external app.
+        src = Gtk.DragSource(actions=Gdk.DragAction.COPY)
+        src.connect("prepare", lambda _s, _x, _y: self._drag_prepare(list_item))
+        src.connect("drag-begin", lambda _s, drag: self._drag_begin(list_item, drag))
+        expander.add_controller(src)
         box = Gtk.Box(spacing=6)
         icon = Gtk.Image(pixel_size=ICON_PX)
         label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.MIDDLE)
@@ -241,6 +247,32 @@ class FileTreeView(Gtk.Box):
     @staticmethod
     def _unbind_row(_f, list_item: Gtk.ListItem) -> None:
         list_item.get_child().set_list_row(None)
+
+    # ---- drag source ------------------------------------------------------------------------------
+    def dragged_files(self, list_item: Gtk.ListItem) -> list[Gio.File]:
+        """The file under the pointer, plus the selected row when the drag starts on it (single selection today)."""
+        row = list_item.get_item()
+        return [] if row is None else [_info_file(row.get_item())]
+
+    def _drag_prepare(self, list_item: Gtk.ListItem) -> Gdk.ContentProvider | None:
+        files = self.dragged_files(list_item)
+        return file_content_provider(files) if files else None
+
+    @staticmethod
+    def _drag_begin(list_item: Gtk.ListItem, drag: Gdk.Drag) -> None:
+        row = list_item.get_item()
+        if row is None:
+            return
+        info = row.get_item()
+        box = Gtk.Box(spacing=6)
+        box.add_css_class("maestri-drag-icon")
+        img = Gtk.Image(pixel_size=ICON_PX)
+        gicon = info.get_icon()
+        if gicon is not None:
+            img.set_from_gicon(gicon)
+        box.append(img)
+        box.append(Gtk.Label(label=info.get_display_name()))
+        Gtk.DragIcon.get_for_drag(drag).set_child(box)
 
     def _on_activate(self, _lv: Gtk.ListView, position: int) -> None:
         row: Gtk.TreeListRow = self.tree.get_item(position)
