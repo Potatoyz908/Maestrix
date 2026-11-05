@@ -69,9 +69,10 @@ final class LinuxPtyAndServerTests: XCTestCase {
 
             let port = server.port
             XCTAssertGreaterThan(port, 0)
+            let auth = "Authorization: Bearer \(server.authToken)\r\n"
 
             // 1. GET /api/workspace
-            let getWsReq = "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let getWsReq = "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
             let getWsResp = try self.tcpExchange(port: port, request: getWsReq)
             XCTAssertTrue(getWsResp.hasPrefix("HTTP/1.1 200 OK"), "GET /api/workspace should return 200 OK")
             XCTAssertTrue(getWsResp.contains("\"schemaVersion\""), "Workspace payload should contain schemaVersion")
@@ -85,7 +86,7 @@ final class LinuxPtyAndServerTests: XCTestCase {
 
             // 2. POST /api/terminals
             let createTermBody = "{\"command\":\"bash\",\"workingDirectory\":\"/tmp\"}"
-            let postTermReq = "POST /api/terminals HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: \(createTermBody.utf8.count)\r\nConnection: close\r\n\r\n\(createTermBody)"
+            let postTermReq = "POST /api/terminals HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(createTermBody.utf8.count)\r\nConnection: close\r\n\r\n\(createTermBody)"
             let postTermResp = try self.tcpExchange(port: port, request: postTermReq)
             XCTAssertTrue(postTermResp.hasPrefix("HTTP/1.1 200 OK"), "POST /api/terminals should return 200 OK")
             XCTAssertTrue(postTermResp.contains("\"id\":"), "POST /api/terminals should return an id")
@@ -103,30 +104,30 @@ final class LinuxPtyAndServerTests: XCTestCase {
             let termId = String(sub[..<endQuote])
 
             // 3. DELETE /api/terminals/:id
-            let deleteTermReq = "DELETE /api/terminals/\(termId) HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let deleteTermReq = "DELETE /api/terminals/\(termId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
             let deleteTermResp = try self.tcpExchange(port: port, request: deleteTermReq)
             XCTAssertTrue(deleteTermResp.hasPrefix("HTTP/1.1 200 OK"), "DELETE /api/terminals should return 200 OK")
             XCTAssertTrue(deleteTermResp.contains("\"status\":\"ok\""))
 
             // 4. PUT /api/notes/:name & GET /api/notes/:name
             let noteContent = "# Hello Note\nTesting note storage."
-            let putNoteReq = "PUT /api/notes/my-note HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: \(noteContent.utf8.count)\r\nConnection: close\r\n\r\n\(noteContent)"
+            let putNoteReq = "PUT /api/notes/my-note HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(noteContent.utf8.count)\r\nConnection: close\r\n\r\n\(noteContent)"
             let putNoteResp = try self.tcpExchange(port: port, request: putNoteReq)
             XCTAssertTrue(putNoteResp.hasPrefix("HTTP/1.1 200 OK"), "PUT /api/notes/my-note should return 200 OK")
 
-            let getNoteReq = "GET /api/notes/my-note HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let getNoteReq = "GET /api/notes/my-note HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
             let getNoteResp = try self.tcpExchange(port: port, request: getNoteReq)
             XCTAssertTrue(getNoteResp.hasPrefix("HTTP/1.1 200 OK"), "GET /api/notes/my-note should return 200 OK")
             XCTAssertTrue(getNoteResp.contains(noteContent))
 
             // 5. Path traversal protection
-            let badReq = "GET /api/notes/../../etc/passwd HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let badReq = "GET /api/notes/../../etc/passwd HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
             let badResp = try self.tcpExchange(port: port, request: badReq)
             XCTAssertTrue(badResp.hasPrefix("HTTP/1.1 400 Bad Request") || badResp.hasPrefix("HTTP/1.1 404"),
                           "Path traversal should be rejected")
 
             // 6. DELETE /api/notes/:name
-            let deleteNoteReq = "DELETE /api/notes/my-note HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let deleteNoteReq = "DELETE /api/notes/my-note HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
             let deleteNoteResp = try self.tcpExchange(port: port, request: deleteNoteReq)
             XCTAssertTrue(deleteNoteResp.hasPrefix("HTTP/1.1 200 OK"), "DELETE /api/notes/my-note should return 200 OK")
 
@@ -134,14 +135,14 @@ final class LinuxPtyAndServerTests: XCTestCase {
             XCTAssertTrue(verifyDeletedNoteResp.hasPrefix("HTTP/1.1 404"), "Deleted note should return 404 Not Found")
 
             // 7. GET /api/connections, POST /api/connections, DELETE /api/connections/:id
-            let getConnReq = "GET /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let getConnReq = "GET /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
             let getConnResp = try self.tcpExchange(port: port, request: getConnReq)
             XCTAssertTrue(getConnResp.hasPrefix("HTTP/1.1 200 OK"), "GET /api/connections should return 200 OK")
 
             let nodeA = UUID()
             let nodeB = UUID()
             let postConnBody = "{\"a\":\"\(nodeA.uuidString)\",\"b\":\"\(nodeB.uuidString)\"}"
-            let postConnReq = "POST /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: \(postConnBody.utf8.count)\r\nConnection: close\r\n\r\n\(postConnBody)"
+            let postConnReq = "POST /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(postConnBody.utf8.count)\r\nConnection: close\r\n\r\n\(postConnBody)"
             let postConnResp = try self.tcpExchange(port: port, request: postConnReq)
             XCTAssertTrue(postConnResp.hasPrefix("HTTP/1.1 200 OK"), "POST /api/connections should return 200 OK")
             XCTAssertTrue(postConnResp.contains("\"id\":"), "POST /api/connections should return id")
@@ -162,7 +163,7 @@ final class LinuxPtyAndServerTests: XCTestCase {
             XCTAssertTrue(verifyConnResp.contains(connId), "GET /api/connections should contain created connection")
 
             // Delete connection
-            let delConnReq = "DELETE /api/connections/\(connId) HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let delConnReq = "DELETE /api/connections/\(connId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
             let delConnResp = try self.tcpExchange(port: port, request: delConnReq)
             XCTAssertTrue(delConnResp.hasPrefix("HTTP/1.1 200 OK"), "DELETE /api/connections/:id should return 200 OK")
 
@@ -226,6 +227,7 @@ final class LinuxPtyAndServerTests: XCTestCase {
             let clientKey = "dGhlIHNhbXBsZSBub25jZQ=="
             let wsReq = "GET /ws/pty/\(termId.uuidString) HTTP/1.1\r\n" +
                         "Host: 127.0.0.1:\(port)\r\n" +
+                        "Authorization: Bearer \(server.authToken)\r\n" +
                         "Upgrade: websocket\r\n" +
                         "Connection: Upgrade\r\n" +
                         "Sec-WebSocket-Key: \(clientKey)\r\n" +
@@ -247,6 +249,78 @@ final class LinuxPtyAndServerTests: XCTestCase {
             XCTAssertTrue(respString.contains("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
                           "Handshake response must include correct Sec-WebSocket-Accept")
             XCTAssertTrue(respString.contains("Upgrade: websocket"))
+        }
+    }
+
+    func testSecurityRejectionWithoutAuthToken() async throws {
+        try await MainActor.run {
+            let server = InterAgentServer.shared
+            try server.start()
+            defer { server.stop() }
+
+            // Request without token should be 401 Unauthorized
+            let unauthReq = "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+            let unauthResp = try self.tcpExchange(port: server.port, request: unauthReq)
+            XCTAssertTrue(unauthResp.hasPrefix("HTTP/1.1 401"), "TCP request without token must return 401 Unauthorized")
+
+            // Request with invalid Origin should be 403 Forbidden
+            let evilOriginReq = "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: http://evil.com\r\nAuthorization: Bearer \(server.authToken)\r\nConnection: close\r\n\r\n"
+            let evilOriginResp = try self.tcpExchange(port: server.port, request: evilOriginReq)
+            XCTAssertTrue(evilOriginResp.hasPrefix("HTTP/1.1 403"), "Request with unauthorized origin must return 403 Forbidden")
+
+            // OPTIONS preflight with allowed origin should return 204
+            let optionsReq = "OPTIONS /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: http://127.0.0.1:5173\r\nConnection: close\r\n\r\n"
+            let optionsResp = try self.tcpExchange(port: server.port, request: optionsReq)
+            XCTAssertTrue(optionsResp.hasPrefix("HTTP/1.1 204"), "OPTIONS preflight must return 204")
+            XCTAssertTrue(optionsResp.contains("Access-Control-Allow-Origin: http://127.0.0.1:5173"))
+        }
+    }
+
+    func testNotePercentDecodingAndExtensionStripping() async throws {
+        try await MainActor.run {
+            let server = InterAgentServer.shared
+            try server.start()
+            defer { server.stop() }
+
+            let auth = "Authorization: Bearer \(server.authToken)\r\n"
+            let text = "Unicode & space note content"
+
+            // PUT /api/notes/minha%20nota.md
+            let putReq = "PUT /api/notes/minha%20nota.md HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(text.utf8.count)\r\nConnection: close\r\n\r\n\(text)"
+            let putResp = try self.tcpExchange(port: server.port, request: putReq)
+            XCTAssertTrue(putResp.hasPrefix("HTTP/1.1 200 OK"))
+
+            // GET without .md and with percent decoding
+            let getReq = "GET /api/notes/minha%20nota HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+            let getResp = try self.tcpExchange(port: server.port, request: getReq)
+            XCTAssertTrue(getResp.hasPrefix("HTTP/1.1 200 OK"))
+            XCTAssertTrue(getResp.contains(text))
+
+            // Cleanup
+            let delReq = "DELETE /api/notes/minha%20nota HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+            _ = try self.tcpExchange(port: server.port, request: delReq)
+        }
+    }
+
+    func testConnectionKindAnd21PointsInterpolation() async throws {
+        try await MainActor.run {
+            let server = InterAgentServer.shared
+            try server.start()
+            defer { server.stop() }
+
+            let auth = "Authorization: Bearer \(server.authToken)\r\n"
+            let idA = UUID()
+            let idB = UUID()
+
+            // Pass 2 endpoints and kind="terminalToNote"
+            let body = "{\"a\":\"\(idA.uuidString)\",\"b\":\"\(idB.uuidString)\",\"kind\":\"terminalToNote\",\"ropePoints\":[[100,200],[300,400]]}"
+            let postReq = "POST /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+            let postResp = try self.tcpExchange(port: server.port, request: postReq)
+            XCTAssertTrue(postResp.hasPrefix("HTTP/1.1 200 OK"))
+
+            let getReq = "GET /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+            let getResp = try self.tcpExchange(port: server.port, request: getReq)
+            XCTAssertTrue(getResp.contains("\"type\" : \"terminalToNote\"") || getResp.contains("\"type\":\"terminalToNote\""))
         }
     }
 

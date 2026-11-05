@@ -80,6 +80,9 @@ final class POSIXPtyProcess: @unchecked Sendable {
         env["MAESTRI_TERMINAL_ID"] = terminalId.uuidString
         env["OMAESTRI_TERMINAL_ID"] = terminalId.uuidString
         env["MAESTRI_SERVER_PORT"] = "\(PlatformHooks.serverPort())"
+        if !InterAgentServer.shared.authToken.isEmpty {
+            env["MAESTRI_AUTH_TOKEN"] = InterAgentServer.shared.authToken
+        }
         if let socketPath = InterAgentServer.shared.currentSocketPath {
             env["MAESTRI_SOCKET"] = socketPath
         }

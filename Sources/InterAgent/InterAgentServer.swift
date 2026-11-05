@@ -31,6 +31,88 @@ public final class InterAgentServer {
 
     public private(set) var port: UInt16 = 0
 
+    // MARK: - 安全认证 Token
+    public private(set) var authToken: String = ""
+
+    private func setupAuthToken() {
+        if let envToken = ProcessInfo.processInfo.environment["MAESTRI_AUTH_TOKEN"], !envToken.isEmpty {
+            self.authToken = envToken
+        } else {
+            let runDir = PersistenceManager.shared.appDataURL
+                .appendingPathComponent("run").path
+            let tokenPath = "\(runDir)/auth.token"
+            try? FileManager.default.createDirectory(atPath: runDir, withIntermediateDirectories: true)
+            if let existing = try? String(contentsOfFile: tokenPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+               !existing.isEmpty {
+                self.authToken = existing
+            } else {
+                let token = UUID().uuidString.replacingOccurrences(of: "-", with: "") + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                self.authToken = token
+                try? token.write(toFile: tokenPath, atomically: true, encoding: .utf8)
+                #if canImport(Glibc)
+                _ = Glibc.chmod(tokenPath, 0o600)
+                #elseif canImport(Darwin)
+                _ = Darwin.chmod(tokenPath, 0o600)
+                #endif
+            }
+        }
+    }
+
+    /// 常量时间字符串比较（防时序攻击）
+    static func constantTimeCompare(_ a: String, _ b: String) -> Bool {
+        let aBytes = Array(a.utf8)
+        let bBytes = Array(b.utf8)
+        guard aBytes.count == bBytes.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<aBytes.count {
+            diff |= aBytes[i] ^ bBytes[i]
+        }
+        return diff == 0
+    }
+
+    func validateAuth(headerMap: [String: String], path: String) -> Bool {
+        guard !self.authToken.isEmpty else { return true }
+
+        if let authHeader = headerMap["authorization"] {
+            let parts = authHeader.components(separatedBy: " ")
+            if parts.count == 2, parts[0].lowercased() == "bearer" {
+                if Self.constantTimeCompare(parts[1], self.authToken) {
+                    return true
+                }
+            }
+        }
+
+        if let qIdx = path.firstIndex(of: "?") {
+            let query = String(path[path.index(after: qIdx)...])
+            for pair in query.components(separatedBy: "&") {
+                let kv = pair.components(separatedBy: "=")
+                if kv.count == 2 && kv[0] == "token" {
+                    let decodedToken = kv[1].removingPercentEncoding ?? kv[1]
+                    if Self.constantTimeCompare(decodedToken, self.authToken) {
+                        return true
+                    }
+                }
+            }
+        }
+
+        return false
+    }
+
+    static func isAllowedHost(_ hostHeader: String?) -> Bool {
+        guard let hostHeader = hostHeader, !hostHeader.isEmpty else { return true }
+        let hostOnly = hostHeader.components(separatedBy: ":").first?.lowercased() ?? hostHeader.lowercased()
+        return hostOnly == "127.0.0.1" || hostOnly == "localhost"
+    }
+
+    static func isAllowedOrigin(_ originHeader: String?) -> Bool {
+        guard let originHeader = originHeader, !originHeader.isEmpty else { return true }
+        guard let url = URL(string: originHeader),
+              let host = url.host?.lowercased() else {
+            return false
+        }
+        return host == "127.0.0.1" || host == "localhost"
+    }
+
     // MARK: - Unix Socket 支持
     private var unixSocketFd: Int32 = -1
     private var unixSocketSource: DispatchSourceRead?
@@ -55,6 +137,7 @@ public final class InterAgentServer {
 
     /// Starts the TCP HTTP server on a dynamic port on Linux via POSIX sockets.
     public func start() throws {
+        setupAuthToken()
         MainActor.assumeIsolated {
             if PlatformHooks.terminalsService == nil {
                 PlatformHooks.terminalsService = LinuxTerminalManager.shared
@@ -136,7 +219,7 @@ public final class InterAgentServer {
             }
             guard clientFd >= 0 else { break }
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                self?.handleClient(fd: clientFd)
+                self?.handleClient(fd: clientFd, isUnix: false)
             }
         }
     }
@@ -145,6 +228,7 @@ public final class InterAgentServer {
 
     /// Starts the TCP HTTP server on a dynamic port via Network.framework (macOS).
     public func start() throws {
+        setupAuthToken()
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         params.requiredLocalEndpoint = NWEndpoint.hostPort(
@@ -368,14 +452,14 @@ public final class InterAgentServer {
             let clientFd = accept(serverFd, nil, nil)
             guard clientFd >= 0 else { break }
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                self?.handleClient(fd: clientFd)
+                self?.handleClient(fd: clientFd, isUnix: true)
             }
         }
     }
 
     // MARK: - 客户端请求分发 (HTTP REST, CLI & WebSocket Upgrade)
 
-    private func handleClient(fd: Int32) {
+    private func handleClient(fd: Int32, isUnix: Bool = false) {
         var accumulated = Data()
         var buffer = [UInt8](repeating: 0, count: 65536)
 
@@ -403,6 +487,45 @@ public final class InterAgentServer {
                 let method = parts.count > 0 ? parts[0].uppercased() : "GET"
                 let path = parts.count > 1 ? parts[1] : "/"
 
+                let origin = headerMap["origin"]
+                let allowedOrigin: String? = {
+                    if let o = origin, Self.isAllowedOrigin(o) {
+                        return o
+                    }
+                    return nil
+                }()
+
+                // 安全校验 (仅在 TCP 连接上执行，Unix socket 0600 本地信任)
+                if !isUnix {
+                    if let host = headerMap["host"], !Self.isAllowedHost(host) {
+                        let resp = Self.buildHTTPResponse(status: 403, body: "error: forbidden host\n", allowedOrigin: allowedOrigin)
+                        _ = resp.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
+                        close(fd)
+                        return
+                    }
+
+                    if let origin, !Self.isAllowedOrigin(origin) {
+                        let resp = Self.buildHTTPResponse(status: 403, body: "error: forbidden origin\n", allowedOrigin: nil)
+                        _ = resp.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
+                        close(fd)
+                        return
+                    }
+
+                    if method == "OPTIONS" {
+                        let resp = Self.buildHTTPResponse(status: 204, body: "", allowedOrigin: allowedOrigin)
+                        _ = resp.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
+                        close(fd)
+                        return
+                    }
+
+                    guard self.validateAuth(headerMap: headerMap, path: path) else {
+                        let resp = Self.buildHTTPResponse(status: 401, body: "error: unauthorized\n", allowedOrigin: allowedOrigin)
+                        _ = resp.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
+                        close(fd)
+                        return
+                    }
+                }
+
                 // 检测 WebSocket Upgrade (/ws/pty/:id)
                 let isUpgrade = (headerMap["upgrade"]?.lowercased() == "websocket") ||
                                 (headerMap["connection"]?.lowercased().contains("upgrade") == true)
@@ -411,13 +534,13 @@ public final class InterAgentServer {
                     let cleanPtyPath = path.components(separatedBy: "?").first ?? path
                     let rawId = String(cleanPtyPath.dropFirst("/ws/pty/".count))
                     guard let terminalId = UUID(uuidString: rawId) else {
-                        let resp = Self.buildHTTPResponse(status: 400, body: "error: invalid terminal ID")
+                        let resp = Self.buildHTTPResponse(status: 400, body: "error: invalid terminal ID", allowedOrigin: allowedOrigin)
                         _ = resp.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
                         close(fd)
                         return
                     }
                     guard let clientKey = headerMap["sec-websocket-key"] else {
-                        let resp = Self.buildHTTPResponse(status: 400, body: "error: missing Sec-WebSocket-Key")
+                        let resp = Self.buildHTTPResponse(status: 400, body: "error: missing Sec-WebSocket-Key", allowedOrigin: allowedOrigin)
                         _ = resp.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
                         close(fd)
                         return
@@ -442,7 +565,8 @@ public final class InterAgentServer {
                             path: path,
                             headerLines: headerLines,
                             headerMap: headerMap,
-                            body: bodyData
+                            body: bodyData,
+                            allowedOrigin: allowedOrigin
                         )
                         responseData.withUnsafeBytes { raw in
                             guard let base = raw.baseAddress else { return }
@@ -463,7 +587,8 @@ public final class InterAgentServer {
         path: String,
         headerLines: [String],
         headerMap: [String: String],
-        body: Data
+        body: Data,
+        allowedOrigin: String? = nil
     ) async -> Data {
         let pathParts = path.components(separatedBy: "?")
         let cleanPath = pathParts.first ?? path
@@ -536,15 +661,18 @@ public final class InterAgentServer {
         if method == "POST" && cleanPath == "/api/workspace" {
             let pm = PersistenceManager.shared
             guard let doc = try? pm.decoder.decode(WorkspaceDocument.self, from: body) else {
-                return Self.buildHTTPResponse(status: 400, body: "error: invalid WorkspaceDocument JSON")
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid WorkspaceDocument JSON", allowedOrigin: allowedOrigin)
+            }
+            guard doc.schemaVersion == Constants.schemaVersion else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid schemaVersion \(doc.schemaVersion), expected \(Constants.schemaVersion)", allowedOrigin: allowedOrigin)
             }
             do {
                 try pm.ensureWorkspaceDirectoryExists(id: doc.payload.id)
                 try pm.saveSync(doc, to: pm.workspaceURL(id: doc.payload.id))
                 let respJson = "{\"status\":\"ok\",\"id\":\"\(doc.payload.id.uuidString)\"}"
-                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: respJson)
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: respJson, allowedOrigin: allowedOrigin)
             } catch {
-                return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace: \(error.localizedDescription)")
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
         }
 
@@ -603,12 +731,16 @@ public final class InterAgentServer {
 
         // 6. GET /api/notes/:name
         if method == "GET" && cleanPath.hasPrefix("/api/notes/") {
-            let noteName = String(cleanPath.dropFirst("/api/notes/".count))
+            let rawName = String(cleanPath.dropFirst("/api/notes/".count))
+            var noteName = rawName.removingPercentEncoding ?? rawName
+            if noteName.lowercased().hasSuffix(".md") {
+                noteName = String(noteName.dropLast(3))
+            }
             guard !noteName.isEmpty,
                   !noteName.contains("/"),
                   !noteName.contains(".."),
                   !noteName.contains("\\") else {
-                return Self.buildHTTPResponse(status: 400, body: "error: invalid note name or path traversal detected")
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid note name or path traversal detected", allowedOrigin: allowedOrigin)
             }
 
             let pm = PersistenceManager.shared
@@ -628,26 +760,30 @@ public final class InterAgentServer {
             }
 
             guard let wsId = targetWorkspaceId else {
-                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found", allowedOrigin: allowedOrigin)
             }
 
             let notePath = NoteFileManager.shared.managedPath(workspaceId: wsId, noteName: noteName)
             do {
                 let content = try NoteFileManager.shared.read(filePath: notePath)
-                return Self.buildHTTPResponse(status: 200, contentType: "text/markdown; charset=utf-8", body: content)
+                return Self.buildHTTPResponse(status: 200, contentType: "text/markdown; charset=utf-8", body: content, allowedOrigin: allowedOrigin)
             } catch {
-                return Self.buildHTTPResponse(status: 404, body: "error: note not found: \(error.localizedDescription)")
+                return Self.buildHTTPResponse(status: 404, body: "error: note not found: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
         }
 
         // 7. PUT /api/notes/:name
         if method == "PUT" && cleanPath.hasPrefix("/api/notes/") {
-            let noteName = String(cleanPath.dropFirst("/api/notes/".count))
+            let rawName = String(cleanPath.dropFirst("/api/notes/".count))
+            var noteName = rawName.removingPercentEncoding ?? rawName
+            if noteName.lowercased().hasSuffix(".md") {
+                noteName = String(noteName.dropLast(3))
+            }
             guard !noteName.isEmpty,
                   !noteName.contains("/"),
                   !noteName.contains(".."),
                   !noteName.contains("\\") else {
-                return Self.buildHTTPResponse(status: 400, body: "error: invalid note name or path traversal detected")
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid note name or path traversal detected", allowedOrigin: allowedOrigin)
             }
 
             let pm = PersistenceManager.shared
@@ -667,30 +803,34 @@ public final class InterAgentServer {
             }
 
             guard let wsId = targetWorkspaceId else {
-                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found", allowedOrigin: allowedOrigin)
             }
 
             let notePath = NoteFileManager.shared.managedPath(workspaceId: wsId, noteName: noteName)
             guard let content = String(data: body, encoding: .utf8) else {
-                return Self.buildHTTPResponse(status: 400, body: "error: invalid UTF-8 body")
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid UTF-8 body", allowedOrigin: allowedOrigin)
             }
 
             do {
                 try NoteFileManager.shared.write(filePath: notePath, content: content)
-                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}")
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
             } catch {
-                return Self.buildHTTPResponse(status: 500, body: "error: failed to write note: \(error.localizedDescription)")
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to write note: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
         }
 
         // 8. DELETE /api/notes/:name
         if method == "DELETE" && cleanPath.hasPrefix("/api/notes/") {
-            let noteName = String(cleanPath.dropFirst("/api/notes/".count))
+            let rawName = String(cleanPath.dropFirst("/api/notes/".count))
+            var noteName = rawName.removingPercentEncoding ?? rawName
+            if noteName.lowercased().hasSuffix(".md") {
+                noteName = String(noteName.dropLast(3))
+            }
             guard !noteName.isEmpty,
                   !noteName.contains("/"),
                   !noteName.contains(".."),
                   !noteName.contains("\\") else {
-                return Self.buildHTTPResponse(status: 400, body: "error: invalid note name or path traversal detected")
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid note name or path traversal detected", allowedOrigin: allowedOrigin)
             }
 
             let pm = PersistenceManager.shared
@@ -710,15 +850,15 @@ public final class InterAgentServer {
             }
 
             guard let wsId = targetWorkspaceId else {
-                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found", allowedOrigin: allowedOrigin)
             }
 
             let notePath = NoteFileManager.shared.managedPath(workspaceId: wsId, noteName: noteName)
             do {
                 try NoteFileManager.shared.delete(filePath: notePath)
-                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}")
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
             } catch {
-                return Self.buildHTTPResponse(status: 500, body: "error: failed to delete note: \(error.localizedDescription)")
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to delete note: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
         }
 
@@ -741,11 +881,11 @@ public final class InterAgentServer {
             }
 
             guard let wsId = targetWorkspaceId else {
-                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found", allowedOrigin: allowedOrigin)
             }
 
             guard let doc = try? pm.loadWorkspace(id: wsId) else {
-                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found")
+                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found", allowedOrigin: allowedOrigin)
             }
 
             var connList: [[String: Any]] = []
@@ -796,26 +936,42 @@ public final class InterAgentServer {
             }
 
             guard let jsonData = try? JSONSerialization.data(withJSONObject: connList, options: [.prettyPrinted]) else {
-                return Self.buildHTTPResponse(status: 500, body: "error: serialization failed")
+                return Self.buildHTTPResponse(status: 500, body: "error: serialization failed", allowedOrigin: allowedOrigin)
             }
-            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: jsonData)
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: jsonData, allowedOrigin: allowedOrigin)
         }
 
         // 10. POST /api/connections
         if method == "POST" && cleanPath == "/api/connections" {
             guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
-                return Self.buildHTTPResponse(status: 400, body: "error: invalid JSON body")
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid JSON body", allowedOrigin: allowedOrigin)
             }
 
             guard let aStr = (json["a"] as? String) ?? (json["terminalIdA"] as? String),
                   let idA = UUID(uuidString: aStr),
                   let bStr = (json["b"] as? String) ?? (json["terminalIdB"] as? String),
                   let idB = UUID(uuidString: bStr) else {
-                return Self.buildHTTPResponse(status: 400, body: "error: missing or invalid node IDs 'a' and 'b'")
+                return Self.buildHTTPResponse(status: 400, body: "error: missing or invalid node IDs 'a' and 'b'", allowedOrigin: allowedOrigin)
             }
 
-            let ropePoints = (json["ropePoints"] as? [[Double]]) ?? []
+            let rawPoints = (json["ropePoints"] as? [[Double]]) ?? []
+            let ropePoints: [[Double]] = {
+                if rawPoints.count == Constants.ropeControlPointCount { return rawPoints }
+                if rawPoints.count == 2 {
+                    let p0 = rawPoints[0]
+                    let p1 = rawPoints[1]
+                    if p0.count == 2 && p1.count == 2 {
+                        return (0..<Constants.ropeControlPointCount).map { i in
+                            let t = Double(i) / Double(Constants.ropeControlPointCount - 1)
+                            return [p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t]
+                        }
+                    }
+                }
+                return Array(repeating: [0.0, 0.0], count: Constants.ropeControlPointCount)
+            }()
+
             let connId = (json["id"] as? String).flatMap(UUID.init) ?? UUID()
+            let rawKind = (json["kind"] as? String) ?? (json["type"] as? String)
 
             let pm = PersistenceManager.shared
             var targetWorkspaceId: UUID? = nil
@@ -834,12 +990,12 @@ public final class InterAgentServer {
             }
 
             guard let wsId = targetWorkspaceId else {
-                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found")
+                return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found", allowedOrigin: allowedOrigin)
             }
 
             let fileURL = pm.workspaceURL(id: wsId)
             guard var doc = try? pm.loadWorkspace(id: wsId) else {
-                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found")
+                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found", allowedOrigin: allowedOrigin)
             }
 
             // 检查节点类型
@@ -871,42 +1027,59 @@ public final class InterAgentServer {
                 isNoteB = false; isPortalB = false
             }
 
+            let resolvedKind: String
+            if let rawKind, !rawKind.isEmpty {
+                resolvedKind = rawKind
+            } else if isNoteA && isNoteB {
+                resolvedKind = "noteToNote"
+            } else if isNoteA || isNoteB {
+                resolvedKind = "terminalToNote"
+            } else if isPortalA && isPortalB {
+                resolvedKind = "portalToPortal"
+            } else if isPortalA || isPortalB {
+                resolvedKind = "terminalToPortal"
+            } else {
+                resolvedKind = "terminalToTerminal"
+            }
+
             Task { @MainActor in
                 let cm = ConnectionManager.shared
-                if isNoteA && isNoteB {
+                switch resolvedKind {
+                case "noteToNote":
                     _ = cm.connectNoteToNote(noteNodeIdA: idA, noteNodeIdB: idB, ropePoints: ropePoints)
-                } else if isNoteA || isNoteB {
-                    let termId = isNoteA ? idB : idA
-                    let noteId = isNoteA ? idA : idB
+                case "terminalToNote":
+                    let termId = (isNoteA && !isNoteB) ? idB : idA
+                    let noteId = (isNoteA && !isNoteB) ? idA : idB
                     _ = cm.connectTerminalToNote(terminalId: termId, noteNodeId: noteId, ropePoints: ropePoints)
-                } else if isPortalA && isPortalB {
-                    _ = cm.connectPortalToPortal(portalIdA: idA, portalIdB: idB, ropePoints: ropePoints)
-                } else if isPortalA || isPortalB {
-                    let termId = isPortalA ? idB : idA
-                    let portalId = isPortalA ? idA : idB
+                case "terminalToPortal":
+                    let termId = (isPortalA && !isPortalB) ? idB : idA
+                    let portalId = (isPortalA && !isPortalB) ? idA : idB
                     _ = cm.connectTerminalToPortal(terminalId: termId, portalNodeId: portalId, ropePoints: ropePoints)
-                } else {
+                case "portalToPortal":
+                    _ = cm.connectPortalToPortal(portalIdA: idA, portalIdB: idB, ropePoints: ropePoints)
+                default:
                     _ = cm.connectTerminals(idA: idA, idB: idB, serverPort: PlatformHooks.serverPort(), ropePoints: ropePoints)
                 }
             }
 
-            if isNoteA && isNoteB {
+            switch resolvedKind {
+            case "noteToNote":
                 let conn = NoteToNoteConnection(id: connId, noteNodeIdA: idA, noteNodeIdB: idB, ropePoints: ropePoints)
                 doc.payload.noteToNoteConnections.append(conn)
-            } else if isNoteA || isNoteB {
-                let termId = isNoteA ? idB : idA
-                let noteId = isNoteA ? idA : idB
+            case "terminalToNote":
+                let termId = (isNoteA && !isNoteB) ? idB : idA
+                let noteId = (isNoteA && !isNoteB) ? idA : idB
                 let conn = NoteConnection(id: connId, terminalId: termId, noteNodeId: noteId, ropePoints: ropePoints)
                 doc.payload.noteConnections.append(conn)
-            } else if isPortalA && isPortalB {
-                let conn = PortalToPortalConnection(id: connId, portalIdA: idA, portalIdB: idB, ropePoints: ropePoints)
-                doc.payload.portalToPortalConnections.append(conn)
-            } else if isPortalA || isPortalB {
-                let termId = isPortalA ? idB : idA
-                let portalId = isPortalA ? idA : idB
+            case "terminalToPortal":
+                let termId = (isPortalA && !isPortalB) ? idB : idA
+                let portalId = (isPortalA && !isPortalB) ? idA : idB
                 let conn = PortalConnection(id: connId, terminalId: termId, portalNodeId: portalId, ropePoints: ropePoints)
                 doc.payload.portalConnections.append(conn)
-            } else {
+            case "portalToPortal":
+                let conn = PortalToPortalConnection(id: connId, portalIdA: idA, portalIdB: idB, ropePoints: ropePoints)
+                doc.payload.portalToPortalConnections.append(conn)
+            default:
                 let conn = TerminalConnection(id: connId, terminalIdA: idA, terminalIdB: idB, ropePoints: ropePoints)
                 doc.payload.connections.append(conn)
             }
@@ -915,9 +1088,9 @@ public final class InterAgentServer {
             do {
                 try pm.saveSync(doc, to: fileURL)
                 let resp = "{\"id\":\"\(connId.uuidString)\",\"status\":\"ok\"}"
-                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp)
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp, allowedOrigin: allowedOrigin)
             } catch {
-                return Self.buildHTTPResponse(status: 500, body: "error: failed to save connection to workspace: \(error.localizedDescription)")
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save connection to workspace: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
         }
 
@@ -925,7 +1098,7 @@ public final class InterAgentServer {
         if method == "DELETE" && cleanPath.hasPrefix("/api/connections/") {
             let rawId = String(cleanPath.dropFirst("/api/connections/".count))
             guard let connId = UUID(uuidString: rawId) else {
-                return Self.buildHTTPResponse(status: 400, body: "error: invalid connection ID")
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid connection ID", allowedOrigin: allowedOrigin)
             }
 
             Task { @MainActor in
@@ -962,10 +1135,10 @@ public final class InterAgentServer {
             }
 
             let resp = "{\"status\":\"ok\"}"
-            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp)
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp, allowedOrigin: allowedOrigin)
         }
 
-        return Self.buildHTTPResponse(status: 404, body: "error: not found")
+        return Self.buildHTTPResponse(status: 404, body: "error: not found", allowedOrigin: allowedOrigin)
     }
 
     // MARK: - HTTP 解析与响应工具
@@ -985,26 +1158,41 @@ public final class InterAgentServer {
         status: Int = 200,
         contentType: String = "text/plain; charset=utf-8",
         body: String,
-        httpVersion: String = "1.1"
+        httpVersion: String = "1.1",
+        allowedOrigin: String? = nil
     ) -> Data {
         let bodyData = body.data(using: .utf8) ?? Data()
-        return buildHTTPResponse(status: status, contentType: contentType, data: bodyData, httpVersion: httpVersion)
+        return buildHTTPResponse(status: status, contentType: contentType, data: bodyData, httpVersion: httpVersion, allowedOrigin: allowedOrigin)
     }
 
     static func buildHTTPResponse(
         status: Int = 200,
         contentType: String = "text/plain; charset=utf-8",
         data: Data,
-        httpVersion: String = "1.1"
+        httpVersion: String = "1.1",
+        allowedOrigin: String? = nil
     ) -> Data {
-        let statusText = status == 200 ? "OK" : (status == 204 ? "No Content" : (status == 400 ? "Bad Request" : (status == 404 ? "Not Found" : "Internal Server Error")))
-        let header = "HTTP/\(httpVersion) \(status) \(statusText)\r\n" +
+        let statusText: String
+        switch status {
+        case 200: statusText = "OK"
+        case 204: statusText = "No Content"
+        case 400: statusText = "Bad Request"
+        case 401: statusText = "Unauthorized"
+        case 403: statusText = "Forbidden"
+        case 404: statusText = "Not Found"
+        default:  statusText = "Internal Server Error"
+        }
+
+        var header = "HTTP/\(httpVersion) \(status) \(statusText)\r\n" +
                      "Content-Type: \(contentType)\r\n" +
-                     "Content-Length: \(data.count)\r\n" +
-                     "Access-Control-Allow-Origin: *\r\n" +
-                     "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                     "Access-Control-Allow-Headers: Content-Type, Authorization, X-Terminal-ID\r\n" +
-                     "Connection: close\r\n\r\n"
+                     "Content-Length: \(data.count)\r\n"
+        if let origin = allowedOrigin, !origin.isEmpty {
+            header += "Access-Control-Allow-Origin: \(origin)\r\n"
+            header += "Vary: Origin\r\n"
+        }
+        header += "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
+        header += "Access-Control-Allow-Headers: Content-Type, Authorization, X-Terminal-ID\r\n"
+        header += "Connection: close\r\n\r\n"
         return (header.data(using: .utf8) ?? Data()) + data
     }
 }
