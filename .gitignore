@@ -43,6 +43,7 @@ memory/
 _bmad/
 _bmad-output/
 design-artifacts/
+artifacts/
 
 # Xcode
 *.xcuserdata/
