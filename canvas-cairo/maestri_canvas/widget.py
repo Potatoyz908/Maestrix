@@ -28,6 +28,9 @@ from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk
 from .constants import CANVAS_GRID_SPACING  # noqa: F401
 from .geometry import Point, Rect, round_half_away
 from .file_tree_node import FileTreeView
+from .note_model import NoteMeta
+from .note_storage import CoreNotesClient, CoreNoteStorage, LocalNoteStorage, MemoryNoteStorage
+from .sticky_note import StickyNoteView
 from .interaction import (WHEEL_NOTCH_PX, Background, CanvasController, ConnectRequested, DeleteRequested, DrawRequested,
                           DuplicateRequested, Event, Mods, NodeContent, NodeEdge, NodeHeader, NodePin, NodeResized, NodesMoved,
                           SelectionChanged, Target, ToolChanged, ViewportChanged)
@@ -215,7 +218,19 @@ class NodeFrame(Gtk.Overlay):
         close.add_css_class("flat")
         close.connect("clicked", lambda _b: on_close(self.node_id))
         setattr(close, _ROLE, ("content", item.id))   # a real button: it keeps its own click
-        header.append(self.title)
+        # Optional header protocol for a content widget (the sticky note uses it): header_left / header_title / header_right.
+        for w in getattr(content, "header_left", ()):
+            setattr(w, _ROLE, ("content", item.id))   # real controls: they keep their own clicks
+            header.append(w)
+        title_widget = getattr(content, "header_title", None)
+        if title_widget is not None:
+            setattr(title_widget, _ROLE, ("header", item.id))   # draggable by its title; the widget retags itself while being edited
+            header.append(title_widget)
+        else:
+            header.append(self.title)
+        for w in getattr(content, "header_right", ()):
+            setattr(w, _ROLE, ("content", item.id))
+            header.append(w)
         header.append(close)
         content.set_vexpand(True)
         content.set_hexpand(True)
@@ -228,6 +243,13 @@ class NodeFrame(Gtk.Overlay):
             self.add_overlay(self._handle(edge))
         for side in ("left", "right"):
             self.add_overlay(self._pin(side))
+        attach = getattr(content, "frame_attached", None)
+        if attach is not None:
+            attach(self)   # lets a content widget style the card and retag its header widgets
+
+    def tag(self, widget: Gtk.Widget, kind: str) -> None:
+        """Set a widget's canvas role ("header" = drags the node, "content" = keeps its own pointer events)."""
+        setattr(widget, _ROLE, (kind, self.node_id))
 
     def _handle(self, edge: Edge) -> Gtk.Widget:
         """Resize handle straddling the border (part outside, part inside) so the edge is easy to grab.
@@ -290,7 +312,13 @@ class CanvasWidget(Gtk.Overlay):
         "viewport-changed": (GObject.SignalFlags.RUN_FIRST, None, (float, float, float)),
         "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
         "file-activated": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                             # fileTree id, path
+        "note-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                       # stickyNote id, StickyNoteContent dict
     }
+
+    # Sticky notes: set `notes_client` (core REST API) before adding managed notes; without it they live in memory (offline demo).
+    # `notes_dir` is the folder where pasted images of managed notes are saved (next to the .md); None disables image paste for them.
+    notes_client: CoreNotesClient | None = None
+    notes_dir: str | None = None
 
     def __init__(self, scene: Scene | None = None, viewport: Viewport | None = None) -> None:
         super().__init__()
@@ -349,9 +377,10 @@ class CanvasWidget(Gtk.Overlay):
 
     # ---- public API ---------------------------------------------------------------------------
     def add_node(self, item: NodeItem, content: Gtk.Widget | None = None, cwd: str | None = None,
-                 env: dict[str, str] | None = None, focus: bool = False) -> None:
+                 env: dict[str, str] | None = None, focus: bool = False, note: dict | None = None) -> None:
         """`content=None` builds the native content: a VTE login shell for "terminal" (cwd/env apply to it), a FileTreeView rooted at
-        `cwd` (default ~) for "fileTree". `focus` gives the content the keyboard."""
+        `cwd` (default ~) for "fileTree", a StickyNoteView for "stickyNote" (`note` = the persisted StickyNoteContent dict).
+        `focus` gives the content the keyboard."""
         self.scene.add_node(item)
         self.controller.dirty = True
         if item.kind == "terminal" and content is None:
@@ -363,6 +392,19 @@ class CanvasWidget(Gtk.Overlay):
             nid = item.id
             content = FileTreeView(cwd)
             content.connect("file-activated", lambda _v, path: self.emit("file-activated", nid, path))
+        elif item.kind == "stickyNote" and content is None:
+            nid = item.id
+            meta = NoteMeta.from_dict(note) if note else NoteMeta(file_name=f"{item.title or 'Note'}.md")
+            client = self.notes_client
+            if meta.is_custom:
+                storage = LocalNoteStorage(meta.custom_path)
+            elif client is not None:
+                storage = CoreNoteStorage(client, meta.name)
+            else:
+                storage = MemoryNoteStorage()
+            content = StickyNoteView(meta, storage, client=client, name_taken=lambda n: self._note_name_taken(nid, n), base_dir=self.notes_dir)
+            content.connect("meta-changed", lambda _v, d: self.emit("note-meta-changed", nid, d))
+            content.connect("delete-requested", lambda _v: self.emit("delete-requested", (nid,)))
         if item.kind in WIDGET_KINDS and content is not None:
             frame = NodeFrame(item, content, on_close=lambda i: self.emit("delete-requested", (i,)))
             self.frames[item.id] = frame
@@ -376,6 +418,8 @@ class CanvasWidget(Gtk.Overlay):
         if frame is not None:
             if is_terminal(frame.content):
                 terminate_terminal(frame.content)
+            elif isinstance(frame.content, StickyNoteView):
+                frame.content.dispose()   # flush the last edit, stop the file monitor
             self.fixed.remove(frame)
         for c in self.scene.connections_of({k}):
             self.controller.ropes.remove(c.id)
@@ -488,8 +532,28 @@ class CanvasWidget(Gtk.Overlay):
             w = w.get_parent()
         return Background()
 
+    def _note_name_taken(self, node_id: str, name: str) -> bool:
+        return any(isinstance(f.content, StickyNoteView) and f.node_id != node_id and f.content.meta.name.lower() == name.lower()
+                   for f in self.frames.values())
+
+    def _header_double_click(self, g: Gtk.GestureDrag, target: Target, x: float, y: float) -> None:
+        """Two presses on the same node header within 400 ms / 6 px: tell the content (a note starts renaming)."""
+        if not isinstance(target, NodeHeader):
+            return
+        now = g.get_current_event_time()
+        last = getattr(self, "_last_header_press", None)
+        if last and last[0] == target.id and now - last[1] < 400 and abs(x - last[2]) < 6 and abs(y - last[3]) < 6:
+            self._last_header_press = None
+            frame = self.frames.get(target.id)
+            handler = getattr(frame.content, "on_header_double_click", None) if frame is not None else None
+            if handler is not None:
+                GLib.idle_add(lambda: (handler(), False)[1])   # after this press finishes, so the drag gesture is not confused
+        else:
+            self._last_header_press = (target.id, now, x, y)
+
     def _drag_begin(self, g: Gtk.GestureDrag, x: float, y: float) -> None:
         target = self.target_at(x, y)
+        self._header_double_click(g, target, x, y)
         frame = self.frames.get(target.id) if isinstance(target, NodeContent) else None
         if frame is not None and is_terminal(frame.content):
             frame.content.grab_focus()   # click into a terminal = keyboard goes to the shell

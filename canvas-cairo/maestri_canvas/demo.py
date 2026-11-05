@@ -13,16 +13,44 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
 
 from .geometry import Point, Rect
+from .note_model import NoteMeta
+from .note_storage import MemoryNoteStorage
 from .scene import ConnItem, NodeItem
+from .sticky_note import StickyNoteView
 from .viewport import Viewport
 from .widget import CanvasWidget
+
+DEMO_NOTE = """# Sprint notes
+
+Plain **bold**, *italic*, ~~strike~~ and `inline code`.
+
+## Todo
+- [x] markdown cards
+- [ ] colour toolbar
+  - nested item
+1. first
+2. second
+
+> a quote with a [link](https://example.com)
+
+| Name | Qty |
+|------|----:|
+| apple | 3 |
+| fig | 12 |
+
+```
+code block **not** parsed
+```
+"""
 
 
 def build_canvas() -> CanvasWidget:
     canvas = CanvasWidget(viewport=Viewport(Point(0, 0), 1.0))
-    tv = Gtk.TextView(); tv.get_buffer().set_text("# a note\nplain text editor stand-in")
     canvas.add_node(NodeItem("AAAAAAAA-0000-0000-0000-000000000001", Rect(60, 80, 360, 220), 1, "terminal", "Terminal A"), focus=True)   # native VTE login shell
-    canvas.add_node(NodeItem("BBBBBBBB-0000-0000-0000-000000000002", Rect(560, 140, 320, 240), 2, "stickyNote", "Note 1"), tv)
+    # native sticky note, seeded in memory (a real app sets canvas.notes_client so notes live in the core's notes/ folder)
+    note = NoteMeta(file_name="Note 1.md", is_previewing=True)
+    canvas.add_node(NodeItem("BBBBBBBB-0000-0000-0000-000000000002", Rect(560, 140, 340, 300), 2, "stickyNote", "Note 1"),
+                    StickyNoteView(note, MemoryNoteStorage(DEMO_NOTE)))
     canvas.add_node(NodeItem("EEEEEEEE-0000-0000-0000-000000000005", Rect(940, 60, 300, 420), 4, "fileTree", "Files"),
                     cwd=str(Path(__file__).resolve().parents[1]))   # native file tree rooted at canvas-cairo/
     canvas.add_node(NodeItem("CCCCCCCC-0000-0000-0000-000000000003", Rect(300, 400, 220, 120), 3, "shape", "shape"))

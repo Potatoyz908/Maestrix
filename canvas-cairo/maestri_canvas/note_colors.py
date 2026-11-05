@@ -67,7 +67,9 @@ def css_rule(color: str | None) -> str:
     """Per-colour rule. Only the card, its header/footer tint and the text colour depend on the note colour."""
     hx, cls, fg = resolve_hex(color), css_class(color), text_color(color)
     head, edge = shade(hx, 0.93), shade(hx, 0.78)
-    return (f".maestri-node.maestri-note.{cls} {{ background: {hx}; color: {fg}; border-color: {edge}; }}\n"
+    return (f".maestri-node.maestri-note.{cls} {{ background: {hx}; color: {fg}; }}\n"
+            f".maestri-node.maestri-note.{cls}:not(.selected) {{ border-color: {edge}; }}\n"   # the dashed selection border keeps its blue
+
             f".maestri-note.{cls} .note-bar {{ background: {head}; }}\n"
             f".maestri-note.{cls} .maestri-node-header {{ background: {head}; }}\n")
 
