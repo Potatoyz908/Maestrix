@@ -129,3 +129,13 @@ Mapping to `maestri_core.signals.bus` (not wired: that package does not import y
 - The `L` shortcut (start a connection from the selected terminal) is not implemented.
 - Mouse text selection and caret placement inside VTE/TextView while the zoom is not 1 are untested (no pointer injection). Rendering at zoom 1.6 was checked on a screenshot only.
 - VTE shows the replay as plain text: colours/attributes of the history are lost on reconnect (the core only keeps plain text), and the prompt line may need a keypress to redraw.
+
+## Portal (Sprint 3)
+
+`portal_model.py` (pure: lossless PortalContent, `normalize_url` = http/https/file/about only), `portal_node.py` (`PortalView`: WebKit 6.0 WebView + back/forward/reload, URL bar, progress, hide-chrome; automation `evaluate/text/html/snapshot/screenshot/info`), `connection_rules.py` (the 5 schema-v2 pairs, terminal first, ids uppercase, `purge_node` over the 6 lists).
+
+- WebKit-6.0 + JavaScriptCore-6.0 typelibs live in `~/.local/lib/girepository-1.0` (from `gir1.2-webkit-6.0` / `gir1.2-javascriptcoregtk-6.0`, extracted without root). Without them the node is a Gtk.Label placeholder. The system WebKit2-4.1 is never imported.
+- `currentURL` is persisted on load FINISHED only (never per redirect, never `about:`); `source` and unknown keys are preserved verbatim; `meta-changed` fires only on a real change; `bind()` does not echo.
+- isolated = own ephemeral NetworkSession; portal<->portal connected group = ONE shared session (WebView rebuilt + current page reloaded, since a session is construct-only); disconnect/delete gives a fresh isolated one.
+- Refused connection pairs: toast + red flash on both nodes + `connection-refused` signal. Optimistic `local-…` ropes: `replace_connection_id` on success, `remove_connection` + error on POST failure.
+- Ctrl+scroll: the canvas' capture-phase scroll controller is an ancestor of the WebView, so it runs first. Not verified with a real wheel event.

@@ -87,6 +87,15 @@ class RopeSimulation:
         if not self._ropes:
             self._sleep()
 
+    def rename(self, old_id: str, new_id: str) -> bool:
+        """Re-key a rope keeping its simulated shape (optimistic `local-…` id -> the core's id)."""
+        r = self._ropes.pop(old_id, None)
+        if r is None:
+            return False
+        r.id = new_id
+        self._ropes[new_id] = r
+        return True
+
     def clear(self) -> None:
         self._ropes.clear()
         self._sleeping = True

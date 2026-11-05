@@ -20,17 +20,20 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload
 from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent, current_iso8601
-from maestri_core.client.api import MaestriClient
+from maestri_core.client.api import MaestriClient, AuthenticationError
 from maestri_core.preferences import PreferencesStore
 from maestri_core.signals.bus import bus
 from maestri_core.sync import WorkspaceSync
+from maestri_canvas.connection_rules import plan_connection, purge_node
 from maestri_canvas.geometry import Point, Rect
+from maestri_canvas.interaction import Background
+from maestri_canvas.note_model import unique_name
+from maestri_canvas.note_storage import CoreNotesClient
 from maestri_canvas.scene import WIDGET_KINDS, ConnItem, NodeItem
 from maestri_canvas.viewport import Viewport
 from maestri_canvas.widget import CanvasWidget
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
-from .filetree import FileTreeWidget
 
 
 class OpenMaestriWindow(Gtk.ApplicationWindow):
@@ -43,8 +46,21 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.set_default_size(1280, 800)
 
         # 1. Load initial workspace or create default
-        doc = self.client.get_workspace()
-        if doc and doc.payload:
+        self.auth_failed = False
+        try:
+            doc = self.client.get_workspace()
+        except AuthenticationError:
+            self.auth_failed = True
+            doc = None
+
+        if self.auth_failed:
+            # When authentication fails, do not create demo workspace or enable sync
+            payload = WorkspacePayload(
+                name="Não Conectado",
+                working_directory=os.path.expanduser("~")
+            )
+            self.document = WorkspaceDocument(payload=payload)
+        elif doc and doc.payload:
             self.document = doc
         else:
             payload = WorkspacePayload(
@@ -78,12 +94,17 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.canvas_widget = CanvasWidget(viewport=self._viewport_from_payload())
         self.canvas_widget.set_hexpand(True)
         self.canvas_widget.set_vexpand(True)
+        self._configure_notes_backend()
         self._load_payload_into_canvas()
         self.canvas_widget.connect("node-moved", self._on_canvas_frame_changed)
         self.canvas_widget.connect("node-resized", self._on_canvas_frame_changed)
         self.canvas_widget.connect("viewport-changed", lambda _c, x, y, z: bus.emit("viewport-changed", x, y, z))
         self.canvas_widget.connect("delete-requested", self._on_canvas_delete_requested)
         self.canvas_widget.connect("connect-requested", self._on_canvas_connect_requested)
+        self.canvas_widget.connect("note-meta-changed", self._on_note_meta_changed)
+        self.canvas_widget.connect("portal-meta-changed", self._on_portal_meta_changed)
+        self.canvas_widget.connect("file-activated", self._on_file_activated)
+        self._setup_context_menu()
 
         self.paned.set_start_child(self.sidebar)
         self.paned.set_end_child(self.canvas_widget)
@@ -97,15 +118,19 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self._setup_shortcuts()
 
         # 5. Real-time sync: bus events -> debounced snapshot -> REST (schemaVersion 2)
-        self.sync = WorkspaceSync(
-            self.client,
-            get_document=lambda: self.document,
-            get_viewport=lambda: (
-                self.canvas_widget.viewport.origin.x,
-                self.canvas_widget.viewport.origin.y,
-                self.canvas_widget.viewport.zoom,
-            ),
-        )
+        if not self.auth_failed:
+            self.sync = WorkspaceSync(
+                self.client,
+                get_document=lambda: self.document,
+                get_viewport=lambda: (
+                    self.canvas_widget.viewport.origin.x,
+                    self.canvas_widget.viewport.origin.y,
+                    self.canvas_widget.viewport.zoom,
+                ),
+            )
+            self.sync.connect("status-changed", self._on_sync_status_changed)
+        else:
+            self.sync = None
         bus.connect("workspace-switched", self._on_workspace_switched)
         self.connect("close-request", self._on_close_request)
 
@@ -298,28 +323,97 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         oy = p.canvas_origin[1] if len(p.canvas_origin) > 1 else 8500.0
         return Viewport(Point(ox, oy), p.canvas_zoom or 1.0)
 
-    def _make_content_widget(self, node: CanvasNode) -> Gtk.Widget:
-        """Placeholder body per node kind (real PTY/WebKit/file-tree widgets plug in here)."""
+    def _configure_notes_backend(self) -> None:
+        """Managed notes go through the core REST API when it is reachable; offline they live in memory."""
+        cw = self.canvas_widget
+        if self.client.is_connected():
+            cw.notes_client = CoreNotesClient(self.client.port, self.client.token)
+        ws_dir = Path.home() / ".open-maestri" / "workspaces" / self.document.payload.id
+        cw.notes_dir = str(ws_dir / "notes")
+
+    def _make_content_widget(self, node: CanvasNode):
+        """Content for a node. stickyNote -> StickyNoteView and fileTree -> FileTreeView are built natively by
+        CanvasWidget.add_node (it also wires their meta-changed / delete-requested / file-activated signals), so
+        this returns None for them. Portal/terminal keep a placeholder body until their native views land."""
+        if node.node_type in ("stickyNote", "fileTree", "portal"):
+            return None
         c = node.content
-        if node.node_type == "stickyNote":
-            view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
-            view.set_left_margin(8)
-            view.set_top_margin(8)
-            return view
-        if node.node_type == "fileTree":
-            if not c.root_path:
-                c.root_path = os.path.expanduser("~")
-            return FileTreeWidget(self.client, c)
         if node.node_type == "portal":
             text = getattr(c, "current_url", "") or "about:blank"
         else:
             text = getattr(c, "command", "") or "bash"
         return Gtk.Label(label=text, xalign=0, yalign=0, margin_start=8, margin_top=8, selectable=False)
 
-    def _add_node_to_canvas(self, node: CanvasNode) -> None:
+    def _add_node_to_canvas(self, node: CanvasNode, focus: bool = False) -> None:
         f = node.frame
         item = NodeItem(node.id, Rect(f.x, f.y, f.width, f.height), node.z_index, node.node_type, node.title)
-        self.canvas_widget.add_node(item, self._make_content_widget(node))
+        kwargs = {}
+        if node.node_type == "stickyNote":
+            kwargs["note"] = node.content.to_dict()
+        elif node.node_type == "portal":
+            kwargs["portal"] = node.content.to_dict()
+        elif node.node_type == "fileTree":
+            kwargs["cwd"] = getattr(node.content, "root_path", "") or os.path.expanduser("~")
+        self.canvas_widget.add_node(item, self._make_content_widget(node), focus=focus, **kwargs)
+
+    def _on_portal_meta_changed(self, _canvas, node_id, meta):
+        node = self._find_node(node_id)
+        if node is None or node.node_type != "portal":
+            return
+        node.content = PortalContent.from_dict(meta)
+        node.last_modified_at = current_iso8601()
+        bus.emit("node-updated", node.id)
+
+    def _on_note_meta_changed(self, _canvas, node_id, meta):
+        node = self._find_node(node_id)
+        if node is None or node.node_type != "stickyNote":
+            return
+        node.content = StickyNoteContent.from_dict(meta)
+        node.last_modified_at = current_iso8601()
+        bus.emit("node-updated", node.id)   # WorkspaceSync persists the new color/name/mode
+
+    def _on_file_activated(self, _canvas, _node_id, path):
+        try:
+            Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(path).get_uri(), None)
+        except GLib.Error:
+            pass
+
+    # ---- canvas context menu (right click on empty canvas) --------------------------------------
+    def _setup_context_menu(self) -> None:
+        cw = self.canvas_widget
+        self._ctx_point = Point(0.0, 0.0)  # canvas coords of the last right click
+        menu = Gio.Menu()
+        for label, name in (("New Terminal here", "terminal"), ("New Note here", "stickyNote"),
+                            ("New Portal here", "portal"), ("New File Tree here", "fileTree")):
+            menu.append(label, f"ctx.new-{name}")
+        group = Gio.SimpleActionGroup()
+        for kind in ("terminal", "stickyNote", "portal", "fileTree"):
+            act = Gio.SimpleAction.new(f"new-{kind}", None)
+            act.connect("activate", lambda _a, _p, k=kind: self._create_node(k, at=self._ctx_point))
+            group.add_action(act)
+        cw.insert_action_group("ctx", group)
+
+        self._ctx_popover = Gtk.PopoverMenu.new_from_model(menu)
+        self._ctx_popover.set_has_arrow(False)
+        self._ctx_popover.set_halign(Gtk.Align.START)
+        self._ctx_popover.set_parent(cw)
+
+        click = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
+        click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        click.connect("pressed", self._on_canvas_right_click)
+        cw.add_controller(click)
+
+    def _on_canvas_right_click(self, gesture, _n_press, x, y):
+        cw = self.canvas_widget
+        # Only the empty background: nodes keep their own right-click (text view menus, etc).
+        if not isinstance(cw.target_at(x, y), Background):
+            return
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        self._ctx_point = cw.viewport.to_canvas(Point(x, y))
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        self._ctx_popover.set_pointing_to(rect)
+        self._ctx_popover.popup()
 
     def _load_payload_into_canvas(self) -> None:
         for node in self.document.payload.nodes:
@@ -353,52 +447,26 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             if node is not None:
                 self.document.payload.nodes.remove(node)
                 self.document.payload.last_modified_at = current_iso8601()
-            # Clean orphan connections from all 5 connection arrays
-            nid_u = nid.upper()
-            payload = self.document.payload
-            payload.connections = [c for c in payload.connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
-            payload.note_connections = [c for c in payload.note_connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
-            payload.portal_connections = [c for c in payload.portal_connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
-            payload.portal_to_portal_connections = [c for c in payload.portal_to_portal_connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
-            payload.note_to_note_connections = [c for c in payload.note_to_note_connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
+            purge_node(self.document.payload, nid)   # all 6 connection lists (the canvas scene is cleaned by remove_node)
 
             self.canvas_widget.remove_node(nid)
             bus.emit("node-removed", nid)
 
     def _on_canvas_connect_requested(self, _canvas, a, side_a, b, side_b):
         if not self.canvas_widget.scene.can_connect(a, b):
+            self.canvas_widget.refuse_connection(a, b, "Already connected" if a != b else "Can't connect a node to itself")
             return
         node_a = self._find_node(a)
         node_b = self._find_node(b)
         type_a = node_a.node_type if node_a else "terminal"
         type_b = node_b.node_type if node_b else "terminal"
 
-        payload = self.document.payload
-        # Determine connection kind based on endpoint types
-        if type_a == "terminal" and type_b == "terminal":
-            kind = "terminal"
-            target_list = payload.connections
-        elif (type_a == "terminal" and type_b == "stickyNote") or (type_a == "stickyNote" and type_b == "terminal"):
-            kind = "terminalToNote"
-            target_list = payload.note_connections
-            if type_a != "terminal":
-                a, b = b, a
-                side_a, side_b = side_b, side_a
-        elif (type_a == "terminal" and type_b == "portal") or (type_a == "portal" and type_b == "terminal"):
-            kind = "terminalToPortal"
-            target_list = payload.portal_connections
-            if type_a != "terminal":
-                a, b = b, a
-                side_a, side_b = side_b, side_a
-        elif type_a == "portal" and type_b == "portal":
-            kind = "portalToPortal"
-            target_list = payload.portal_to_portal_connections
-        elif type_a == "stickyNote" and type_b == "stickyNote":
-            kind = "noteToNote"
-            target_list = payload.note_to_note_connections
-        else:
-            # Other combinations (e.g. fileTree, note-to-portal) are unsupported in schema v2
+        plan = plan_connection(a, type_a, side_a, b, type_b, side_b)
+        if isinstance(plan, str):   # not one of the 5 schema-v2 pairs: say so instead of ignoring the drop
+            self.canvas_widget.refuse_connection(a, b, plan)
             return
+        a, b, side_a, side_b, kind = plan.a, plan.b, plan.side_a, plan.side_b, plan.kind
+        target_list = getattr(self.document.payload, plan.list_attr)
 
         cid = f"local-{a[:8]}-{b[:8]}"
         self.canvas_widget.add_connection(ConnItem(cid, a, b, side_a, side_b, pending=True))
@@ -408,20 +476,21 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 conn = self.client.create_connection(a, b, kind=kind)
             except Exception:
                 conn = None
-            GLib.idle_add(self._apply_connection_created, cid, conn, target_list)
+            GLib.idle_add(self._apply_connection_created, cid, conn, target_list, a, b)
 
         threading.Thread(target=create_worker, daemon=True).start()
 
-    def _apply_connection_created(self, temp_cid: str, conn, target_list):
+    def _apply_connection_created(self, temp_cid: str, conn, target_list, a: str = "", b: str = ""):
+        cw = self.canvas_widget
         if conn is not None:
-            # Upgrade temporary connection item to confirmed id and pending=False
-            if temp_cid in self.canvas_widget.scene.connections:
-                old = self.canvas_widget.scene.connections.pop(temp_cid)
-                confirmed = ConnItem(conn.id, old.a, old.b, old.side_a, old.side_b, pending=False)
-                self.canvas_widget.scene.connections[conn.id] = confirmed
-                self.canvas_widget.controller.dirty = True
+            if not cw.replace_connection_id(temp_cid, conn.id):   # the rope vanished meanwhile (node deleted): nothing to confirm
+                return GLib.SOURCE_REMOVE
             target_list.append(conn)
             bus.emit("connection-created", conn)
+        else:
+            cw.remove_connection(temp_cid)   # POST failed: no orphan optimistic rope
+            cw.refuse_connection(a, b, "Could not create the connection")
+            bus.emit("connection-failed", temp_cid)
         return GLib.SOURCE_REMOVE
 
     def reset_zoom(self):
@@ -432,15 +501,19 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         cw.viewport.set_zoom_at(Point(w / 2.0, h / 2.0), 1.0)
         cw.controller.dirty = True
 
-    def _create_node(self, node_type: str):
-        """Add a node of a valid kind (terminal | stickyNote | portal | fileTree) at the viewport center."""
+    def _create_node(self, node_type: str, at: Point = None):
+        """Add a node of a valid kind (terminal | stickyNote | portal | fileTree).
+        `at` = canvas point for the node's top-left corner (context menu); default: centered in the viewport."""
         if node_type not in WIDGET_KINDS:
             raise ValueError(f"invalid node type: {node_type!r}")
         cw = self.canvas_widget
         w = cw.get_width() or 1200
         h = cw.get_height() or 800
-        center = cw.viewport.to_canvas(Point(w / 2.0, h / 2.0))
-        cx, cy = center.x - 210, center.y - 150
+        if at is not None:
+            cx, cy = at.x, at.y
+        else:
+            center = cw.viewport.to_canvas(Point(w / 2.0, h / 2.0))
+            cx, cy = center.x - 210, center.y - 150
 
         n = len(self.document.payload.nodes) + 1
         max_z = max((x.z_index for x in self.document.payload.nodes), default=0)
@@ -448,7 +521,10 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if node_type == "terminal":
             content = TerminalContent(name=f"Terminal {n}", command="bash")
         elif node_type == "stickyNote":
-            content = StickyNoteContent(name=f"Note-{n}")
+            taken = {x.content.file_name[:-3] if x.content.file_name.endswith(".md") else x.content.file_name
+                     for x in self.document.payload.nodes if x.node_type == "stickyNote"}
+            base = unique_name("Note", taken)
+            content = StickyNoteContent(name=base, file_name=f"{base}.md")
         elif node_type == "portal":
             content = PortalContent(name="Portal", current_url="https://google.com")
         else:
@@ -461,7 +537,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             z_index=max_z + 1,
         )
         self.document.payload.nodes.append(new_node)
-        self._add_node_to_canvas(new_node)
+        self._add_node_to_canvas(new_node, focus=node_type == "stickyNote")
         bus.emit("node-added", new_node)  # WorkspaceSync schedules the save
 
     def _save_to_backend(self):

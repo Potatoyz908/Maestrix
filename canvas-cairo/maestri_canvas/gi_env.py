@@ -39,3 +39,15 @@ def vte_available() -> bool:
         return True
     except (ValueError, ImportError):
         return False
+
+
+def webkit_available() -> bool:
+    """True when WebKit 6.0 (GTK 4) + JavaScriptCore 6.0 can be imported. Never touches the system WebKit2-4.1 (GTK 3: it must not
+    share a process with GTK 4)."""
+    ensure_typelib_paths()
+    try:
+        gi.require_version("WebKit", "6.0")
+        from gi.repository import WebKit  # noqa: F401
+        return True
+    except (ValueError, ImportError):
+        return False

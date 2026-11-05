@@ -20,6 +20,7 @@ from .sticky_note import StickyNoteView
 from .viewport import Viewport
 from .widget import CanvasWidget
 
+DEMO_PAGE = Path(__file__).with_name("demo_page.html")
 DEMO_NOTE = """# Sprint notes
 
 Plain **bold**, *italic*, ~~strike~~ and `inline code`.
@@ -53,13 +54,16 @@ def build_canvas() -> CanvasWidget:
                     StickyNoteView(note, MemoryNoteStorage(DEMO_NOTE)))
     canvas.add_node(NodeItem("EEEEEEEE-0000-0000-0000-000000000005", Rect(940, 60, 300, 420), 4, "fileTree", "Files"),
                     cwd=str(Path(__file__).resolve().parents[1]))   # native file tree rooted at canvas-cairo/
+    canvas.add_node(NodeItem("DDDDDDDD-0000-0000-0000-000000000004", Rect(60, 560, 420, 260), 5, "portal", "Portal"),
+                    portal={"id": "DDDDDDDD-0000-0000-0000-000000000004", "name": "Portal", "currentURL": DEMO_PAGE.as_uri(), "source": {},
+                            "status": "idle", "chromeHidden": False, "storageScope": "isolated"})
     canvas.add_node(NodeItem("CCCCCCCC-0000-0000-0000-000000000003", Rect(300, 400, 220, 120), 3, "shape", "shape"))
     canvas.add_connection(ConnItem("11111111-0000-0000-0000-000000000001", "AAAAAAAA-0000-0000-0000-000000000001", "BBBBBBBB-0000-0000-0000-000000000002"))
     return canvas
 
 
 def build_window(app: Gtk.Application) -> tuple[Gtk.ApplicationWindow, CanvasWidget]:
-    win = Gtk.ApplicationWindow(application=app, title="Maestri canvas demo", default_width=1280, default_height=620)
+    win = Gtk.ApplicationWindow(application=app, title="Maestri canvas demo", default_width=1280, default_height=860)
     canvas = build_canvas()
     win.set_child(canvas)
     return win, canvas

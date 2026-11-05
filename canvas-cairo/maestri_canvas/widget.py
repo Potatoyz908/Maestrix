@@ -27,8 +27,12 @@ from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk
 
 from .constants import CANVAS_GRID_SPACING  # noqa: F401
 from .geometry import Point, Rect, round_half_away
+from .file_dnd import install_terminal_drop
 from .file_tree_node import FileTreeView
+from .connection_rules import plan_connection
+from .gi_env import webkit_available
 from .note_model import NoteMeta
+from .portal_model import PortalMeta
 from .note_storage import CoreNotesClient, CoreNoteStorage, LocalNoteStorage, MemoryNoteStorage
 from .sticky_note import StickyNoteView
 from .interaction import (WHEEL_NOTCH_PX, Background, CanvasController, ConnectRequested, DeleteRequested, DrawRequested,
@@ -135,6 +139,7 @@ def create_terminal(cwd: str | None = None, argv: list[str] | None = None, env: 
             on_exit(status)
 
     term.connect("child-exited", exited)
+    term.drop_target = install_terminal_drop(term, term.paste_text)   # bracketed paste when the shell enabled it
     term.spawn_async(Vte.PtyFlags.DEFAULT, cwd or os.path.expanduser("~"), argv or default_shell_argv(), envv,
                      GLib.SpawnFlags.DEFAULT, None, None, -1, None, spawned, None)
     return term
@@ -289,10 +294,14 @@ class NodeFrame(Gtk.Overlay):
 
 CSS = b"""
 .maestri-node { background: @window_bg_color; border: 1px solid alpha(currentColor, .25); border-radius: 8px; }
+.maestri-node.maestri-refused { border: 2px solid #ef4444; }
+.maestri-toast { background: #ef4444; color: white; padding: 6px 14px; border-radius: 14px; }
 .maestri-node.selected { border: 2px dashed #3b82f6; }
 .maestri-node-header { background: alpha(currentColor, .06); padding: 0 8px; border-radius: 7px 7px 0 0; }
 .maestri-pin { background: #3b82f6; border: 2px solid white; border-radius: 50%; opacity: 0; transition: opacity 120ms; }
 .maestri-file-tree-list > row { padding: 2px 6px; min-height: 22px; }
+.maestri-drop-hover { box-shadow: inset 0 0 0 2px #3b82f6; }
+.maestri-drag-icon { background: alpha(@window_bg_color, .9); border-radius: 6px; padding: 4px 8px; }
 .maestri-node:hover .maestri-pin, .maestri-connecting .maestri-pin { opacity: 1; }
 """
 
@@ -313,6 +322,9 @@ class CanvasWidget(Gtk.Overlay):
         "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
         "file-activated": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                             # fileTree id, path
         "note-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                       # stickyNote id, StickyNoteContent dict
+        "portal-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                     # portal id, PortalContent dict
+        "portal-popup": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                               # portal id, url (target=_blank)
+        "connection-refused": (GObject.SignalFlags.RUN_FIRST, None, (str, str, str)),                    # a, b, human reason
     }
 
     # Sticky notes: set `notes_client` (core REST API) before adding managed notes; without it they live in memory (offline demo).
@@ -377,7 +389,8 @@ class CanvasWidget(Gtk.Overlay):
 
     # ---- public API ---------------------------------------------------------------------------
     def add_node(self, item: NodeItem, content: Gtk.Widget | None = None, cwd: str | None = None,
-                 env: dict[str, str] | None = None, focus: bool = False, note: dict | None = None) -> None:
+                 env: dict[str, str] | None = None, focus: bool = False, note: dict | None = None,
+                 portal: dict | None = None) -> None:
         """`content=None` builds the native content: a VTE login shell for "terminal" (cwd/env apply to it), a FileTreeView rooted at
         `cwd` (default ~) for "fileTree", a StickyNoteView for "stickyNote" (`note` = the persisted StickyNoteContent dict).
         `focus` gives the content the keyboard."""
@@ -405,6 +418,16 @@ class CanvasWidget(Gtk.Overlay):
             content = StickyNoteView(meta, storage, client=client, name_taken=lambda n: self._note_name_taken(nid, n), base_dir=self.notes_dir)
             content.connect("meta-changed", lambda _v, d: self.emit("note-meta-changed", nid, d))
             content.connect("delete-requested", lambda _v: self.emit("delete-requested", (nid,)))
+        elif item.kind == "portal" and content is None:
+            nid = item.id
+            if webkit_available():
+                from .portal_node import PortalView   # lazy: importing it needs the WebKit-6.0 typelib
+                meta = PortalMeta.from_dict(portal) if portal else PortalMeta(name=item.title or "Portal", portal_id=nid)
+                content = PortalView(meta)
+                content.connect("meta-changed", lambda _v, d: self.emit("portal-meta-changed", nid, d))
+                content.connect("popup-requested", lambda _v, url: self.emit("portal-popup", nid, url))
+            else:
+                content = Gtk.Label(label="WebKit 6.0 (GTK 4) not available", wrap=True)
         if item.kind in WIDGET_KINDS and content is not None:
             frame = NodeFrame(item, content, on_close=lambda i: self.emit("delete-requested", (i,)))
             self.frames[item.id] = frame
@@ -420,12 +443,15 @@ class CanvasWidget(Gtk.Overlay):
                 terminate_terminal(frame.content)
             elif isinstance(frame.content, StickyNoteView):
                 frame.content.dispose()   # flush the last edit, stop the file monitor
+            elif hasattr(frame.content, "web"):
+                frame.content.dispose()   # PortalView: stop loading, close the WebView
             self.fixed.remove(frame)
         for c in self.scene.connections_of({k}):
             self.controller.ropes.remove(c.id)
         self.scene.remove_node(k)
         self._last_applied.pop(k, None)
         self.controller.dirty = True
+        self._sync_portal_sessions()
 
     def update_node_frame(self, node_id: str, frame: Rect) -> None:
         self.scene.set_frame(node_id, frame)
@@ -434,6 +460,75 @@ class CanvasWidget(Gtk.Overlay):
 
     def add_connection(self, conn: ConnItem) -> None:
         self.controller.add_connection(conn)
+        self._sync_portal_sessions()
+
+    def remove_connection(self, conn_id: str) -> bool:
+        """Drop a connection (scene + rope). Used for confirmed deletes and to discard an optimistic `local-…` rope whose POST failed."""
+        if self.scene.connections.pop(conn_id, None) is None:
+            return False
+        self.controller.ropes.remove(conn_id)
+        self.controller.dirty = True
+        self._sync_portal_sessions()
+        return True
+
+    def replace_connection_id(self, old_id: str, new_id: str) -> bool:
+        """The optimistic id becomes the core's id after the POST (keeps the rope simulation state)."""
+        c = self.scene.connections.pop(old_id, None)
+        if c is None:
+            return False
+        c.id, c.pending = new_id, False
+        self.scene.connections[new_id] = c
+        self.controller.ropes.rename(old_id, new_id)
+        self.controller.dirty = True
+        return True
+
+    def _sync_portal_sessions(self) -> None:
+        """portal<->portal connections share ONE NetworkSession per connected group (= macOS shared storage); a portal left alone
+        gets a fresh isolated session again. Only portals that are not already correct are touched (reload)."""
+        views = {nid: f.content for nid, f in self.frames.items() if hasattr(f.content, "use_session")}
+        if not views:
+            return
+        parent = {n: n for n in views}
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+        for c in self.scene.connections.values():
+            if c.a in views and c.b in views:
+                parent[find(c.a)] = find(c.b)
+        groups: dict[str, list[str]] = {}
+        for n in views:
+            groups.setdefault(find(n), []).append(n)
+        from .portal_node import _session
+        for members in groups.values():
+            if len(members) == 1:
+                v = views[members[0]]
+                if getattr(v, "_group_shared", False):
+                    v._group_shared = False
+                    v.use_session(_session("isolated"))
+            else:
+                session = next((views[m].session for m in members if getattr(views[m], "_group_shared", False)), None) \
+                    or views[members[0]].session
+                for m in members:
+                    views[m]._group_shared = True
+                    views[m].use_session(session)
+
+    def refuse_connection(self, a: str, b: str, reason: str) -> None:
+        """Visible feedback for a refused pair: a toast plus a red flash on both nodes (instead of silently ignoring the drop)."""
+        self.emit("connection-refused", a, b, reason)
+        toast = Gtk.Label(label=reason, halign=Gtk.Align.CENTER, valign=Gtk.Align.END, margin_bottom=24)
+        toast.add_css_class("maestri-toast")
+        self.add_overlay(toast)
+        flashed = [self.frames[n] for n in (norm(a), norm(b)) if n in self.frames]
+        for f in flashed:
+            f.add_css_class("maestri-refused")
+        def done():
+            for f in flashed:
+                f.remove_css_class("maestri-refused")
+            self.remove_overlay(toast)
+            return False
+        GLib.timeout_add(1800, done)
 
     def set_tool(self, tool: str) -> None:
         self.controller.set_tool(tool)
@@ -449,7 +544,12 @@ class CanvasWidget(Gtk.Overlay):
             self._sync_selection_css()
             self.emit("selection-changed", e.ids)
         elif isinstance(e, ConnectRequested):
-            self.emit("connect-requested", e.a, e.side_a, e.b, e.side_b)
+            na, nb = self.scene.nodes.get(norm(e.a)), self.scene.nodes.get(norm(e.b))
+            plan = plan_connection(e.a, na.kind if na else "", e.side_a, e.b, nb.kind if nb else "", e.side_b)
+            if isinstance(plan, str):
+                self.refuse_connection(e.a, e.b, plan)
+            else:
+                self.emit("connect-requested", e.a, e.side_a, e.b, e.side_b)
         elif isinstance(e, DeleteRequested):
             self.emit("delete-requested", e.ids)
         elif isinstance(e, DuplicateRequested):
