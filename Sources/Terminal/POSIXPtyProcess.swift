@@ -238,6 +238,24 @@ final class POSIXPtyProcess: @unchecked Sendable {
         }
     }
 
+    func writeRaw(_ data: Data) {
+        guard isRunning, masterFd >= 0 else { return }
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            var written = 0
+            let len = raw.count
+            while written < len {
+                #if canImport(Glibc)
+                let n = Glibc.write(masterFd, base + written, len - written)
+                #elseif canImport(Darwin)
+                let n = Darwin.write(masterFd, base + written, len - written)
+                #endif
+                if n <= 0 { break }
+                written += n
+            }
+        }
+    }
+
     func resize(cols: Int, rows: Int) {
         guard masterFd >= 0 else { return }
         var ws = winsize(ws_row: UInt16(rows), ws_col: UInt16(cols), ws_xpixel: 0, ws_ypixel: 0)

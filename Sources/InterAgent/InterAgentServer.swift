@@ -15,11 +15,16 @@ private let libcSend = Glibc.send
 private let sockStreamType: Int32 = Int32(SOCK_STREAM.rawValue)
 #endif
 
-/// 本地 HTTP IPC 服务器
+/// 本地 HTTP & WebSocket IPC 服务器
 /// - 绑定 127.0.0.1 动态端口，仅接受本机连接（安全约束）
 /// - 支持 Unix Domain Socket (~/.open-maestri/run/agent.sock)
-/// - 单一路由：POST /cli
-/// - 所有 omaestri CLI 命令通过此服务路由
+/// - 路由：
+///   - POST /cli -> omaestri CLI 命令路由
+///   - GET /api/workspace -> 读取工作区 JSON
+///   - POST /api/workspace -> 保存工作区 JSON
+///   - POST /api/terminals -> 创建新终端会话
+///   - DELETE /api/terminals/:id -> 删除终端会话
+///   - WS /ws/pty/:id -> RFC 6455 WebSocket 双向流式 PTY 与尺寸控制
 public final class InterAgentServer {
     public static let shared = InterAgentServer()
     private let logger = Logger.make(category: "InterAgentServer")
@@ -139,7 +144,7 @@ public final class InterAgentServer {
     private var listener: NWListener?
 
     /// Starts the TCP HTTP server on a dynamic port via Network.framework (macOS).
-    func start() throws {
+    public func start() throws {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         params.requiredLocalEndpoint = NWEndpoint.hostPort(
@@ -227,8 +232,22 @@ public final class InterAgentServer {
                 if contentLength <= 0 || bodyReceived >= contentLength {
                     Task { [weak self] in
                         guard let self else { connection.cancel(); return }
-                        let parsed = await self.parseHTTPRequest(total)
-                        let responseData = self.buildHTTPResponse(body: parsed.responseBody, httpVersion: parsed.httpVersion)
+                        let bodyData = total.subdata(in: bodyStart..<total.count)
+                        let headerLines = headerStr.components(separatedBy: "\r\n")
+                        var headerMap: [String: String] = [:]
+                        for line in headerLines.dropFirst() {
+                            if let cIdx = line.firstIndex(of: ":") {
+                                let k = line[..<cIdx].trimmingCharacters(in: .whitespaces).lowercased()
+                                let v = line[line.index(after: cIdx)...].trimmingCharacters(in: .whitespaces)
+                                headerMap[k] = v
+                            }
+                        }
+                        let reqLine = headerLines.first ?? ""
+                        let parts = reqLine.components(separatedBy: " ")
+                        let method = parts.count > 0 ? parts[0].uppercased() : "GET"
+                        let path = parts.count > 1 ? parts[1] : "/"
+
+                        let responseData = await self.routeHTTPRequest(method: method, path: path, headerLines: headerLines, headerMap: headerMap, body: bodyData)
                         connection.send(content: responseData, completion: .idempotent)
                         connection.cancel()
                     }
@@ -240,8 +259,7 @@ public final class InterAgentServer {
             } else {
                 Task { [weak self] in
                     guard let self else { connection.cancel(); return }
-                    let parsed = await self.parseHTTPRequest(total)
-                    let responseData = self.buildHTTPResponse(body: parsed.responseBody, httpVersion: parsed.httpVersion)
+                    let responseData = Self.buildHTTPResponse(status: 400, body: "error: truncated request")
                     connection.send(content: responseData, completion: .idempotent)
                     connection.cancel()
                 }
@@ -251,7 +269,7 @@ public final class InterAgentServer {
 #endif
 
     /// Gracefully shuts down listeners and sockets.
-    func stop() {
+    public func stop() {
 #if os(Linux)
         tcpSocketSource?.cancel()
         tcpSocketSource = nil
@@ -355,38 +373,237 @@ public final class InterAgentServer {
         }
     }
 
+    // MARK: - 客户端请求分发 (HTTP REST, CLI & WebSocket Upgrade)
+
     private func handleClient(fd: Int32) {
         var accumulated = Data()
         var buffer = [UInt8](repeating: 0, count: 65536)
+
         while true {
             let n = recv(fd, &buffer, buffer.count, 0)
             guard n > 0 else { break }
             accumulated.append(contentsOf: buffer[..<n])
+
             if let headerEnd = accumulated.range(of: Data("\r\n\r\n".utf8)) {
-                let headerStr = String(decoding: accumulated[..<headerEnd.upperBound], as: UTF8.self)
+                let headerData = accumulated[..<headerEnd.upperBound]
+                let headerStr = String(decoding: headerData, as: UTF8.self)
+                let headerLines = headerStr.components(separatedBy: "\r\n")
+
+                var headerMap: [String: String] = [:]
+                for line in headerLines.dropFirst() {
+                    if let cIdx = line.firstIndex(of: ":") {
+                        let k = line[..<cIdx].trimmingCharacters(in: .whitespaces).lowercased()
+                        let v = line[line.index(after: cIdx)...].trimmingCharacters(in: .whitespaces)
+                        headerMap[k] = v
+                    }
+                }
+
+                let reqLine = headerLines.first ?? ""
+                let parts = reqLine.components(separatedBy: " ")
+                let method = parts.count > 0 ? parts[0].uppercased() : "GET"
+                let path = parts.count > 1 ? parts[1] : "/"
+
+                // 检测 WebSocket Upgrade (/ws/pty/:id)
+                let isUpgrade = (headerMap["upgrade"]?.lowercased() == "websocket") ||
+                                (headerMap["connection"]?.lowercased().contains("upgrade") == true)
+
+                if isUpgrade && path.hasPrefix("/ws/pty/") {
+                    let cleanPtyPath = path.components(separatedBy: "?").first ?? path
+                    let rawId = String(cleanPtyPath.dropFirst("/ws/pty/".count))
+                    guard let terminalId = UUID(uuidString: rawId) else {
+                        let resp = Self.buildHTTPResponse(status: 400, body: "error: invalid terminal ID")
+                        _ = resp.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
+                        close(fd)
+                        return
+                    }
+                    guard let clientKey = headerMap["sec-websocket-key"] else {
+                        let resp = Self.buildHTTPResponse(status: 400, body: "error: missing Sec-WebSocket-Key")
+                        _ = resp.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
+                        close(fd)
+                        return
+                    }
+
+                    let acceptKey = WebSocketHandshake.acceptKey(for: clientKey)
+                    let session = PTYWebSocketSession(fd: fd, terminalId: terminalId)
+                    session.start(acceptKey: acceptKey)
+                    // session 接管 fd 的生命周期，不在此处 close
+                    return
+                }
+
+                // 普通 HTTP 路由（Content-Length 判断完整性）
                 let contentLength = Self.parseContentLength(from: headerStr)
                 let bodyReceived = accumulated.count - headerEnd.upperBound
-                if contentLength <= 0 || bodyReceived >= contentLength { break }
-            }
-        }
-        guard !accumulated.isEmpty else {
-            close(fd)
-            return
-        }
-        Task { [weak self, fd] in
-            if let self {
-                let parsed = await self.parseHTTPRequest(accumulated)
-                let responseData = self.buildHTTPResponse(body: parsed.responseBody, httpVersion: parsed.httpVersion)
-                responseData.withUnsafeBytes { rawBuffer in
-                    guard let base = rawBuffer.baseAddress else { return }
-                    _ = libcSend(fd, base, rawBuffer.count, 0)
+                if contentLength <= 0 || bodyReceived >= contentLength {
+                    Task { [weak self, fd] in
+                        guard let self else { close(fd); return }
+                        let bodyData = accumulated.subdata(in: headerEnd.upperBound..<accumulated.count)
+                        let responseData = await self.routeHTTPRequest(
+                            method: method,
+                            path: path,
+                            headerLines: headerLines,
+                            headerMap: headerMap,
+                            body: bodyData
+                        )
+                        responseData.withUnsafeBytes { raw in
+                            guard let base = raw.baseAddress else { return }
+                            _ = libcSend(fd, base, raw.count, 0)
+                        }
+                        close(fd)
+                    }
+                    return
                 }
             }
-            close(fd)
         }
+
+        close(fd)
     }
 
-    // MARK: - HTTP 解析与响应
+    private func routeHTTPRequest(
+        method: String,
+        path: String,
+        headerLines: [String],
+        headerMap: [String: String],
+        body: Data
+    ) async -> Data {
+        let cleanPath = path.components(separatedBy: "?").first ?? path
+
+        // 0. OPTIONS (CORS Preflight)
+        if method == "OPTIONS" {
+            return Self.buildHTTPResponse(status: 204, body: "")
+        }
+
+        // 1. POST /cli (omaestri CLI)
+        if method == "POST" && cleanPath == "/cli" {
+            var terminalId: UUID?
+            var args: [String] = []
+            var httpVersion = "1.1"
+
+            if let firstLine = headerLines.first, firstLine.contains("HTTP/1.0") {
+                httpVersion = "1.0"
+            }
+
+            if let tidStr = headerMap["x-terminal-id"] {
+                terminalId = UUID(uuidString: tidStr)
+            }
+
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+               let rawArgs = json["args"] as? [String] {
+                args = rawArgs
+            }
+
+            guard !args.isEmpty else {
+                return Self.buildHTTPResponse(status: 400, body: "error: missing args", httpVersion: httpVersion)
+            }
+            let responseBody = await CLIRouter.shared.routeAsync(args: args, terminalId: terminalId)
+            return Self.buildHTTPResponse(status: 200, body: responseBody, httpVersion: httpVersion)
+        }
+
+        // 2. GET /api/workspace
+        if method == "GET" && cleanPath == "/api/workspace" {
+            var targetId: UUID? = nil
+            if let qIdx = path.firstIndex(of: "?") {
+                let query = String(path[path.index(after: qIdx)...])
+                for item in query.components(separatedBy: "&") {
+                    let kv = item.components(separatedBy: "=")
+                    if kv.count == 2, kv[0] == "id" {
+                        targetId = UUID(uuidString: kv[1])
+                    }
+                }
+            }
+            let pm = PersistenceManager.shared
+            let wsId = targetId ?? (try? pm.loadAppState())?.activeWorkspaceId ?? (try? pm.loadManifest())?.workspaces.first?.id
+            if let wsId, let doc = try? pm.loadWorkspace(id: wsId) {
+                if let jsonData = try? pm.encoder.encode(doc) {
+                    return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: jsonData)
+                }
+            } else {
+                let defaultPayload = WorkspacePayload(name: "Default", workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+                let defaultDoc = WorkspaceDocument(payload: defaultPayload)
+                try? pm.ensureWorkspaceDirectoryExists(id: defaultPayload.id)
+                try? pm.saveSync(defaultDoc, to: pm.workspaceURL(id: defaultPayload.id))
+                var appState = (try? pm.loadAppState()) ?? AppStateData()
+                appState.activeWorkspaceId = defaultPayload.id
+                try? pm.saveAppState(appState)
+                if let jsonData = try? pm.encoder.encode(defaultDoc) {
+                    return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: jsonData)
+                }
+            }
+            return Self.buildHTTPResponse(status: 404, body: "error: workspace not found")
+        }
+
+        // 3. POST /api/workspace (保存工作区)
+        if method == "POST" && cleanPath == "/api/workspace" {
+            let pm = PersistenceManager.shared
+            guard let doc = try? pm.decoder.decode(WorkspaceDocument.self, from: body) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid WorkspaceDocument JSON")
+            }
+            do {
+                try pm.ensureWorkspaceDirectoryExists(id: doc.payload.id)
+                try pm.saveSync(doc, to: pm.workspaceURL(id: doc.payload.id))
+                let respJson = "{\"status\":\"ok\",\"id\":\"\(doc.payload.id.uuidString)\"}"
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: respJson)
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace: \(error.localizedDescription)")
+            }
+        }
+
+        // 4. POST /api/terminals (创建终端)
+        if method == "POST" && cleanPath == "/api/terminals" {
+            var command = ""
+            var workingDirectory = ""
+            var workspaceId: UUID? = nil
+            var displayName: String? = nil
+            var roleName: String? = nil
+            var requestedId: UUID? = nil
+
+            if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                command = json["command"] as? String ?? ""
+                workingDirectory = json["workingDirectory"] as? String ?? ""
+                if let wsStr = json["workspaceId"] as? String {
+                    workspaceId = UUID(uuidString: wsStr)
+                }
+                if let idStr = json["id"] as? String {
+                    requestedId = UUID(uuidString: idStr)
+                }
+                displayName = json["displayName"] as? String
+                roleName = json["roleName"] as? String
+            }
+
+            let newId = requestedId ?? UUID()
+            Task { @MainActor in
+                let tm = PlatformHooks.terminals
+                tm.createTerminal(
+                    id: newId,
+                    command: command,
+                    workingDirectory: workingDirectory,
+                    workspaceId: workspaceId,
+                    roleName: roleName,
+                    displayName: displayName,
+                    agentType: "generic_shell"
+                )
+            }
+            let resp = "{\"id\":\"\(newId.uuidString)\"}"
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp)
+        }
+
+        // 5. DELETE /api/terminals/:id
+        if method == "DELETE" && cleanPath.hasPrefix("/api/terminals/") {
+            let rawId = String(cleanPath.dropFirst("/api/terminals/".count))
+            guard let tid = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid terminal ID")
+            }
+            Task { @MainActor in
+                let tm = PlatformHooks.terminals
+                tm.removeTerminal(id: tid)
+            }
+            let resp = "{\"status\":\"ok\"}"
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp)
+        }
+
+        return Self.buildHTTPResponse(status: 404, body: "error: not found")
+    }
+
+    // MARK: - HTTP 解析与响应工具
 
     private static func parseContentLength(from headers: String) -> Int {
         for line in headers.components(separatedBy: "\r\n") {
@@ -399,54 +616,24 @@ public final class InterAgentServer {
         return 0
     }
 
-    private struct ParsedRequest {
-        let responseBody: String
-        let httpVersion: String
-    }
-
-    private func parseHTTPRequest(_ data: Data) async -> ParsedRequest {
-        let raw = String(decoding: data, as: UTF8.self)
-        var terminalId: UUID?
-        var args: [String] = []
-        var httpVersion = "1.1"
-
-        let parts = raw.components(separatedBy: "\r\n\r\n")
-        let headers = parts[0]
-        let body = parts.count > 1 ? parts[1] : ""
-
-        let headerLines = headers.components(separatedBy: "\r\n")
-        if let requestLine = headerLines.first {
-            if requestLine.contains("HTTP/1.0") {
-                httpVersion = "1.0"
-            } else if requestLine.contains("HTTP/1.1") {
-                httpVersion = "1.1"
-            }
-        }
-
-        for line in headerLines {
-            let lower = line.lowercased()
-            if lower.hasPrefix("x-terminal-id:") {
-                let idStr = line.dropFirst("x-terminal-id:".count).trimmingCharacters(in: .whitespaces)
-                terminalId = UUID(uuidString: idStr)
-            }
-        }
-
-        if let bodyData = body.data(using: .utf8),
-           let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
-           let rawArgs = json["args"] as? [String] {
-            args = rawArgs
-        }
-
-        guard !args.isEmpty else {
-            return ParsedRequest(responseBody: "error: missing args", httpVersion: httpVersion)
-        }
-        let responseBody = await CLIRouter.shared.routeAsync(args: args, terminalId: terminalId)
-        return ParsedRequest(responseBody: responseBody, httpVersion: httpVersion)
-    }
-
-    private func buildHTTPResponse(body: String, httpVersion: String = "1.1") -> Data {
+    static func buildHTTPResponse(
+        status: Int = 200,
+        contentType: String = "text/plain; charset=utf-8",
+        body: String,
+        httpVersion: String = "1.1"
+    ) -> Data {
         let bodyData = body.data(using: .utf8) ?? Data()
-        let header = "HTTP/\(httpVersion) 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: \(bodyData.count)\r\nConnection: close\r\n\r\n"
-        return (header.data(using: .utf8) ?? Data()) + bodyData
+        return buildHTTPResponse(status: status, contentType: contentType, data: bodyData, httpVersion: httpVersion)
+    }
+
+    static func buildHTTPResponse(
+        status: Int = 200,
+        contentType: String = "text/plain; charset=utf-8",
+        data: Data,
+        httpVersion: String = "1.1"
+    ) -> Data {
+        let statusText = status == 200 ? "OK" : (status == 400 ? "Bad Request" : (status == 404 ? "Not Found" : "Internal Server Error"))
+        let header = "HTTP/\(httpVersion) \(status) \(statusText)\r\nContent-Type: \(contentType)\r\nContent-Length: \(data.count)\r\nConnection: close\r\n\r\n"
+        return (header.data(using: .utf8) ?? Data()) + data
     }
 }

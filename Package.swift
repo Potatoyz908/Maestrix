@@ -49,6 +49,7 @@ let coreSources: [String] = [
     "Terminal/TerminalSession.swift",
     "InterAgent/CLIRouter.swift",
     "InterAgent/InterAgentServer.swift",
+    "InterAgent/WebSocketServer.swift",
     "InterAgent/Handlers/AskHandler.swift",
     "InterAgent/Handlers/CheckHandler.swift",
     "InterAgent/Handlers/ListHandler.swift",

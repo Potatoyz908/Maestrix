@@ -88,6 +88,14 @@ final class LinuxTerminalManager: TerminalManaging {
         write(to: terminalId, text: text + "\n")
     }
 
+    func writeRaw(to terminalId: UUID, data: Data) {
+        processes[terminalId]?.writeRaw(data)
+    }
+
+    func resize(terminalId: UUID, cols: Int, rows: Int) {
+        processes[terminalId]?.resize(cols: cols, rows: rows)
+    }
+
     func bufferText(for terminalId: UUID) -> String? {
         processes[terminalId]?.bufferText()
     }
