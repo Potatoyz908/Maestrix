@@ -14,6 +14,7 @@ import pytest
 
 from maestri_core.client.api import (
     AuthenticationError,
+    EventsWebSocketClient,
     MaestriAPIError,
     MaestriClient,
     NotFoundError,
@@ -383,3 +384,117 @@ def test_ensure_terminal_creates_missing_or_exited_session(client, get_status, m
         assert client.ensure_terminal("X", command="bash", working_directory="/tmp", workspace_id="W") is True
     body = post.call_args.kwargs["json"]
     assert body["id"] == "X" and body["workingDirectory"] == "/tmp" and body["workspaceId"] == "W"
+
+
+def test_events_websocket_reconnect_and_glib_idle_add():
+    """Verifies /ws/events client reconnects on disconnect and dispatches via GLib.idle_add."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(2)
+    port = srv.getsockname()[1]
+
+    def _accept_and_send(conn, event_dict):
+        req = b""
+        while b"\r\n\r\n" not in req:
+            chunk = conn.recv(1024)
+            if not chunk:
+                return
+            req += chunk
+        req_str = req.decode("utf-8")
+        assert "GET /ws/events?workspace=WS-1 HTTP/1.1" in req_str
+        sec_key = ""
+        for line in req_str.splitlines():
+            if line.lower().startswith("sec-websocket-key:"):
+                sec_key = line.split(":", 1)[1].strip()
+        accept = base64.b64encode(
+            hashlib.sha1((sec_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("utf-8")).digest()
+        ).decode("ascii")
+        resp = (
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
+        ).encode("utf-8")
+        conn.sendall(resp)
+        payload = json.dumps(event_dict).encode("utf-8")
+        frame = bytearray([0x81, len(payload)]) + payload
+        conn.sendall(frame)
+
+    def _srv_worker():
+        # First connection: sends workspaceSaved then drops immediately
+        c1, _ = srv.accept()
+        _accept_and_send(c1, {"type": "workspaceSaved", "workspaceId": "WS-1"})
+        c1.close()
+        # Second connection (after automatic reconnect): sends connectionChanged
+        c2, _ = srv.accept()
+        _accept_and_send(c2, {"type": "connectionChanged", "connectionId": "C-1", "ropePoints": [[1.0, 2.0]]})
+        c2.close()
+        srv.close()
+
+    t = threading.Thread(target=_srv_worker, daemon=True)
+    t.start()
+
+    idle_calls = []
+    received = []
+    done = threading.Event()
+
+    def fake_idle_add(cb, *args):
+        idle_calls.append(cb)
+        cb(*args)
+        return 1
+
+    def on_event(evt):
+        received.append(evt)
+        if len(received) >= 2:
+            done.set()
+
+    client = MaestriClient(host="127.0.0.1", port=port, auth_token="tok-123")
+    ws = client.connect_events(
+        on_event=on_event,
+        workspace_id="WS-1",
+        reconnect=True,
+        reconnect_delay=0.05,
+        use_glib_idle=True,
+        idle_add=fake_idle_add,
+    )
+    assert done.wait(timeout=3.0), f"Timed out waiting for reconnect events, got: {received}"
+    ws.close()
+    t.join(timeout=2.0)
+
+    assert len(idle_calls) == 2
+    assert received[0]["type"] == "workspaceSaved"
+    assert received[1]["type"] == "connectionChanged"
+    assert ws.reconnect_count >= 1
+
+
+def test_client_sprint4_endpoints(client):
+    """Tests update_connection, patch_floor, delete_floor, and routines CRUD methods."""
+    ok_resp = MagicMock(ok=True, status_code=200)
+    ok_resp.json.return_value = {"status": "ok", "id": "R-1"}
+
+    with patch.object(client.session, "put", return_value=ok_resp) as put:
+        assert client.update_connection("C-1", [[0.0, 0.0], [10.0, 10.0]], workspace_id="W-1") is True
+        assert "/api/connections/C-1?workspace=W-1" in put.call_args.args[0]
+
+    with patch.object(client.session, "patch", return_value=ok_resp) as patch_fn:
+        client.patch_floor("F-1", name="Renamed", hooks={"setup": ["make"]}, workspace_id="W-1")
+        assert "/api/floors/F-1?workspace=W-1" in patch_fn.call_args.args[0]
+
+    with patch.object(client.session, "delete", return_value=ok_resp) as del_fn:
+        assert client.delete_floor("F-1", workspace_id="W-1", remove_worktree=False) is True
+        assert "removeWorktree=0" in del_fn.call_args.args[0]
+
+    list_resp = MagicMock(ok=True, status_code=200)
+    list_resp.json.return_value = [{"id": "R-1", "name": "Routine 1"}]
+    with patch.object(client.session, "get", return_value=list_resp):
+        assert client.get_routines()[0]["id"] == "R-1"
+
+    with patch.object(client.session, "post", return_value=ok_resp):
+        assert client.create_routine("R", "echo 1", 60.0, "T-1")["id"] == "R-1"
+
+    with patch.object(client.session, "patch", return_value=ok_resp):
+        assert client.update_routine("R-1", isActive=False)["id"] == "R-1"
+
+    with patch.object(client.session, "delete", return_value=ok_resp):
+        assert client.delete_routine("R-1") is True
+

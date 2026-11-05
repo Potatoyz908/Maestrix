@@ -16,7 +16,8 @@ struct Floor: Codable, Identifiable {
         self.id = id
         self.name = name
         self.branchName = branchName
-        self.worktreePath = "\(workspaceDir)/.open-maestri/floors/\(name)"
+        let slug = FloorManager.slugify(name)
+        self.worktreePath = "\(workspaceDir)/.open-maestri/floors/\(slug)"
         self.hooks = FloorHooks()
         self.createdAt = Date()
     }
@@ -35,6 +36,54 @@ final class FloorManager {
     private let logger = Logger.make(category: "FloorManager")
     private init() {}
 
+    /// 将 Floor 名称转换为安全的路径/分支 slug（仅含 [a-z0-9-]，无 .. 或 /）。
+    static func slugify(_ name: String) -> String {
+        var result = ""
+        var lastWasDash = false
+        for scalar in name.lowercased().unicodeScalars {
+            let isAlphaNum = (scalar.value >= 0x61 && scalar.value <= 0x7A) || (scalar.value >= 0x30 && scalar.value <= 0x39)
+            if isAlphaNum {
+                result.unicodeScalars.append(scalar)
+                lastWasDash = false
+            } else if !lastWasDash && !result.isEmpty {
+                result.append("-")
+                lastWasDash = true
+            }
+        }
+        while result.hasSuffix("-") { result.removeLast() }
+        return result.isEmpty ? "floor" : result
+    }
+
+    /// 构造 Floor Hook 环境变量（同时导出 MAESTRI_* 与 OMAESTRI_* 兼容别名）。
+    static func hookEnvironment(for floor: Floor, workingDirectory: String) -> [String: String] {
+        let projectName = URL(fileURLWithPath: workingDirectory).lastPathComponent
+        return [
+            "MAESTRI_FLOOR_NAME":    floor.name,
+            "MAESTRI_BRANCH_NAME":   floor.branchName,
+            "MAESTRI_FLOOR_PATH":    floor.worktreePath,
+            "MAESTRI_ROOT_PATH":     workingDirectory,
+            "MAESTRI_PROJECT_NAME":  projectName,
+            "OMAESTRI_FLOOR_NAME":   floor.name,
+            "OMAESTRI_BRANCH_NAME":  floor.branchName,
+            "OMAESTRI_FLOOR_PATH":   floor.worktreePath,
+            "OMAESTRI_ROOT_PATH":    workingDirectory,
+            "OMAESTRI_PROJECT_NAME": projectName,
+        ]
+    }
+
+    /// 确保 `<workingDirectory>/.git/info/exclude` 包含 `/.open-maestri/`（幂等）。
+    static func ensureGitExclude(in workingDirectory: String) {
+        let infoDir = workingDirectory + "/.git/info"
+        let excludePath = infoDir + "/exclude"
+        let entry = "/.open-maestri/"
+        try? FileManager.default.createDirectory(atPath: infoDir, withIntermediateDirectories: true)
+        let existing = (try? String(contentsOfFile: excludePath, encoding: .utf8)) ?? ""
+        let lines = existing.components(separatedBy: .newlines)
+        guard !lines.contains(entry) else { return }
+        let prefix = existing.isEmpty || existing.hasSuffix("\n") ? existing : existing + "\n"
+        try? (prefix + entry + "\n").write(toFile: excludePath, atomically: true, encoding: .utf8)
+    }
+
     // MARK: - Floor 创建
 
     func createFloor(name: String, branchName: String, workingDirectory: String) throws -> Floor {
@@ -45,6 +94,7 @@ final class FloorManager {
             throw MaestriError.terminalConnectionFailed(String(format: fmt, workingDirectory))
         }
 
+        Self.ensureGitExclude(in: workingDirectory)
         let floor = Floor(name: name, branchName: branchName, workspaceDir: workingDirectory)
         try runGit(["worktree", "add", "-b", branchName, floor.worktreePath], in: workingDirectory)
         logger.info("Floor '\(name)' created at \(floor.worktreePath)")
@@ -79,13 +129,9 @@ final class FloorManager {
             process.executableURL = URL(fileURLWithPath: Constants.defaultShellPath)
             process.arguments = ["-c", hook]
             process.currentDirectoryURL = URL(fileURLWithPath: floor.worktreePath)
-            process.environment = ProcessInfo.processInfo.environment.merging([
-                "OMAESTRI_FLOOR_NAME":    floor.name,
-                "OMAESTRI_BRANCH_NAME":   floor.branchName,
-                "OMAESTRI_FLOOR_PATH":    floor.worktreePath,
-                "OMAESTRI_ROOT_PATH":     workingDirectory,
-                "OMAESTRI_PROJECT_NAME":  URL(fileURLWithPath: workingDirectory).lastPathComponent,
-            ]) { _, new in new }
+            process.environment = ProcessInfo.processInfo.environment.merging(
+                Self.hookEnvironment(for: floor, workingDirectory: workingDirectory)
+            ) { _, new in new }
             try process.run()
             process.waitUntilExit()
         }

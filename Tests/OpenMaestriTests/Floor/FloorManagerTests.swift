@@ -1,5 +1,9 @@
 import XCTest
+#if canImport(open_maestri)
 @testable import open_maestri
+#else
+@testable import OpenMaestriCore
+#endif
 
 final class FloorManagerTests: XCTestCase {
     private let fm = FloorManager.shared
@@ -77,9 +81,27 @@ final class FloorManagerTests: XCTestCase {
 
     func testHookEnvironmentVariablesContainRequiredKeys() throws {
         let floor = try fm.createFloor(name: "hook-floor", branchName: "hook-branch", workingDirectory: testDir)
-        // 通过 HooksManager 验证环境变量格式（不实际执行钩子，只验证变量生成）
-        XCTAssertFalse(floor.worktreePath.isEmpty)
-        XCTAssertFalse(floor.branchName.isEmpty)
+        let env = FloorManager.hookEnvironment(for: floor, workingDirectory: testDir)
+        XCTAssertEqual(env["MAESTRI_FLOOR_NAME"], "hook-floor")
+        XCTAssertEqual(env["OMAESTRI_FLOOR_NAME"], "hook-floor")
+        XCTAssertEqual(env["MAESTRI_BRANCH_NAME"], "hook-branch")
+        XCTAssertEqual(env["OMAESTRI_BRANCH_NAME"], "hook-branch")
+        XCTAssertEqual(env["MAESTRI_FLOOR_PATH"], floor.worktreePath)
+        XCTAssertEqual(env["OMAESTRI_FLOOR_PATH"], floor.worktreePath)
+        XCTAssertEqual(env["MAESTRI_ROOT_PATH"], testDir)
+        XCTAssertEqual(env["OMAESTRI_ROOT_PATH"], testDir)
+        XCTAssertEqual(env["MAESTRI_PROJECT_NAME"], URL(fileURLWithPath: testDir).lastPathComponent)
+        XCTAssertEqual(env["OMAESTRI_PROJECT_NAME"], URL(fileURLWithPath: testDir).lastPathComponent)
+        try? fm.removeFloor(floor, workingDirectory: testDir)
+    }
+
+    func testFloorSlugSanitizesUnsafeCharactersAndUpdatesGitExclude() throws {
+        XCTAssertEqual(FloorManager.slugify("My Feature ../Floor 1!"), "my-feature-floor-1")
+        XCTAssertEqual(FloorManager.slugify("../../../"), "floor")
+        let floor = try fm.createFloor(name: "My Feature Floor", branchName: "floor/my-feature-floor", workingDirectory: testDir)
+        XCTAssertTrue(floor.worktreePath.hasSuffix("/.open-maestri/floors/my-feature-floor"))
+        let exclude = try String(contentsOfFile: testDir + "/.git/info/exclude", encoding: .utf8)
+        XCTAssertTrue(exclude.contains("/.open-maestri/"))
         try? fm.removeFloor(floor, workingDirectory: testDir)
     }
 }

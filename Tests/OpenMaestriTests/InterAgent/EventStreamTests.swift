@@ -112,6 +112,15 @@ final class EventStreamTests: XCTestCase {
             XCTAssertEqual(created["b"] as? String, b.uuidString)
             XCTAssertEqual((created["ropePoints"] as? [[Double]])?.count, 21)
 
+            let putBody = "{\"ropePoints\":[[10.0,20.0],[30.0,40.0]]}"
+            let put = try Self.exchange(port: port, request:
+                "PUT /api/connections/\(connId.uuidString) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(putBody.utf8.count)\r\nConnection: close\r\n\r\n\(putBody)")
+            XCTAssertTrue(put.contains("200 OK"), put)
+            let changed = try Self.readEvent(ws, type: "connectionChanged")
+            XCTAssertEqual(changed["connectionId"] as? String, connId.uuidString)
+            XCTAssertEqual(changed["kind"] as? String, "terminalToTerminal")
+            XCTAssertEqual((changed["ropePoints"] as? [[Double]])?.count, 2)
+
             let del = try Self.exchange(port: port, request:
                 "DELETE /api/connections/\(connId.uuidString) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
             XCTAssertTrue(del.contains("200 OK"))
@@ -119,6 +128,129 @@ final class EventStreamTests: XCTestCase {
             XCTAssertEqual(removed["connectionId"] as? String, connId.uuidString)
             XCTAssertEqual(removed["a"] as? String, a.uuidString)
             XCTAssertEqual(removed["kind"] as? String, "terminalToTerminal")
+            let saved = try Self.readEvent(ws, type: "workspaceSaved")
+            XCTAssertNotNil(saved["workspaceId"] as? String)
+        }.value
+    }
+
+    func testWorkspaceSavedPreservesFloorsAndBroadcastsFloorEvents() async throws {
+        let (port, token): (UInt16, String) = try await MainActor.run {
+            try InterAgentServer.shared.start()
+            return (InterAgentServer.shared.port, InterAgentServer.shared.authToken)
+        }
+        defer { Task { @MainActor in InterAgentServer.shared.stop() } }
+
+        // Prepare a temporary git repo for floor creation
+        let tmpRepo = NSTemporaryDirectory() + "maestri-evt-floor-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: tmpRepo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: tmpRepo) }
+        try Self.initGitRepo(at: tmpRepo)
+
+        try await Task.detached {
+            let auth = "Authorization: Bearer \(token)\r\n"
+            let getResp = try Self.exchange(port: port, request: "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            let wsJson = try Self.extractJSONBody(getResp)
+            let wsObj = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(wsJson.utf8)) as? [String: Any])
+            let payloadObj = try XCTUnwrap(wsObj["payload"] as? [String: Any])
+            let wsId = try XCTUnwrap(payloadObj["id"] as? String)
+
+            let ws = try Self.openEventSocket(port: port, token: token)
+            defer { close(ws) }
+
+            // Create floor with space in name -> slugified branch/worktree + floorCreated event
+            let floorBody = "{\"name\":\"Sprint 4 UI\",\"workspaceId\":\"\(wsId)\",\"workingDirectory\":\"\(tmpRepo)\"}"
+            let createFloor = try Self.exchange(port: port, request:
+                "POST /api/floors HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(floorBody.utf8.count)\r\nConnection: close\r\n\r\n\(floorBody)")
+            XCTAssertTrue(createFloor.contains("201 Created"), createFloor)
+            let fCreated = try Self.readEvent(ws, type: "floorCreated")
+            let floorId = try XCTUnwrap(fCreated["floorId"] as? String)
+            XCTAssertEqual(fCreated["branchName"] as? String, "floor/sprint-4-ui")
+
+            // Patch floor name & hooks -> floorChanged event
+            let patchBody = "{\"name\":\"Sprint 4 Renamed\",\"hooks\":{\"setup\":[\"echo hi\"],\"autoRunSetup\":true}}"
+            let patchFloor = try Self.exchange(port: port, request:
+                "PATCH /api/floors/\(floorId)?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(patchBody.utf8.count)\r\nConnection: close\r\n\r\n\(patchBody)")
+            XCTAssertTrue(patchFloor.contains("200 OK"), patchFloor)
+            let fChanged = try Self.readEvent(ws, type: "floorChanged")
+            XCTAssertEqual(fChanged["name"] as? String, "Sprint 4 Renamed")
+
+            // Save workspace snapshot WITHOUT floors (simulating WorkspaceSync R1) -> floors must be preserved!
+            var staleWs = wsObj
+            var stalePayload = payloadObj
+            stalePayload.removeValue(forKey: "floors")
+            staleWs["payload"] = stalePayload
+            let staleData = try JSONSerialization.data(withJSONObject: staleWs)
+            let staleStr = String(decoding: staleData, as: UTF8.self)
+            let saveResp = try Self.exchange(port: port, request:
+                "POST /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(staleStr.utf8.count)\r\nConnection: close\r\n\r\n\(staleStr)")
+            XCTAssertTrue(saveResp.contains("200 OK"), saveResp)
+            let wsSaved = try Self.readEvent(ws, type: "workspaceSaved")
+            XCTAssertEqual(wsSaved["workspaceId"] as? String, wsId)
+
+            let floorsResp = try Self.exchange(port: port, request:
+                "GET /api/floors?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(floorsResp.contains(floorId), "Floor must survive POST /api/workspace without floors: \(floorsResp)")
+
+            // Delete floor -> floorRemoved event
+            let delFloor = try Self.exchange(port: port, request:
+                "DELETE /api/floors/\(floorId)?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(delFloor.contains("200 OK"), delFloor)
+            let fRemoved = try Self.readEvent(ws, type: "floorRemoved")
+            XCTAssertEqual(fRemoved["floorId"] as? String, floorId)
+        }.value
+    }
+
+    func testRoutinesCrudAndEvents() async throws {
+        let (port, token): (UInt16, String) = try await MainActor.run {
+            try InterAgentServer.shared.start()
+            return (InterAgentServer.shared.port, InterAgentServer.shared.authToken)
+        }
+        defer { Task { @MainActor in InterAgentServer.shared.stop() } }
+
+        let targetTid = UUID()
+        try await Task.detached {
+            let auth = "Authorization: Bearer \(token)\r\n"
+            let ws = try Self.openEventSocket(port: port, token: token)
+            defer { close(ws) }
+
+            let createBody = "{\"name\":\"Nightly\",\"prompt\":\"make && make test\\n&&\\ngit status\",\"intervalSeconds\":120,\"targetTerminalId\":\"\(targetTid.uuidString)\"}"
+            let createResp = try Self.exchange(port: port, request:
+                "POST /api/routines HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(createBody.utf8.count)\r\nConnection: close\r\n\r\n\(createBody)")
+            XCTAssertTrue(createResp.contains("201 Created"), createResp)
+            let cEvt = try Self.readEvent(ws, type: "routineChanged")
+            XCTAssertEqual(cEvt["action"] as? String, "created")
+            let routineId = try XCTUnwrap(cEvt["routineId"] as? String)
+
+            // Verify own-line && parsing in GET /api/routines
+            let listResp = try Self.exchange(port: port, request:
+                "GET /api/routines HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(listResp.contains("\"make && make test\""), listResp)
+
+            // Patch routine
+            let patchBody = "{\"isActive\":false,\"name\":\"Nightly v2\",\"intervalSeconds\":180}"
+            let patchResp = try Self.exchange(port: port, request:
+                "PATCH /api/routines/\(routineId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(patchBody.utf8.count)\r\nConnection: close\r\n\r\n\(patchBody)")
+            XCTAssertTrue(patchResp.contains("200 OK"), patchResp)
+            let uEvt = try Self.readEvent(ws, type: "routineChanged")
+            XCTAssertEqual(uEvt["action"] as? String, "updated")
+
+            // Run-now emits routineStarted -> routineStep -> routineFinished
+            let runResp = try Self.exchange(port: port, request:
+                "POST /api/routines/\(routineId)/run-now HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: 0\r\nConnection: close\r\n\r\n")
+            XCTAssertTrue(runResp.contains("200 OK"), runResp)
+            let started = try Self.readEvent(ws, type: "routineStarted")
+            XCTAssertEqual(started["routineId"] as? String, routineId)
+            let step = try Self.readEvent(ws, type: "routineStep")
+            XCTAssertEqual(step["routineId"] as? String, routineId)
+            let finished = try Self.readEvent(ws, type: "routineFinished")
+            XCTAssertEqual(finished["routineId"] as? String, routineId)
+
+            // Delete routine
+            let delResp = try Self.exchange(port: port, request:
+                "DELETE /api/routines/\(routineId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(delResp.contains("200 OK"), delResp)
+            let dEvt = try Self.readEvent(ws, type: "routineChanged")
+            XCTAssertEqual(dEvt["action"] as? String, "removed")
         }.value
     }
 
@@ -157,6 +289,9 @@ final class EventStreamTests: XCTestCase {
         return String(decoding: out, as: UTF8.self)
     }
 
+    private static var rxBuffers: [Int32: Data] = [:]
+    private static let rxLock = NSLock()
+
     private static func openEventSocket(port: UInt16, token: String) throws -> Int32 {
         let fd = try connect(port: port)
         let req = "GET /ws/events HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nAuthorization: Bearer \(token)\r\n" +
@@ -166,14 +301,28 @@ final class EventStreamTests: XCTestCase {
         _ = data.withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
         var buf = [UInt8](repeating: 0, count: 1024)
         let n = recv(fd, &buf, buf.count, 0)
-        let head = String(decoding: buf[..<max(n, 0)], as: UTF8.self)
+        let raw = Data(buf[..<max(n, 0)])
+        guard let sep = raw.range(of: Data("\r\n\r\n".utf8)) else {
+            close(fd); throw NSError(domain: "test", code: 3)
+        }
+        let head = String(decoding: raw[..<sep.lowerBound], as: UTF8.self)
         guard head.hasPrefix("HTTP/1.1 101") else { close(fd); throw NSError(domain: "test", code: 3, userInfo: [NSLocalizedDescriptionKey: head]) }
+        rxLock.lock()
+        rxBuffers[fd] = Data(raw[sep.upperBound...])
+        rxLock.unlock()
         return fd
     }
 
-    /// 读取文本帧直到收到指定 type 的事件（跳过其它事件）。
+    /// 读取文本帧直到收到指定 type 的事件（跳过其它事件，保留同一次 recv 中的后续帧）。
     private static func readEvent(_ fd: Int32, type: String) throws -> [String: Any] {
-        var buffer = Data()
+        rxLock.lock()
+        var buffer = rxBuffers[fd] ?? Data()
+        rxLock.unlock()
+        defer {
+            rxLock.lock()
+            rxBuffers[fd] = buffer
+            rxLock.unlock()
+        }
         var buf = [UInt8](repeating: 0, count: 4096)
         let deadline = Date().addingTimeInterval(8)
         while Date() < deadline {
@@ -187,5 +336,28 @@ final class EventStreamTests: XCTestCase {
             buffer.append(buf, count: n)
         }
         throw NSError(domain: "test", code: 4, userInfo: [NSLocalizedDescriptionKey: "timeout waiting for \(type)"])
+    }
+
+    private static func extractJSONBody(_ httpResponse: String) throws -> String {
+        guard let range = httpResponse.range(of: "\r\n\r\n") else {
+            throw NSError(domain: "test", code: 5, userInfo: [NSLocalizedDescriptionKey: "missing HTTP body"])
+        }
+        return String(httpResponse[range.upperBound...])
+    }
+
+    private static func initGitRepo(at path: String) throws {
+        let env = ProcessInfo.processInfo.environment.merging([
+            "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@t.com",
+            "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "t@t.com",
+        ]) { _, new in new }
+        for args in [["init"], ["commit", "--allow-empty", "-m", "init"]] {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            p.arguments = args
+            p.currentDirectoryURL = URL(fileURLWithPath: path)
+            p.environment = env
+            try p.run()
+            p.waitUntilExit()
+        }
     }
 }

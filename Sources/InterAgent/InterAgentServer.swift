@@ -708,15 +708,39 @@ public final class InterAgentServer {
         // 3. POST /api/workspace (保存工作区)
         if method == "POST" && cleanPath == "/api/workspace" {
             let pm = PersistenceManager.shared
-            guard let doc = try? pm.decoder.decode(WorkspaceDocument.self, from: body) else {
+            var decodeData = body
+            var hasExplicitFloors = false
+            var hasExplicitCrossFloor = false
+            if var rawJson = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+               var rawPayload = rawJson["payload"] as? [String: Any] {
+                hasExplicitFloors = rawPayload["floors"] != nil
+                hasExplicitCrossFloor = rawPayload["crossFloorConnections"] != nil
+                if !hasExplicitFloors { rawPayload["floors"] = [] }
+                if !hasExplicitCrossFloor { rawPayload["crossFloorConnections"] = [] }
+                rawJson["payload"] = rawPayload
+                if let patched = try? JSONSerialization.data(withJSONObject: rawJson) {
+                    decodeData = patched
+                }
+            }
+            guard var doc = try? pm.decoder.decode(WorkspaceDocument.self, from: decodeData) else {
                 return Self.buildHTTPResponse(status: 400, body: "error: invalid WorkspaceDocument JSON", allowedOrigin: allowedOrigin)
             }
             guard doc.schemaVersion == Constants.schemaVersion else {
                 return Self.buildHTTPResponse(status: 400, body: "error: invalid schemaVersion \(doc.schemaVersion), expected \(Constants.schemaVersion)", allowedOrigin: allowedOrigin)
             }
+            // R1 保护：若客户端快照未携带 floors 或为空，保留服务端通过 /api/floors 维护的 floors/crossFloorConnections
+            if let existing = try? pm.loadWorkspace(id: doc.payload.id) {
+                if !hasExplicitFloors || (doc.payload.floors.isEmpty && !existing.payload.floors.isEmpty) {
+                    doc.payload.floors = existing.payload.floors
+                }
+                if !hasExplicitCrossFloor || (doc.payload.crossFloorConnections.isEmpty && !existing.payload.crossFloorConnections.isEmpty) {
+                    doc.payload.crossFloorConnections = existing.payload.crossFloorConnections
+                }
+            }
             do {
                 try pm.ensureWorkspaceDirectoryExists(id: doc.payload.id)
                 try pm.saveSync(doc, to: pm.workspaceURL(id: doc.payload.id))
+                EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: doc.payload.id, payload: [:])
                 let respJson = "{\"status\":\"ok\",\"id\":\"\(doc.payload.id.uuidString)\"}"
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: respJson, allowedOrigin: allowedOrigin)
             } catch {
@@ -1166,6 +1190,7 @@ public final class InterAgentServer {
                         "ropePoints": ropePoints,
                     ]
                 )
+                EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
                 let resp = "{\"id\":\"\(connId.uuidString)\",\"status\":\"ok\"}"
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp, allowedOrigin: allowedOrigin)
             } catch {
@@ -1227,11 +1252,56 @@ public final class InterAgentServer {
                         info["connectionId"] = connId.uuidString
                         EventBroadcaster.shared.publish(type: "connectionRemoved", workspaceId: wsId, payload: info)
                     }
+                    EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
                 }
             }
 
             let resp = "{\"status\":\"ok\"}"
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp, allowedOrigin: allowedOrigin)
+        }
+
+        // PUT /api/connections/:id  body: {"ropePoints": [[x,y],...]} -> 广播 connectionChanged
+        if method == "PUT" && cleanPath.hasPrefix("/api/connections/") {
+            let rawId = String(cleanPath.dropFirst("/api/connections/".count))
+            guard let connId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid connection ID", allowedOrigin: allowedOrigin)
+            }
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+                  let points = json["ropePoints"] as? [[Double]] else {
+                return Self.buildHTTPResponse(status: 400, body: "error: missing ropePoints", allowedOrigin: allowedOrigin)
+            }
+            let pm = PersistenceManager.shared
+            guard let wsId = Self.resolveWorkspaceId(pathParts: pathParts, pm: pm),
+                  var doc = try? pm.loadWorkspace(id: wsId) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found", allowedOrigin: allowedOrigin)
+            }
+            var kind: String? = nil
+            if let i = doc.payload.connections.firstIndex(where: { $0.id == connId }) {
+                doc.payload.connections[i].ropePoints = points; kind = "terminalToTerminal"
+            } else if let i = doc.payload.noteConnections.firstIndex(where: { $0.id == connId }) {
+                doc.payload.noteConnections[i].ropePoints = points; kind = "terminalToNote"
+            } else if let i = doc.payload.portalConnections.firstIndex(where: { $0.id == connId }) {
+                doc.payload.portalConnections[i].ropePoints = points; kind = "terminalToPortal"
+            } else if let i = doc.payload.portalToPortalConnections.firstIndex(where: { $0.id == connId }) {
+                doc.payload.portalToPortalConnections[i].ropePoints = points; kind = "portalToPortal"
+            } else if let i = doc.payload.noteToNoteConnections.firstIndex(where: { $0.id == connId }) {
+                doc.payload.noteToNoteConnections[i].ropePoints = points; kind = "noteToNote"
+            }
+            guard let resolvedKind = kind else {
+                return Self.buildHTTPResponse(status: 404, body: "error: connection not found", allowedOrigin: allowedOrigin)
+            }
+            doc.payload.lastModifiedAt = Date()
+            do {
+                try pm.saveSync(doc, to: pm.workspaceURL(id: wsId))
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save connection: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
+            EventBroadcaster.shared.publish(
+                type: "connectionChanged", workspaceId: wsId,
+                payload: ["connectionId": connId.uuidString, "kind": resolvedKind, "ropePoints": points]
+            )
+            EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
         }
 
         // 12. GET /api/sidebar-layout
@@ -1415,17 +1485,9 @@ public final class InterAgentServer {
             }
 
             var floorsList: [[String: Any]] = []
-            let isoFormatter = ISO8601DateFormatter()
-            isoFormatter.formatOptions = [.withInternetDateTime]
             if let wsId = targetWorkspaceId, let doc = try? pm.loadWorkspace(id: wsId) {
                 for f in doc.payload.floors {
-                    floorsList.append([
-                        "id": f.id.uuidString,
-                        "name": f.name,
-                        "branchName": f.branchName,
-                        "worktreePath": f.worktreePath,
-                        "createdAt": isoFormatter.string(from: f.createdAt)
-                    ])
+                    floorsList.append(Self.floorJSON(f))
                 }
             }
             if let data = try? JSONSerialization.data(withJSONObject: floorsList) {
@@ -1466,31 +1528,33 @@ public final class InterAgentServer {
             }
 
             let workingDirectory = (json["workingDirectory"] as? String) ?? doc.payload.workingDirectory
-            let branchName = (json["branchName"] as? String) ?? "floor/\(name)"
+            let branchName = (json["branchName"] as? String) ?? "floor/\(FloorManager.slugify(name))"
 
             do {
                 let floor = try FloorManager.shared.createFloor(name: name, branchName: branchName, workingDirectory: workingDirectory)
+                var hooks = floor.hooks
+                if let hooksDict = json["hooks"] as? [String: Any] {
+                    hooks = Self.decodeFloorHooks(hooksDict, fallback: hooks)
+                }
                 let floorEntry = FloorEntry(
                     id: floor.id,
                     name: floor.name,
                     branchName: floor.branchName,
                     worktreePath: floor.worktreePath,
-                    hooks: floor.hooks,
+                    hooks: hooks,
                     createdAt: floor.createdAt
                 )
                 doc.payload.floors.append(floorEntry)
                 doc.payload.lastModifiedAt = Date()
                 try pm.saveSync(doc, to: pm.workspaceURL(id: wsId))
+                EventBroadcaster.shared.publish(
+                    type: "floorCreated", workspaceId: wsId,
+                    payload: ["floorId": floor.id.uuidString, "name": floor.name,
+                              "branchName": floor.branchName, "worktreePath": floor.worktreePath]
+                )
+                EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
 
-                let isoFormatter = ISO8601DateFormatter()
-                isoFormatter.formatOptions = [.withInternetDateTime]
-                let respObj: [String: Any] = [
-                    "id": floor.id.uuidString,
-                    "name": floor.name,
-                    "branchName": floor.branchName,
-                    "worktreePath": floor.worktreePath,
-                    "createdAt": isoFormatter.string(from: floor.createdAt)
-                ]
+                let respObj = Self.floorJSON(floorEntry)
                 if let data = try? JSONSerialization.data(withJSONObject: respObj) {
                     return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
                 }
@@ -1498,6 +1562,208 @@ public final class InterAgentServer {
             } catch {
                 return Self.buildHTTPResponse(status: 400, body: "error: failed to create floor - \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
+        }
+
+        // PATCH /api/floors/:id  body: {name?, hooks?}
+        if method == "PATCH" && cleanPath.hasPrefix("/api/floors/") {
+            let rawId = String(cleanPath.dropFirst("/api/floors/".count))
+            guard let floorId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid floor ID", allowedOrigin: allowedOrigin)
+            }
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid JSON body", allowedOrigin: allowedOrigin)
+            }
+            let pm = PersistenceManager.shared
+            guard let wsId = Self.resolveWorkspaceId(pathParts: pathParts, pm: pm),
+                  var doc = try? pm.loadWorkspace(id: wsId),
+                  let idx = doc.payload.floors.firstIndex(where: { $0.id == floorId }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: floor not found", allowedOrigin: allowedOrigin)
+            }
+            if let name = json["name"] as? String, !name.isEmpty {
+                doc.payload.floors[idx].name = name
+            }
+            if let hooksDict = json["hooks"] as? [String: Any] {
+                doc.payload.floors[idx].hooks = Self.decodeFloorHooks(hooksDict, fallback: doc.payload.floors[idx].hooks)
+            }
+            doc.payload.lastModifiedAt = Date()
+            do {
+                try pm.saveSync(doc, to: pm.workspaceURL(id: wsId))
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
+            let updated = doc.payload.floors[idx]
+            EventBroadcaster.shared.publish(
+                type: "floorChanged", workspaceId: wsId,
+                payload: ["floorId": updated.id.uuidString, "name": updated.name, "branchName": updated.branchName]
+            )
+            EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
+            let data = (try? JSONSerialization.data(withJSONObject: Self.floorJSON(updated))) ?? Data("{}".utf8)
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+        }
+
+        // DELETE /api/floors/:id  (query: removeWorktree=0 保留 worktree，仅移除记录)
+        if method == "DELETE" && cleanPath.hasPrefix("/api/floors/") {
+            let rawId = String(cleanPath.dropFirst("/api/floors/".count))
+            guard let floorId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid floor ID", allowedOrigin: allowedOrigin)
+            }
+            let pm = PersistenceManager.shared
+            guard let wsId = Self.resolveWorkspaceId(pathParts: pathParts, pm: pm),
+                  var doc = try? pm.loadWorkspace(id: wsId) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found", allowedOrigin: allowedOrigin)
+            }
+            guard let entry = doc.payload.floors.first(where: { $0.id == floorId }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: floor not found", allowedOrigin: allowedOrigin)
+            }
+            let keepWorktree = pathParts.count > 1 && pathParts[1].contains("removeWorktree=0")
+            if !keepWorktree && FileManager.default.fileExists(atPath: entry.worktreePath) {
+                var floor = Floor(id: entry.id, name: entry.name, branchName: entry.branchName, workspaceDir: doc.payload.workingDirectory)
+                floor.worktreePath = entry.worktreePath
+                do {
+                    try FloorManager.shared.removeFloor(floor, workingDirectory: doc.payload.workingDirectory)
+                } catch {
+                    return Self.buildHTTPResponse(status: 400, body: "error: failed to remove worktree - \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+                }
+            }
+            doc.payload.floors.removeAll { $0.id == floorId }
+            doc.payload.lastModifiedAt = Date()
+            do {
+                try pm.saveSync(doc, to: pm.workspaceURL(id: wsId))
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
+            EventBroadcaster.shared.publish(type: "floorRemoved", workspaceId: wsId, payload: ["floorId": floorId.uuidString])
+            EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
+        }
+
+        // GET /api/routines
+        if method == "GET" && cleanPath == "/api/routines" {
+            let pm = PersistenceManager.shared
+            let container = (try? pm.load(RoutinesContainer.self, from: pm.routinesURL)) ?? RoutinesContainer()
+            let list = container.routines.map { Self.routineJSON($0) }
+            let data = (try? JSONSerialization.data(withJSONObject: list)) ?? Data("[]".utf8)
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+        }
+
+        // POST /api/routines  body: {name, prompt, intervalSeconds, targetTerminalId}
+        if method == "POST" && cleanPath == "/api/routines" {
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+                  let name = json["name"] as? String, !name.isEmpty,
+                  let prompt = json["prompt"] as? String, !prompt.isEmpty,
+                  let interval = (json["intervalSeconds"] as? NSNumber)?.doubleValue, interval > 0,
+                  let tidStr = json["targetTerminalId"] as? String, let tid = UUID(uuidString: tidStr) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: require name, prompt, intervalSeconds>0, targetTerminalId", allowedOrigin: allowedOrigin)
+            }
+            let pm = PersistenceManager.shared
+            var container = (try? pm.load(RoutinesContainer.self, from: pm.routinesURL)) ?? RoutinesContainer()
+            let routine = Routine(name: name, prompt: prompt, intervalSeconds: interval, targetTerminalId: tid)
+            container.routines.append(routine)
+            do { try pm.saveSync(container, to: pm.routinesURL) } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save routines: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
+            EventBroadcaster.shared.publish(type: "routineChanged", payload: ["action": "created", "routineId": routine.id.uuidString])
+            let data = (try? JSONSerialization.data(withJSONObject: Self.routineJSON(routine))) ?? Data("{}".utf8)
+            return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+        }
+
+        // PATCH /api/routines/:id  body: {isActive?, name?, prompt?, prompts?, intervalSeconds?, targetTerminalId?}
+        if method == "PATCH" && cleanPath.hasPrefix("/api/routines/") {
+            let rawId = String(cleanPath.dropFirst("/api/routines/".count))
+            guard let rid = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid routine ID", allowedOrigin: allowedOrigin)
+            }
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid JSON body", allowedOrigin: allowedOrigin)
+            }
+            let pm = PersistenceManager.shared
+            var container = (try? pm.load(RoutinesContainer.self, from: pm.routinesURL)) ?? RoutinesContainer()
+            guard let idx = container.routines.firstIndex(where: { $0.id == rid }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: routine not found", allowedOrigin: allowedOrigin)
+            }
+            if let active = json["isActive"] as? Bool { container.routines[idx].isActive = active }
+            if let name = json["name"] as? String, !name.isEmpty { container.routines[idx].name = name }
+            if let prompts = json["prompts"] as? [String], !prompts.isEmpty {
+                container.routines[idx].prompts = prompts
+            } else if let prompt = json["prompt"] as? String {
+                let parsed = Routine.parsePrompts(prompt)
+                if !parsed.isEmpty { container.routines[idx].prompts = parsed }
+            }
+            if let interval = (json["intervalSeconds"] as? NSNumber)?.doubleValue, interval > 0 {
+                container.routines[idx].intervalSeconds = interval
+            }
+            if let tidStr = json["targetTerminalId"] as? String, let tid = UUID(uuidString: tidStr) {
+                container.routines[idx].targetTerminalId = tid
+            }
+            do { try pm.saveSync(container, to: pm.routinesURL) } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save routines: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
+            EventBroadcaster.shared.publish(type: "routineChanged", payload: ["action": "updated", "routineId": rid.uuidString])
+            let data = (try? JSONSerialization.data(withJSONObject: Self.routineJSON(container.routines[idx]))) ?? Data("{}".utf8)
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+        }
+
+        // POST /api/routines/:id/{pause|resume|run-now}
+        if method == "POST" && cleanPath.hasPrefix("/api/routines/") {
+            let tail = String(cleanPath.dropFirst("/api/routines/".count))
+            let parts = tail.components(separatedBy: "/")
+            guard parts.count == 2, let rid = UUID(uuidString: parts[0]) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid routine action path", allowedOrigin: allowedOrigin)
+            }
+            let action = parts[1]
+            let pm = PersistenceManager.shared
+            var container = (try? pm.load(RoutinesContainer.self, from: pm.routinesURL)) ?? RoutinesContainer()
+            guard let idx = container.routines.firstIndex(where: { $0.id == rid }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: routine not found", allowedOrigin: allowedOrigin)
+            }
+            switch action {
+            case "pause":
+                container.routines[idx].isActive = false
+                try? pm.saveSync(container, to: pm.routinesURL)
+                EventBroadcaster.shared.publish(type: "routineChanged", payload: ["action": "paused", "routineId": rid.uuidString])
+                let data = (try? JSONSerialization.data(withJSONObject: Self.routineJSON(container.routines[idx]))) ?? Data("{}".utf8)
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            case "resume":
+                container.routines[idx].isActive = true
+                try? pm.saveSync(container, to: pm.routinesURL)
+                EventBroadcaster.shared.publish(type: "routineChanged", payload: ["action": "resumed", "routineId": rid.uuidString])
+                let data = (try? JSONSerialization.data(withJSONObject: Self.routineJSON(container.routines[idx]))) ?? Data("{}".utf8)
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            case "run-now":
+                let routine = container.routines[idx]
+                EventBroadcaster.shared.publish(type: "routineStarted", payload: ["routineId": rid.uuidString, "n": routine.prompts.count])
+                for (i, prompt) in routine.prompts.enumerated() {
+                    await MainActor.run {
+                        #if os(Linux)
+                        LinuxTerminalManager.shared.writeLine(to: routine.targetTerminalId, text: prompt)
+                        #endif
+                    }
+                    EventBroadcaster.shared.publish(type: "routineStep", payload: ["routineId": rid.uuidString, "i": i + 1, "n": routine.prompts.count])
+                }
+                EventBroadcaster.shared.publish(type: "routineFinished", payload: ["routineId": rid.uuidString])
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\",\"id\":\"\(rid.uuidString)\"}", allowedOrigin: allowedOrigin)
+            default:
+                return Self.buildHTTPResponse(status: 400, body: "error: unknown routine action '\(action)'", allowedOrigin: allowedOrigin)
+            }
+        }
+
+        // DELETE /api/routines/:id
+        if method == "DELETE" && cleanPath.hasPrefix("/api/routines/") {
+            let rawId = String(cleanPath.dropFirst("/api/routines/".count))
+            guard let rid = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid routine ID", allowedOrigin: allowedOrigin)
+            }
+            let pm = PersistenceManager.shared
+            var container = (try? pm.load(RoutinesContainer.self, from: pm.routinesURL)) ?? RoutinesContainer()
+            guard container.routines.contains(where: { $0.id == rid }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: routine not found", allowedOrigin: allowedOrigin)
+            }
+            container.routines.removeAll { $0.id == rid }
+            do { try pm.saveSync(container, to: pm.routinesURL) } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save routines: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
+            EventBroadcaster.shared.publish(type: "routineChanged", payload: ["action": "removed", "routineId": rid.uuidString])
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
         }
 
         // 17. GET /api/agents
@@ -1816,6 +2082,59 @@ public final class InterAgentServer {
         return 0
     }
 
+    /// 解析目标 workspace：?workspace=UUID > activeWorkspaceId > manifest 首项。
+    static func resolveWorkspaceId(pathParts: [String], pm: PersistenceManager) -> UUID? {
+        if pathParts.count > 1 {
+            for pair in pathParts[1].components(separatedBy: "&") {
+                let kv = pair.components(separatedBy: "=")
+                if kv.count == 2 && kv[0] == "workspace", let id = UUID(uuidString: kv[1]) { return id }
+            }
+        }
+        if let id = (try? pm.loadAppState())?.activeWorkspaceId { return id }
+        return ((try? pm.loadManifest()) ?? WorkspaceManifest()).workspaces.first?.id
+    }
+
+    static func floorJSON(_ f: FloorEntry) -> [String: Any] {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        return [
+            "id": f.id.uuidString,
+            "name": f.name,
+            "branchName": f.branchName,
+            "worktreePath": f.worktreePath,
+            "hooks": [
+                "setup": f.hooks.setup,
+                "run": f.hooks.run,
+                "teardown": f.hooks.teardown,
+                "autoRunSetup": f.hooks.autoRunSetup,
+            ],
+            "createdAt": iso.string(from: f.createdAt),
+        ]
+    }
+
+    static func decodeFloorHooks(_ dict: [String: Any], fallback: FloorHooks) -> FloorHooks {
+        var hooks = fallback
+        if let s = dict["setup"] as? [String] { hooks.setup = s }
+        if let r = dict["run"] as? [String] { hooks.run = r }
+        if let t = dict["teardown"] as? [String] { hooks.teardown = t }
+        if let a = dict["autoRunSetup"] as? Bool { hooks.autoRunSetup = a }
+        return hooks
+    }
+
+    static func routineJSON(_ r: Routine) -> [String: Any] {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        return [
+            "id": r.id.uuidString,
+            "name": r.name,
+            "prompts": r.prompts,
+            "intervalSeconds": r.intervalSeconds,
+            "targetTerminalId": r.targetTerminalId.uuidString,
+            "isActive": r.isActive,
+            "createdAt": iso.string(from: r.createdAt),
+        ]
+    }
+
     static func buildHTTPResponse(
         status: Int = 200,
         contentType: String = "text/plain; charset=utf-8",
@@ -1853,7 +2172,7 @@ public final class InterAgentServer {
             header += "Access-Control-Allow-Origin: \(origin)\r\n"
             header += "Vary: Origin\r\n"
         }
-        header += "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
+        header += "Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS\r\n"
         header += "Access-Control-Allow-Headers: Content-Type, Authorization, X-Terminal-ID\r\n"
         header += "Connection: close\r\n\r\n"
         return (header.data(using: .utf8) ?? Data()) + data

@@ -224,7 +224,7 @@ class PTYWebSocketClient:
                     self._send_frame(self.OPCODE_PONG, payload)
                     continue
                 if opcode == self.OPCODE_CLOSE:
-                    self.close()
+                    self._close_socket()
                     return (opcode, payload)
                 return (opcode, payload)
 
@@ -244,11 +244,11 @@ class PTYWebSocketClient:
                     return None
                 chunk = sock.recv(4096)
                 if not chunk:
-                    self.close()
+                    self._close_socket()
                     return None
                 self._rx_buffer.extend(chunk)
             except (socket.error, OSError, ValueError) as e:
-                self.close()
+                self._close_socket()
                 if not self._is_open:
                     return None
                 raise ConnectionError(f"Socket error while receiving frame: {e}") from e
@@ -331,8 +331,8 @@ class PTYWebSocketClient:
         self._reader_thread = threading.Thread(target=_worker, daemon=True)
         self._reader_thread.start()
 
-    def close(self) -> None:
-        """Closes the WebSocket connection."""
+    def _close_socket(self) -> None:
+        """Closes the underlying socket without stopping reconnect loops in subclasses."""
         with self._lock:
             if not self._is_open:
                 return
@@ -341,7 +341,6 @@ class PTYWebSocketClient:
             self.sock = None
             if sock:
                 try:
-                    # Try sending close frame
                     try:
                         fin = 0x80 | self.OPCODE_CLOSE
                         mask = 0x80
@@ -354,6 +353,234 @@ class PTYWebSocketClient:
                     sock.close()
                 except Exception:
                     pass
+
+    def close(self) -> None:
+        """Closes the WebSocket connection."""
+        self._close_socket()
+
+
+class EventsWebSocketClient(PTYWebSocketClient):
+    """
+    RFC 6455 WebSocket client for `/ws/events` server-to-client JSON event stream.
+    Supports automatic reconnection with exponential backoff and thread-safe
+    dispatch onto the GTK main loop via `GLib.idle_add`.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        auth_token: str,
+        workspace_id: Optional[str] = None,
+        timeout: float = 10.0,
+        reconnect: bool = True,
+        reconnect_delay: float = 0.2,
+        max_reconnect_delay: float = 5.0,
+        use_glib_idle: bool = True,
+        idle_add: Optional[Callable[..., Any]] = None,
+        signal_bus: Optional[Any] = None,
+    ) -> None:
+        super().__init__(host=host, port=port, terminal_id="", auth_token=auth_token, timeout=timeout)
+        self.workspace_id = workspace_id
+        self.reconnect = reconnect
+        self.reconnect_delay = reconnect_delay
+        self.max_reconnect_delay = max_reconnect_delay
+        self.use_glib_idle = use_glib_idle
+        self._idle_add = idle_add
+        self.signal_bus = signal_bus
+        self._stop_event = threading.Event()
+        self._on_event: Optional[Callable[[Dict[str, Any]], None]] = None
+        self._reconnect_count = 0
+
+    @property
+    def reconnect_count(self) -> int:
+        return self._reconnect_count
+
+    def connect(self) -> None:
+        """Performs TCP connection and RFC 6455 WebSocket upgrade handshake to /ws/events."""
+        with self._lock:
+            if self._is_open:
+                return
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self.timeout)
+            sock.connect((self.host, self.port))
+
+            raw_nonce = os.urandom(16)
+            sec_key = base64.b64encode(raw_nonce).decode("ascii")
+            ws_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+            expected_accept = base64.b64encode(
+                hashlib.sha1((sec_key + ws_guid).encode("utf-8")).digest()
+            ).decode("ascii")
+
+            path = "/ws/events"
+            if self.workspace_id:
+                path += f"?workspace={urllib.parse.quote(self.workspace_id)}"
+
+            headers = [
+                f"GET {path} HTTP/1.1",
+                f"Host: {self.host}:{self.port}",
+                "Upgrade: websocket",
+                "Connection: Upgrade",
+                f"Sec-WebSocket-Key: {sec_key}",
+                "Sec-WebSocket-Version: 13",
+                f"Origin: http://127.0.0.1:{self.port}",
+                f"Authorization: Bearer {self.auth_token}",
+                "",
+                "",
+            ]
+            sock.sendall("\r\n".join(headers).encode("utf-8"))
+
+            resp_data = bytearray()
+            while b"\r\n\r\n" not in resp_data:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    sock.close()
+                    raise ConnectionError("Server closed connection during /ws/events handshake")
+                resp_data.extend(chunk)
+
+            header_part, trailing = resp_data.split(b"\r\n\r\n", 1)
+            self._rx_buffer = bytearray(trailing)
+
+            header_text = header_part.decode("utf-8", errors="replace")
+            status_line = header_text.splitlines()[0] if header_text else ""
+            if " 101 " not in status_line:
+                sock.close()
+                if " 401 " in status_line or " 403 " in status_line:
+                    raise AuthenticationError(f"WebSocket upgrade rejected: {status_line}", 401)
+                raise ConnectionError(f"WebSocket handshake failed: {status_line}")
+
+            accept_header = None
+            for line in header_text.splitlines()[1:]:
+                if line.lower().startswith("sec-websocket-accept:"):
+                    accept_header = line.split(":", 1)[1].strip()
+                    break
+
+            if accept_header != expected_accept:
+                sock.close()
+                raise ConnectionError(
+                    f"Sec-WebSocket-Accept mismatch: expected {expected_accept}, got {accept_header}"
+                )
+
+            self.sock = sock
+            self._is_open = True
+
+    def _dispatch_event(self, event: Dict[str, Any]) -> None:
+        """Dispatches a decoded event dict via GLib.idle_add (or directly if disabled)."""
+        def _deliver() -> bool:
+            if self._on_event is not None:
+                self._on_event(event)
+            if self.signal_bus is not None:
+                self._forward_to_bus(event)
+            return False  # GLib.SOURCE_REMOVE == False
+
+        if self.use_glib_idle:
+            idle_fn = self._idle_add
+            if idle_fn is None:
+                try:
+                    from gi.repository import GLib
+                    idle_fn = GLib.idle_add
+                except Exception:
+                    idle_fn = None
+            if idle_fn is not None:
+                idle_fn(_deliver)
+                return
+        _deliver()
+
+    def _forward_to_bus(self, event: Dict[str, Any]) -> None:
+        bus = self.signal_bus
+        if bus is None:
+            return
+        etype = event.get("type")
+        if etype == "workspaceSaved":
+            bus.emit("workspace-saved", str(event.get("workspaceId", "")))
+        elif etype == "nodeAdded":
+            bus.emit("node-added", event)
+        elif etype == "nodeRemoved":
+            bus.emit("node-removed", str(event.get("nodeId", "")))
+        elif etype == "connectionCreated":
+            bus.emit("connection-created", event)
+        elif etype == "connectionChanged":
+            bus.emit(
+                "connection-changed",
+                str(event.get("connectionId", "")),
+                json.dumps(event.get("ropePoints", [])),
+            )
+        elif etype == "connectionRemoved":
+            bus.emit("connection-removed", str(event.get("connectionId", "")))
+
+    def start(
+        self,
+        on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_close: Optional[Callable[[], None]] = None,
+        on_error: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
+        """Starts the background reader loop with automatic reconnection."""
+        if on_event is not None:
+            self._on_event = on_event
+        self._on_close = on_close
+        self._on_error = on_error
+        self._stop_event.clear()
+
+        def _worker() -> None:
+            delay = self.reconnect_delay
+            connections_made = 0
+            try:
+                while not self._stop_event.is_set():
+                    try:
+                        if not self._is_open:
+                            self.connect()
+                            connections_made += 1
+                            if connections_made > 1:
+                                self._reconnect_count += 1
+                            delay = self.reconnect_delay
+
+                        while self._is_open and not self._stop_event.is_set():
+                            frame = self.receive_frame(timeout=0.2)
+                            if frame is None:
+                                if not self._is_open:
+                                    break
+                                continue
+                            opcode, payload = frame
+                            if opcode in (self.OPCODE_TEXT, self.OPCODE_BINARY):
+                                try:
+                                    evt = json.loads(payload.decode("utf-8"))
+                                except Exception:
+                                    continue
+                                if isinstance(evt, dict):
+                                    self._dispatch_event(evt)
+                            elif opcode == self.OPCODE_CLOSE:
+                                self._close_socket()
+                                break
+                    except AuthenticationError as auth_err:
+                        if self._on_error:
+                            self._on_error(auth_err)
+                        break
+                    except Exception as exc:
+                        self._close_socket()
+                        if self._on_error:
+                            self._on_error(exc)
+
+                    if self._stop_event.is_set() or not self.reconnect:
+                        break
+                    if self._stop_event.wait(delay):
+                        break
+                    delay = min(delay * 2.0, self.max_reconnect_delay)
+            finally:
+                self._close_socket()
+                if self._on_close:
+                    self._on_close()
+
+        self._reader_thread = threading.Thread(target=_worker, name="maestri-ws-events", daemon=True)
+        self._reader_thread.start()
+
+    def close(self) -> None:
+        """Stops reconnection and closes the underlying WebSocket."""
+        self._stop_event.set()
+        self._close_socket()
+
+
+EventStreamClient = EventsWebSocketClient
 
 
 # ============================================================================
@@ -778,6 +1005,25 @@ class MaestriClient:
         data = self._handle_response(resp).json()
         return Connection.from_dict(data, default_kind=kind)
 
+    def update_connection(
+        self,
+        connection_id: str,
+        rope_points: List[List[float]],
+        workspace_id: Optional[str] = None,
+    ) -> bool:
+        """Updates ropePoints on an existing connection (triggers connectionChanged on /ws/events)."""
+        url = f"{self.base_url}/api/connections/{connection_id}"
+        if workspace_id:
+            url += f"?workspace={urllib.parse.quote(workspace_id)}"
+        resp = self.session.put(
+            url,
+            json={"ropePoints": rope_points},
+            headers=self._headers({"Content-Type": "application/json"}),
+            timeout=self.timeout,
+        )
+        self._handle_response(resp)
+        return True
+
     def delete_connection(self, connection_id: str, workspace_id: Optional[str] = None) -> bool:
         """Removes a connection between canvas nodes."""
         url = f"{self.base_url}/api/connections/{connection_id}"
@@ -827,6 +1073,142 @@ class MaestriClient:
             timeout=self.timeout,
         )
         return self._handle_response(resp).json()
+
+    def patch_floor(
+        self,
+        floor_id: str,
+        name: Optional[str] = None,
+        hooks: Optional[Dict[str, Any]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Renames a floor or updates its lifecycle hooks."""
+        payload: Dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if hooks is not None:
+            payload["hooks"] = hooks
+        url = f"{self.base_url}/api/floors/{floor_id}"
+        if workspace_id:
+            url += f"?workspace={urllib.parse.quote(workspace_id)}"
+        resp = self.session.patch(
+            url,
+            json=payload,
+            headers=self._headers({"Content-Type": "application/json"}),
+            timeout=self.timeout,
+        )
+        return self._handle_response(resp).json()
+
+    def delete_floor(
+        self,
+        floor_id: str,
+        workspace_id: Optional[str] = None,
+        remove_worktree: bool = True,
+    ) -> bool:
+        """Removes a floor from the workspace (and optionally its git worktree)."""
+        params: List[str] = []
+        if workspace_id:
+            params.append(f"workspace={urllib.parse.quote(workspace_id)}")
+        if not remove_worktree:
+            params.append("removeWorktree=0")
+        query = ("?" + "&".join(params)) if params else ""
+        resp = self.session.delete(
+            f"{self.base_url}/api/floors/{floor_id}{query}",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        self._handle_response(resp)
+        return True
+
+    # ------------------------------------------------------------------------
+    # Routines (/api/routines)
+    # ------------------------------------------------------------------------
+
+    def get_routines(self) -> List[Dict[str, Any]]:
+        """Lists all configured routines."""
+        resp = self.session.get(
+            f"{self.base_url}/api/routines",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        return self._handle_response(resp).json()
+
+    def create_routine(
+        self,
+        name: str,
+        prompt: str,
+        interval_seconds: float,
+        target_terminal_id: str,
+    ) -> Dict[str, Any]:
+        """Creates a new scheduled routine."""
+        payload = {
+            "name": name,
+            "prompt": prompt,
+            "intervalSeconds": float(interval_seconds),
+            "targetTerminalId": target_terminal_id,
+        }
+        resp = self.session.post(
+            f"{self.base_url}/api/routines",
+            json=payload,
+            headers=self._headers({"Content-Type": "application/json"}),
+            timeout=self.timeout,
+        )
+        return self._handle_response(resp).json()
+
+    def update_routine(self, routine_id: str, **fields: Any) -> Dict[str, Any]:
+        """Updates a routine (isActive, name, prompt, prompts, intervalSeconds, targetTerminalId)."""
+        resp = self.session.patch(
+            f"{self.base_url}/api/routines/{routine_id}",
+            json=fields,
+            headers=self._headers({"Content-Type": "application/json"}),
+            timeout=self.timeout,
+        )
+        return self._handle_response(resp).json()
+
+    def delete_routine(self, routine_id: str) -> bool:
+        """Deletes a routine by ID."""
+        resp = self.session.delete(
+            f"{self.base_url}/api/routines/{routine_id}",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        self._handle_response(resp)
+        return True
+
+    # ------------------------------------------------------------------------
+    # Event Stream (/ws/events)
+    # ------------------------------------------------------------------------
+
+    def connect_events(
+        self,
+        on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+        workspace_id: Optional[str] = None,
+        reconnect: bool = True,
+        reconnect_delay: float = 0.2,
+        max_reconnect_delay: float = 5.0,
+        use_glib_idle: bool = True,
+        idle_add: Optional[Callable[..., Any]] = None,
+        signal_bus: Optional[Any] = None,
+        on_close: Optional[Callable[[], None]] = None,
+        on_error: Optional[Callable[[Exception], None]] = None,
+        auto_start: bool = True,
+    ) -> EventsWebSocketClient:
+        """Creates (and optionally starts) a /ws/events WebSocket client."""
+        ws = EventsWebSocketClient(
+            host=self.host,
+            port=self.port,
+            auth_token=self.auth_token,
+            workspace_id=workspace_id,
+            timeout=self.timeout,
+            reconnect=reconnect,
+            reconnect_delay=reconnect_delay,
+            max_reconnect_delay=max_reconnect_delay,
+            use_glib_idle=use_glib_idle,
+            idle_add=idle_add,
+            signal_bus=signal_bus,
+        )
+        if auto_start:
+            ws.start(on_event=on_event, on_close=on_close, on_error=on_error)
+        return ws
 
     # ------------------------------------------------------------------------
     # Files & Git Status (/api/files, /api/git/status)

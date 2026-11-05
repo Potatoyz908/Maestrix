@@ -105,8 +105,11 @@ final class EventsWebSocketSession: @unchecked Sendable {
 ///
 /// 事件帧格式（JSON 文本帧）:
 /// `{"type":"nodeAdded","ts":"2026-...Z","workspaceId":"UUID?", ...payload}`
-/// type ∈ nodeAdded | nodeRemoved | terminalCreated | terminalExited |
-///        terminalResized | terminalRemoved | connectionCreated | connectionRemoved
+/// type ∈ workspaceSaved | nodeAdded | nodeRemoved |
+///        terminalCreated | terminalExited | terminalResized | terminalRemoved |
+///        connectionCreated | connectionChanged | connectionRemoved |
+///        floorCreated | floorChanged | floorRemoved |
+///        routineChanged | routineStarted | routineStep | routineFinished | routineFailed
 /// 连接事件 payload: connectionId, kind(terminalToTerminal|terminalToNote|terminalToPortal|
 /// portalToPortal|noteToNote|crossFloor), a, b (与 workspace.json 中 A/B 顺序一致)
 final class EventBroadcaster: @unchecked Sendable {

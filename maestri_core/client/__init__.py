@@ -4,6 +4,8 @@ Maestri Core Client Package.
 
 from .api import (
     AuthenticationError,
+    EventStreamClient,
+    EventsWebSocketClient,
     MaestriAPIError,
     MaestriClient,
     NotFoundError,
@@ -12,6 +14,8 @@ from .api import (
 
 __all__ = [
     "AuthenticationError",
+    "EventStreamClient",
+    "EventsWebSocketClient",
     "MaestriAPIError",
     "MaestriClient",
     "NotFoundError",
