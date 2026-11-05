@@ -69,6 +69,7 @@ let coreTestSources: [String] = [
     "InterAgent/LinuxPtyAndServerTests.swift",
     "InterAgent/EventStreamTests.swift",
     "Workspace/CrossLanguageDecodingTests.swift",
+    "Routine/RoutineModelsTests.swift",
 ]
 
 #if os(Linux)

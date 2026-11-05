@@ -13,12 +13,32 @@ struct Routine: Codable, Identifiable {
     init(id: UUID = UUID(), name: String, prompt: String, intervalSeconds: TimeInterval, targetTerminalId: UUID) {
         self.id = id
         self.name = name
-        // 解析 && 分隔符
-        self.prompts = prompt.components(separatedBy: "&&").map { $0.trimmingCharacters(in: .whitespaces) }
+        self.prompts = Routine.parsePrompts(prompt)
         self.intervalSeconds = intervalSeconds
         self.targetTerminalId = targetTerminalId
         self.isActive = true
         self.createdAt = Date()
+    }
+
+    /// Splits a chained routine prompt. Per the reference, `&&` separates prompts only when it stands on its own line, so
+    /// inline uses such as `make && make test` stay inside a single prompt. Empty prompts are dropped.
+    static func parsePrompts(_ text: String) -> [String] {
+        var prompts: [String] = []
+        var current: [String] = []
+        func flush() {
+            let joined = current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !joined.isEmpty { prompts.append(joined) }
+            current.removeAll()
+        }
+        for line in text.components(separatedBy: "\n") {
+            if line.trimmingCharacters(in: .whitespacesAndNewlines) == "&&" {
+                flush()
+            } else {
+                current.append(line)
+            }
+        }
+        flush()
+        return prompts
     }
 }
 
