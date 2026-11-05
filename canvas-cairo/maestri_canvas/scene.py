@@ -27,6 +27,7 @@ class NodeItem:
     kind: str = "other"
     title: str = ""
     locked: bool = False
+    content: dict | None = None   # schema-v2 `_0` payload of a canvas-drawn kind (text/shape/freehand); None for widget kinds
 
     def __post_init__(self) -> None:
         self.id = norm(self.id)

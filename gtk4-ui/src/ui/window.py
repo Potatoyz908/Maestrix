@@ -34,6 +34,7 @@ from maestri_canvas.scene import WIDGET_KINDS, ConnItem, NodeItem, norm
 from maestri_canvas.terminal_themes import apply_terminal_style
 from maestri_canvas.viewport import Viewport
 from maestri_canvas.widget import CanvasWidget, is_terminal, load_vte, terminal_of, terminate_terminal
+from .drawing import DrawingTools
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
 
@@ -78,6 +79,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.canvas_widget.connect("portal-meta-changed", self._on_portal_meta_changed)
         self.canvas_widget.connect("file-activated", self._on_file_activated)
         self._setup_context_menu()
+        self.drawing = DrawingTools(self)   # text / shape / freehand tools + P-tool frames (ui/drawing.py)
+        self._header.pack_start(self.drawing.button)
 
         self.paned.set_start_child(self.sidebar)
         canvas_stack = Gtk.Overlay()
@@ -291,6 +294,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         btn_files.set_tooltip_text("Create File Explorer")
         btn_files.connect("clicked", lambda b: self._create_node("fileTree"))
         header.pack_start(btn_files)
+        self._header = header
 
         # Reset Zoom button (Right side)
         btn_zoom = Gtk.Button(label="🔍 100%")
@@ -487,7 +491,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
     def _add_node_to_canvas(self, node: CanvasNode, focus: bool = False) -> None:
         f = node.frame
-        item = NodeItem(node.id, Rect(f.x, f.y, f.width, f.height), node.z_index, node.node_type, node.title)
+        drawn = node.content if isinstance(node.content, dict) else None   # text/shape/freehand keep their raw `_0` payload
+        item = NodeItem(node.id, Rect(f.x, f.y, f.width, f.height), node.z_index, node.node_type, node.title, content=drawn)
         kwargs = {}
         if node.node_type == "stickyNote":
             kwargs["note"] = node.content.to_dict()
@@ -657,9 +662,10 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         cw.viewport.set_zoom_at(Point(w / 2.0, h / 2.0), 1.0)
         cw.controller.dirty = True
 
-    def _create_node(self, node_type: str, at: Point = None):
+    def _create_node(self, node_type: str, at: Point = None, size: tuple = None):
         """Add a node of a valid kind (terminal | stickyNote | portal | fileTree).
         `at` = canvas point for the node's top-left corner (context menu); default: centered in the viewport.
+        `size` = (w, h) of a frame drawn with a tool (default 420x300).
         Ignored until the initial workspace is loaded (the placeholder document would be replaced)."""
         if node_type not in WIDGET_KINDS:
             raise ValueError(f"invalid node type: {node_type!r}")
@@ -690,7 +696,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             content = FileTreeContent(name="Files", root_path=os.path.expanduser("~"))
 
         new_node = CanvasNode(
-            frame=NodeFrame(x=cx, y=cy, width=420, height=300),
+            frame=NodeFrame(x=cx, y=cy, width=size[0] if size else 420, height=size[1] if size else 300),
             node_type=node_type,
             content=content,
             z_index=max_z + 1,

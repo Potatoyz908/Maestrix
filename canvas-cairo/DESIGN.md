@@ -19,7 +19,7 @@ widget.py, terminal_node.py: the only files that import Gtk / Vte;  pty_transpor
 
 Widget kinds (`terminal`, `stickyNote`, `portal`, `fileTree`) are real GTK widgets so VTE/WebView/TextView work and stack by z
 (the terminal is implemented: see "Terminal node").
-Other kinds (`shape`, `stroke`, `freehand`, `text`) are drawn by Cairo (currently placeholder rectangles).
+Other kinds are drawn by Cairo: `text`, `shape`, `freehand` for real (`drawn.py`, see "Drawn nodes"); `stroke` is still a placeholder rectangle.
 
 ## Verified on this host (GTK 4.22.4, PyGObject 3.56.2, Python 3.14, Wayland)
 
@@ -125,7 +125,7 @@ Mapping to `maestri_core.signals.bus` (not wired: that package does not import y
   and `target_at` and placement are tested against real GTK, but `GestureDrag`/`GestureZoom` wiring is untested by input.
 - HiDPI (scale factor 2) and X11 are untested; only scale 1 on Wayland was run.
 - Node content: the terminal and the sticky note are done (the file tree is another agent's `file_tree_node.py`); the portal is not.
-- Canvas-drawn kinds (shape, stroke, freehand, text) are placeholders; no minimap, context menu, toolbar, or hold-Ctrl terminal numbering.
+- Canvas-drawn `stroke` (line/arrow) is still a placeholder; drawn nodes have no context toolbar (colour, stroke style, font) yet, so they keep the macOS defaults. No minimap or hold-Ctrl terminal numbering.
 - The `L` shortcut (start a connection from the selected terminal) is not implemented.
 - Mouse text selection and caret placement inside VTE/TextView while the zoom is not 1 are untested (no pointer injection). Rendering at zoom 1.6 was checked on a screenshot only.
 - VTE shows the replay as plain text: colours/attributes of the history are lost on reconnect (the core only keeps plain text), and the prompt line may need a keypress to redraw.
@@ -138,4 +138,15 @@ Mapping to `maestri_core.signals.bus` (not wired: that package does not import y
 - `currentURL` is persisted on load FINISHED only (never per redirect, never `about:`); `source` and unknown keys are preserved verbatim; `meta-changed` fires only on a real change; `bind()` does not echo.
 - isolated = own ephemeral NetworkSession; portal<->portal connected group = ONE shared session (WebView rebuilt + current page reloaded, since a session is construct-only); disconnect/delete gives a fresh isolated one.
 - Refused connection pairs: toast + red flash on both nodes + `connection-refused` signal. Optimistic `local-…` ropes: `replace_connection_id` on success, `remove_connection` + error on POST failure.
-- Ctrl+scroll: the canvas' capture-phase scroll controller is an ancestor of the WebView, so it runs first. Not verified with a real wheel event.
+- Ctrl+scroll: the canvas' capture-phase scroll controller is an ancestor of the WebView, so it runs first. Verified with REAL wheel events (xdotool XTEST under Xvfb, `tests/e2e/test_gtk4_canvas_input_xvfb.py`): Ctrl+wheel over the page zooms the canvas and WebKit's page zoom stays 1.0; a plain wheel leaves the canvas alone and scrolls the page.
+
+## Drawn nodes (Sprint 4: `drawn.py`, `drawn_editor.py`, `gtk4-ui/src/ui/drawing.py`)
+
+| Piece | How |
+|---|---|
+| Model | content = the schema-v2 `_0` dict, kept verbatim on `NodeItem.content` (unknown keys survive). Defaults = the Swift initialisers; `tests/test_drawn.py` parses `NodeContent.swift` and requires exactly its keys (Swift decodes them with synthesized Codable: one missing key fails the whole workspace on macOS). |
+| Tools | macOS names: `text`, `rect`, `ellipse`, `diamond`, `freehand_pen`, `freehand_highlighter` (header button "✏️ Desenho"). A drag draws a grid-snapped frame; a click makes a 45x35 label (text) or a 200x160 shape. Freehand samples every 2 screen px; frame = bbox + 8 padding, points normalised 0..1 (CanvasInteractionHandler). With a tool active, pressing on a drawn node draws over it; a widget node's header still drags. |
+| Paint | `CairoRenderer` -> `drawn.draw_node`: Swift palette (`colorFromString`, pastel "blue" etc.), shape fill 30% (hatched 10% + 8 px hatch at 60%), dashed `[8,4]`/dotted `[2,4]`, caption = stroke colour 35% darker; freehand = Catmull-Rom like `FreehandNodeSwiftUIView`; text via PangoCairo (toy-API fallback). Selected drawn nodes get the dashed outline here (they have no NodeFrame); an empty label shows a faint box. |
+| Input | no widget, so `CanvasWidget._drawn_target` hit-tests them in canvas space when GTK picking finds nothing: body = drag (header role), a selected node exposes 8 edges (6 px). Resize floor 16x16 (widget nodes keep 160x80). |
+| Text edit | double-click (or a new label) -> `Gtk.Popover` + `TextView` over the node; Enter commits, Shift+Enter newline, Esc cancels, click-away commits -> `drawn-content-changed`. The app merges the dict and grows a label to `measure_text`. |
+| Signals | `draw-requested` (tool, frame; widget tools such as P = portal now create the node at the drawn frame), `freehand-drawn` (tool, frame, points), `drawn-content-changed` (id, dict). API: `set_node_content`, `edit_drawn_text`. |

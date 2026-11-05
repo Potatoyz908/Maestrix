@@ -25,8 +25,10 @@ def _grid(v: float) -> float:
     return round_half_away(v / CANVAS_GRID_SPACING) * CANVAS_GRID_SPACING
 
 
-def resize_frame(start: Rect, edge: Edge, dx: float, dy: float, grid: bool = True) -> Rect:
-    """`dx`/`dy` are canvas units (screen delta / zoom). The active edge snaps to the 16-unit grid; the opposite edge stays fixed."""
+def resize_frame(start: Rect, edge: Edge, dx: float, dy: float, grid: bool = True,
+                 min_size: tuple[float, float] = (MIN_NODE_WIDTH, MIN_NODE_HEIGHT)) -> Rect:
+    """`dx`/`dy` are canvas units (screen delta / zoom). The active edge snaps to the 16-unit grid; the opposite edge stays fixed.
+    `min_size`: widget nodes keep 160x80; canvas-drawn kinds (a text label, a short stroke) pass a smaller one."""
     left = edge in (Edge.LEFT, Edge.TOP_LEFT, Edge.BOTTOM_LEFT)
     right = edge in (Edge.RIGHT, Edge.TOP_RIGHT, Edge.BOTTOM_RIGHT)
     top = edge in (Edge.TOP, Edge.TOP_LEFT, Edge.TOP_RIGHT)
@@ -34,8 +36,9 @@ def resize_frame(start: Rect, edge: Edge, dx: float, dy: float, grid: bool = Tru
     s = _grid if grid else (lambda v: v)
 
     l, r, t, b = start.min_x, start.max_x, start.min_y, start.max_y
-    if left:   l = min(s(start.x + dx), r - MIN_NODE_WIDTH)
-    if right:  r = max(s(r + dx), l + MIN_NODE_WIDTH)
-    if top:    t = min(s(start.y + dy), b - MIN_NODE_HEIGHT)
-    if bottom: b = max(s(b + dy), t + MIN_NODE_HEIGHT)
+    min_w, min_h = min_size
+    if left:   l = min(s(start.x + dx), r - min_w)
+    if right:  r = max(s(r + dx), l + min_w)
+    if top:    t = min(s(start.y + dy), b - min_h)
+    if bottom: b = max(s(b + dy), t + min_h)
     return Rect(l, t, r - l, b - t)

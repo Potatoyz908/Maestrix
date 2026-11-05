@@ -30,13 +30,15 @@ from .geometry import Point, Rect, round_half_away
 from .file_dnd import install_terminal_drop
 from .file_tree_node import FileTreeView
 from .connection_rules import plan_connection
+from .drawn import DRAWN_KINDS
+from .drawn_editor import DrawnTextEditor
 from .gi_env import webkit_available
 from .note_model import NoteMeta
 from .portal_model import PortalMeta
 from .note_storage import CoreNotesClient, CoreNoteStorage, LocalNoteStorage, MemoryNoteStorage
 from .sticky_note import StickyNoteView
 from .interaction import (WHEEL_NOTCH_PX, Background, CanvasController, ConnectRequested, DeleteRequested, DrawRequested,
-                          DuplicateRequested, Event, Mods, NodeContent, NodeEdge, NodeHeader, NodePin, NodeResized, NodesMoved,
+                          DuplicateRequested, Event, FreehandDrawn, Mods, NodeContent, NodeEdge, NodeHeader, NodePin, NodeResized, NodesMoved,
                           SelectionChanged, Target, ToolChanged, ViewportChanged)
 from .renderer import CairoRenderer
 from .resize import Edge
@@ -324,7 +326,9 @@ class CanvasWidget(Gtk.Overlay):
         "connect-requested": (GObject.SignalFlags.RUN_FIRST, None, (str, str, str, str)),               # a, side_a, b, side_b
         "delete-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "duplicate-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),                        # {id: Rect}
-        "draw-requested": (GObject.SignalFlags.RUN_FIRST, None, (str, float, float, float, float)),     # kind, frame
+        "draw-requested": (GObject.SignalFlags.RUN_FIRST, None, (str, float, float, float, float)),     # tool, frame
+        "freehand-drawn": (GObject.SignalFlags.RUN_FIRST, None, (str, float, float, float, float, object)),  # tool, frame, [[x,y]] 0..1
+        "drawn-content-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                   # text/shape id, new content dict
         "tool-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "viewport-changed": (GObject.SignalFlags.RUN_FIRST, None, (float, float, float)),
         "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
@@ -352,6 +356,7 @@ class CanvasWidget(Gtk.Overlay):
         self._last_applied: dict[str, tuple] = {}
         self._pinch_prev = 1.0
         self._stack: list[NodeFrame] = []
+        self._drawn_editor: DrawnTextEditor | None = None
         self._install_css()
         self.layer = CairoLayer(self)
         self.set_child(self.layer)
@@ -456,6 +461,8 @@ class CanvasWidget(Gtk.Overlay):
                 if callable(dispose):
                     dispose()
             self.fixed.remove(frame)
+        if self._drawn_editor is not None and self._drawn_editor.node_id == k:
+            self._drawn_editor.cancel()
         for c in self.scene.connections_of({k}):
             self.controller.ropes.remove(c.id)
         self.scene.remove_node(k)
@@ -543,6 +550,55 @@ class CanvasWidget(Gtk.Overlay):
     def set_tool(self, tool: str) -> None:
         self.controller.set_tool(tool)
 
+    # ---- canvas-drawn nodes (text / shape / freehand: painted by Cairo, no NodeFrame) ------------------
+    def set_node_content(self, node_id: str, content: dict) -> None:
+        """Replace the persisted content of a drawn node (after the app applied an edit) and repaint."""
+        node = self.scene.get(node_id)
+        if node is not None:
+            node.content = content
+            self.controller.dirty = True
+
+    def edit_drawn_text(self, node_id: str) -> bool:
+        """Open the inline editor on a text label or a shape caption. The result arrives as `drawn-content-changed`."""
+        node = self.scene.get(node_id)
+        if node is None or node.kind not in ("text", "shape") or node.locked:
+            return False
+        if self._drawn_editor is None:
+            self._drawn_editor = DrawnTextEditor(self)
+        vp, f = self.viewport, node.frame
+        tl = vp.to_screen(Point(f.x, f.y))
+        nid, base = node.id, dict(node.content or {})
+
+        def commit(text: str) -> None:
+            self.emit("drawn-content-changed", nid, {**base, "text": text})
+
+        self._drawn_editor.open(nid, str(base.get("text") or ""), (tl.x, tl.y, f.w * vp.zoom, f.h * vp.zoom), commit)
+        return True
+
+    def _drawn_target(self, x: float, y: float) -> Target | None:
+        """Drawn nodes are not widgets, so GTK picking cannot see them: hit-test them in canvas space (topmost first).
+        The body drags the node (a header role); a selected node also exposes its 8 resize edges."""
+        p = self.viewport.to_canvas(Point(x, y))
+        tol = 6.0 / self.viewport.zoom
+        for n in self.scene.descending():
+            if n.kind not in DRAWN_KINDS:
+                continue
+            f = n.frame
+            if not f.inset(-tol, -tol).contains(p):
+                continue
+            if n.id in self.scene.selection and not n.locked:
+                left, right = abs(p.x - f.min_x) <= tol, abs(p.x - f.max_x) <= tol
+                top, bottom = abs(p.y - f.min_y) <= tol, abs(p.y - f.max_y) <= tol
+                edge = {(True, False, True, False): Edge.TOP_LEFT, (False, True, True, False): Edge.TOP_RIGHT,
+                        (True, False, False, True): Edge.BOTTOM_LEFT, (False, True, False, True): Edge.BOTTOM_RIGHT,
+                        (True, False, False, False): Edge.LEFT, (False, True, False, False): Edge.RIGHT,
+                        (False, False, True, False): Edge.TOP, (False, False, False, True): Edge.BOTTOM}.get((left, right, top, bottom))
+                if edge is not None:
+                    return NodeEdge(n.id, edge)
+            if f.contains(p):
+                return NodeHeader(n.id)
+        return None
+
     # ---- engine -> GTK ---------------------------------------------------------------------------
     def _on_event(self, e: Event) -> None:
         if isinstance(e, NodesMoved):
@@ -566,6 +622,8 @@ class CanvasWidget(Gtk.Overlay):
             self.emit("duplicate-requested", e.frames)
         elif isinstance(e, DrawRequested):
             self.emit("draw-requested", e.kind, e.frame.x, e.frame.y, e.frame.w, e.frame.h)
+        elif isinstance(e, FreehandDrawn):
+            self.emit("freehand-drawn", e.tool, e.frame.x, e.frame.y, e.frame.w, e.frame.h, [list(p) for p in e.points])
         elif isinstance(e, ToolChanged):
             self.emit("tool-changed", e.tool)
         elif isinstance(e, ViewportChanged):
@@ -640,7 +698,7 @@ class CanvasWidget(Gtk.Overlay):
             if isinstance(w, NodeFrame):
                 return NodeContent(w.node_id)   # padding/border of a frame that is not tagged: leave it to GTK
             w = w.get_parent()
-        return Background()
+        return self._drawn_target(x, y) or Background()
 
     def _note_name_taken(self, node_id: str, name: str) -> bool:
         return any(isinstance(f.content, StickyNoteView) and f.node_id != node_id and f.content.meta.name.lower() == name.lower()
@@ -656,6 +714,8 @@ class CanvasWidget(Gtk.Overlay):
             self._last_header_press = None
             frame = self.frames.get(target.id)
             handler = getattr(frame.content, "on_header_double_click", None) if frame is not None else None
+            if frame is None:   # a drawn node: double-click edits its text (label or shape caption)
+                handler = lambda nid=target.id: self.edit_drawn_text(nid)
             if handler is not None:
                 GLib.idle_add(lambda: (handler(), False)[1])   # after this press finishes, so the drag gesture is not confused
         else:

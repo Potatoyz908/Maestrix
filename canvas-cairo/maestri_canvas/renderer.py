@@ -1,7 +1,7 @@
 """Pure pycairo renderer: draws onto ANY cairo.Context (an ImageSurface owned by the widget, or a test surface). No GTK imports.
 
-Layers, bottom to top: background + dot grid, ropes, canvas-drawn nodes (shape/stroke/freehand/text), then gesture overlays
-(snap guides, marquee, rope being dragged, draw-to-create rect, Alt-drag ghosts). Widget nodes (terminal/note/portal/fileTree)
+Layers, bottom to top: background + dot grid, ropes, canvas-drawn nodes (text/shape/freehand via drawn.py; stroke is still a
+placeholder), then gesture overlays (snap guides, marquee, rope being dragged, draw-to-create rect or freehand stroke, Alt-drag ghosts). Widget nodes (terminal/note/portal/fileTree)
 are real GTK widgets stacked above this layer, so they are NOT drawn here unless `placeholders=True` (headless tests/screenshots).
 """
 from __future__ import annotations
@@ -10,6 +10,7 @@ import math
 
 import cairo
 
+from .drawn import DRAWN_KINDS, draw_freehand_preview, draw_node
 from .geometry import Point, Rect
 from .interaction import Overlay
 from .rope import RopeSimulation, static_catenary
@@ -113,6 +114,12 @@ class CairoRenderer:
             if n.kind in WIDGET_KINDS and not self.placeholders:
                 continue
             f = n.frame
+            if n.kind in DRAWN_KINDS and draw_node(cr, n.kind, n.content, f):
+                if n.id in scene.selection:   # drawn nodes have no NodeFrame: the selection outline is painted here
+                    self._dashed_rect(cr, f.inset(-3, -3), vp)
+                elif n.kind == "text" and not (n.content or {}).get("text"):
+                    self._empty_text_hint(cr, f, vp)
+                continue
             fill = KIND_FILL.get(n.kind, (0.23, 0.23, 0.23))
             cr.rectangle(f.x, f.y, f.w, f.h)
             cr.set_source_rgb(*fill)
@@ -129,6 +136,16 @@ class CairoRenderer:
                 cr.show_text(n.title)
             if n.id in scene.selection and self.placeholders:
                 self._dashed_rect(cr, f.inset(-3, -3), vp)
+
+    @staticmethod
+    def _empty_text_hint(cr: cairo.Context, f: Rect, vp: Viewport) -> None:
+        """An empty text label would be invisible (and unfindable): draw a faint box until it gets text."""
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.6)
+        cr.set_line_width(1 / vp.zoom)
+        cr.set_dash([3 / vp.zoom, 3 / vp.zoom])
+        cr.rectangle(f.x, f.y, f.w, f.h)
+        cr.stroke()
+        cr.set_dash([])
 
     @staticmethod
     def _dashed_rect(cr: cairo.Context, r: Rect, vp: Viewport) -> None:
@@ -157,6 +174,8 @@ class CairoRenderer:
             cr.set_source_rgba(*ACCENT, 0.8); cr.set_line_width(1 / vp.zoom); cr.stroke()
         if o.draw_rect is not None:
             self._dashed_rect(cr, o.draw_rect, vp)
+        if o.draw_path:
+            draw_freehand_preview(cr, o.draw_path, o.draw_tool)
         if o.connecting is not None:
             a, b, target = o.connecting
             pts = static_catenary(a, b)

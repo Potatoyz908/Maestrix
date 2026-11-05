@@ -13,6 +13,7 @@ from enum import IntFlag
 from typing import Callable, Union
 
 from .constants import CANVAS_GRID_SPACING, DRAG_THRESHOLD_PX, MIN_NODE_HEIGHT, MIN_NODE_WIDTH
+from .drawn import DRAWN_KINDS, FREEHAND_PADDING, FREEHAND_TOOLS, SHAPE_TOOLS, TEXT_DEFAULT_SIZE, kind_for_tool, normalize_freehand
 from .geometry import Point, Rect, round_half_away
 from .resize import Edge, resize_frame
 from .rope import RopeSimulation
@@ -23,6 +24,9 @@ from .viewport import Viewport
 WHEEL_NOTCH_PX = 40.0         # the widget converts one discrete wheel notch to this many px
 SCROLL_ZOOM_PER_PX = 0.0025   # zoom = exp(-px * 0.0025): one notch (40px) ~ 10%
 NUDGE_SHIFT_MULT = 10
+DRAWN_MIN_SIZE = (16.0, 16.0)  # resize floor for text/shape/freehand (widget nodes keep 160x80)
+FREEHAND_STEP_PX = 2.0         # a freehand stroke samples the pointer every 2 screen px
+SHAPE_CLICK_SIZE = (200.0, 160.0)  # defaultNodeSize("ellipse"/"diamond"): a click without a drag still makes a shape
 
 
 class Mods(IntFlag):
@@ -62,10 +66,13 @@ class DeleteRequested: ids: tuple[str, ...]
 @dataclass(frozen=True, slots=True)
 class DuplicateRequested: frames: dict[str, Rect]   # source id -> frame for the copy
 @dataclass(frozen=True, slots=True)
-class DrawRequested: kind: str; frame: Rect
+class DrawRequested: kind: str; frame: Rect   # kind = the tool: a widget kind, text, rect, ellipse, diamond
+@dataclass(frozen=True, slots=True)
+class FreehandDrawn: tool: str; frame: Rect; points: tuple[tuple[float, float], ...]   # points normalised 0..1 in frame
 @dataclass(frozen=True, slots=True)
 class ToolChanged: tool: str
-Event = Union[NodesMoved, NodeResized, SelectionChanged, ViewportChanged, ConnectRequested, DeleteRequested, DuplicateRequested, DrawRequested, ToolChanged]
+Event = Union[NodesMoved, NodeResized, SelectionChanged, ViewportChanged, ConnectRequested, DeleteRequested, DuplicateRequested, DrawRequested,
+              FreehandDrawn, ToolChanged]
 
 
 # ---- gesture states (CanvasInteraction) -----------------------------------------------------------
@@ -75,13 +82,16 @@ class _Panning: last: Point
 class _Dragging:
     start: Point; primary: str; starts: dict[str, Rect]; duplicate: bool; active: bool = False
 @dataclass(slots=True)
-class _Resizing: id: str; edge: Edge; start_frame: Rect; start: Point
+class _Resizing: id: str; edge: Edge; start_frame: Rect; start: Point; min_size: tuple[float, float] | None = None
 @dataclass(slots=True)
 class _Marquee: start: Point; base: frozenset[str]; moved: bool = False
 @dataclass(slots=True)
 class _Connecting: src: str; side: PinSide
 @dataclass(slots=True)
-class _Drawing: kind: str; start: Point
+class _Drawing:
+    kind: str
+    start: Point
+    points: list[Point] = field(default_factory=list)   # freehand: the stroke, in canvas units
 _State = Union[None, _Panning, _Dragging, _Resizing, _Marquee, _Connecting, _Drawing]
 
 
@@ -93,9 +103,11 @@ class Overlay:
     connecting: tuple[Point, Point, tuple[str, PinSide] | None] | None = None  # (from, to, hovered target pin)
     draw_rect: Rect | None = None
     ghosts: list[Rect] = field(default_factory=list)  # Alt-drag duplicate preview
+    draw_path: list[Point] | None = None              # freehand stroke in progress (canvas units)
+    draw_tool: str = ""
 
     def is_empty(self) -> bool:
-        return not (self.guides or self.marquee or self.connecting or self.draw_rect or self.ghosts)
+        return not (self.guides or self.marquee or self.connecting or self.draw_rect or self.ghosts or self.draw_path)
 
 
 class CanvasController:
@@ -155,6 +167,10 @@ class CanvasController:
         if button != 1:
             return False
 
+        if self.tool != "select" and self._starts_drawing(target):
+            self._state = _Drawing(self.tool, canvas, [canvas])
+            self.cursor = "crosshair"
+            return True
         if isinstance(target, NodeHeader):
             self._select_on_press(target.id, mods)
             node = self.scene.get(target.id)
@@ -167,7 +183,7 @@ class CanvasController:
             self._select_on_press(target.id, mods)
             node = self.scene.get(target.id)
             if node is not None and not node.locked:
-                self._state = _Resizing(node.id, target.edge, node.frame, pt)
+                self._state = _Resizing(node.id, target.edge, node.frame, pt, DRAWN_MIN_SIZE if node.kind in DRAWN_KINDS else None)
                 self.cursor = target.edge.cursor
             return True
         if isinstance(target, NodePin):
@@ -179,12 +195,18 @@ class CanvasController:
             return True
 
         # Background
-        if self.tool != "select":
-            self._state = _Drawing(self.tool, canvas)
-            self.cursor = "crosshair"
-        else:
-            self._state = _Marquee(canvas, frozenset(self.scene.selection) if mods & Mods.SHIFT else frozenset())
+        self._state = _Marquee(canvas, frozenset(self.scene.selection) if mods & Mods.SHIFT else frozenset())
         return True
+
+    def _starts_drawing(self, target: Target) -> bool:
+        """With a tool active, a press on empty space draws; so does a press on a canvas-drawn node (sketching over a shape),
+        but never on a widget node's chrome or content."""
+        if isinstance(target, Background):
+            return True
+        if isinstance(target, NodeHeader) and kind_for_tool(self.tool) is not None:
+            node = self.scene.get(target.id)
+            return node is not None and node.kind in DRAWN_KINDS
+        return False
 
     def _select_on_press(self, node_id: str, mods: Mods) -> None:
         k = norm(node_id)
@@ -212,7 +234,7 @@ class CanvasController:
             self._drag(st, pt, mods)
         elif isinstance(st, _Resizing):
             dx, dy = (pt.x - st.start.x) / self.vp.zoom, (pt.y - st.start.y) / self.vp.zoom
-            frame = resize_frame(st.start_frame, st.edge, dx, dy)
+            frame = resize_frame(st.start_frame, st.edge, dx, dy, min_size=st.min_size) if st.min_size else resize_frame(st.start_frame, st.edge, dx, dy)
             self.scene.set_frame(st.id, frame)
             self._reanchor({st.id})
             self._emit(NodeResized(st.id, frame, False))
@@ -232,7 +254,13 @@ class CanvasController:
                 self.overlay.connecting = (pin_point(src.frame, st.side), canvas, target)
                 self.dirty = True
         elif isinstance(st, _Drawing):
-            self.overlay.draw_rect = Rect.from_points(st.start, canvas)
+            if st.kind in FREEHAND_TOOLS:
+                last = st.points[-1]
+                if math.hypot(canvas.x - last.x, canvas.y - last.y) * self.vp.zoom >= FREEHAND_STEP_PX:
+                    st.points.append(canvas)
+                    self.overlay.draw_path, self.overlay.draw_tool = st.points, st.kind
+            else:
+                self.overlay.draw_rect = Rect.from_points(st.start, canvas)
             self.dirty = True
 
     def _drag(self, st: _Dragging, pt: Point, mods: Mods) -> None:
@@ -272,15 +300,42 @@ class CanvasController:
             if hit and self.scene.can_connect(st.src, hit[0].id):
                 self._emit(ConnectRequested(st.src, st.side, hit[0].id, hit[1]))
         elif isinstance(st, _Drawing):
-            r = Rect.from_points(st.start, canvas)
-            if r.w >= MIN_NODE_WIDTH / 2 and r.h >= MIN_NODE_HEIGHT / 2:
-                g = CANVAS_GRID_SPACING
-                x0, y0 = round_half_away(r.x / g) * g, round_half_away(r.y / g) * g
-                frame = Rect(x0, y0, max(MIN_NODE_WIDTH, round_half_away(r.w / g) * g), max(MIN_NODE_HEIGHT, round_half_away(r.h / g) * g))
-                self._emit(DrawRequested(st.kind, frame))
+            self._finish_drawing(st, canvas)
             self.set_tool("select")
         self._clear_overlay()
         self.cursor = None
+
+    def _finish_drawing(self, st: _Drawing, end: Point) -> None:
+        if st.kind in FREEHAND_TOOLS:
+            if st.points[-1] != end:
+                st.points.append(end)
+            res = normalize_freehand(st.points)
+            # a click (or a jitter below the drag threshold) draws nothing
+            if res is not None and (max(res[0].w, res[0].h) - 2 * FREEHAND_PADDING) * self.vp.zoom >= DRAG_THRESHOLD_PX:
+                frame, pts = res
+                self._emit(FreehandDrawn(st.kind, frame, tuple((p[0], p[1]) for p in pts)))
+            return
+        r = Rect.from_points(st.start, end)
+        g = CANVAS_GRID_SPACING
+        snapped = lambda v: round_half_away(v / g) * g
+        clicked = r.w * self.vp.zoom < DRAG_THRESHOLD_PX and r.h * self.vp.zoom < DRAG_THRESHOLD_PX
+        if st.kind == "text":   # a click places a small label that grows with its text; a drag sets the box
+            if clicked:
+                frame = Rect(snapped(st.start.x), snapped(st.start.y), *TEXT_DEFAULT_SIZE)
+            else:
+                frame = Rect(snapped(r.x), snapped(r.y), max(TEXT_DEFAULT_SIZE[0], snapped(r.w)), max(TEXT_DEFAULT_SIZE[1], snapped(r.h)))
+            self._emit(DrawRequested(st.kind, frame))
+        elif st.kind in SHAPE_TOOLS:
+            if clicked:
+                w, h = SHAPE_CLICK_SIZE
+                frame = Rect(snapped(st.start.x - w / 2), snapped(st.start.y - h / 2), w, h)
+            else:
+                frame = Rect(snapped(r.x), snapped(r.y), max(g, snapped(r.w)), max(g, snapped(r.h)))
+            self._emit(DrawRequested(st.kind, frame))
+        elif r.w >= MIN_NODE_WIDTH / 2 and r.h >= MIN_NODE_HEIGHT / 2:   # widget kinds
+            x0, y0 = snapped(r.x), snapped(r.y)
+            frame = Rect(x0, y0, max(MIN_NODE_WIDTH, snapped(r.w)), max(MIN_NODE_HEIGHT, snapped(r.h)))
+            self._emit(DrawRequested(st.kind, frame))
 
     def cancel(self) -> bool:
         """Esc: abort the gesture in progress (restoring frames), else drop the tool, else deselect."""
