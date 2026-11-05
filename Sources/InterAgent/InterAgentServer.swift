@@ -25,6 +25,7 @@ private let sockStreamType: Int32 = Int32(SOCK_STREAM.rawValue)
 ///   - POST /api/terminals -> 创建新终端会话
 ///   - DELETE /api/terminals/:id -> 删除终端会话
 ///   - GET /api/terminals[/:id] -> PTY 元数据 (pid/cols/rows/running/exitCode/...)
+///   - 连接事件: connectionCreated / connectionRemoved (POST/DELETE /api/connections, DELETE /api/nodes)
 ///   - DELETE /api/nodes/:id -> 删除节点及其连接并广播 nodeRemoved
 ///   - WS /ws/events[?workspace=UUID] -> 节点/终端生命周期事件 (JSON 文本帧)
 ///   - WS /ws/pty/:id -> RFC 6455 WebSocket 双向流式 PTY 与尺寸控制
@@ -1154,6 +1155,17 @@ public final class InterAgentServer {
             doc.payload.lastModifiedAt = Date()
             do {
                 try pm.saveSync(doc, to: fileURL)
+                EventBroadcaster.shared.publish(
+                    type: "connectionCreated",
+                    workspaceId: wsId,
+                    payload: [
+                        "connectionId": connId.uuidString,
+                        "kind": resolvedKind,
+                        "a": idA.uuidString,
+                        "b": idB.uuidString,
+                        "ropePoints": ropePoints,
+                    ]
+                )
                 let resp = "{\"id\":\"\(connId.uuidString)\",\"status\":\"ok\"}"
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp, allowedOrigin: allowedOrigin)
             } catch {
@@ -1191,6 +1203,19 @@ public final class InterAgentServer {
             if let wsId = targetWorkspaceId {
                 let fileURL = pm.workspaceURL(id: wsId)
                 if var doc = try? pm.loadWorkspace(id: wsId) {
+                    // 删除前记录连接种类与端点，用于广播 connectionRemoved
+                    var removedInfo: [String: Any]? = nil
+                    if let c = doc.payload.connections.first(where: { $0.id == connId }) {
+                        removedInfo = ["kind": "terminalToTerminal", "a": c.terminalIdA.uuidString, "b": c.terminalIdB.uuidString]
+                    } else if let c = doc.payload.noteConnections.first(where: { $0.id == connId }) {
+                        removedInfo = ["kind": "terminalToNote", "a": c.terminalId.uuidString, "b": c.noteNodeId.uuidString]
+                    } else if let c = doc.payload.portalConnections.first(where: { $0.id == connId }) {
+                        removedInfo = ["kind": "terminalToPortal", "a": c.terminalId.uuidString, "b": c.portalNodeId.uuidString]
+                    } else if let c = doc.payload.portalToPortalConnections.first(where: { $0.id == connId }) {
+                        removedInfo = ["kind": "portalToPortal", "a": c.portalIdA.uuidString, "b": c.portalIdB.uuidString]
+                    } else if let c = doc.payload.noteToNoteConnections.first(where: { $0.id == connId }) {
+                        removedInfo = ["kind": "noteToNote", "a": c.noteNodeIdA.uuidString, "b": c.noteNodeIdB.uuidString]
+                    }
                     doc.payload.connections.removeAll { $0.id == connId }
                     doc.payload.noteConnections.removeAll { $0.id == connId }
                     doc.payload.portalConnections.removeAll { $0.id == connId }
@@ -1198,6 +1223,10 @@ public final class InterAgentServer {
                     doc.payload.noteToNoteConnections.removeAll { $0.id == connId }
                     doc.payload.lastModifiedAt = Date()
                     try? pm.saveSync(doc, to: fileURL)
+                    if var info = removedInfo {
+                        info["connectionId"] = connId.uuidString
+                        EventBroadcaster.shared.publish(type: "connectionRemoved", workspaceId: wsId, payload: info)
+                    }
                 }
             }
 
@@ -1742,6 +1771,16 @@ public final class InterAgentServer {
             let removed = doc.payload.nodes.remove(at: idx)
             var ids: Set<UUID> = [nodeId]
             if case .terminal(let t) = removed.content { ids.insert(t.id) }
+            var prunedEvents: [[String: Any]] = []
+            func pruned(_ cid: UUID, _ kind: String, _ a: UUID, _ b: UUID) {
+                prunedEvents.append(["connectionId": cid.uuidString, "kind": kind, "a": a.uuidString, "b": b.uuidString])
+            }
+            doc.payload.connections.forEach { if ids.contains($0.terminalIdA) || ids.contains($0.terminalIdB) { pruned($0.id, "terminalToTerminal", $0.terminalIdA, $0.terminalIdB) } }
+            doc.payload.noteConnections.forEach { if ids.contains($0.terminalId) || ids.contains($0.noteNodeId) { pruned($0.id, "terminalToNote", $0.terminalId, $0.noteNodeId) } }
+            doc.payload.portalConnections.forEach { if ids.contains($0.terminalId) || ids.contains($0.portalNodeId) { pruned($0.id, "terminalToPortal", $0.terminalId, $0.portalNodeId) } }
+            doc.payload.portalToPortalConnections.forEach { if ids.contains($0.portalIdA) || ids.contains($0.portalIdB) { pruned($0.id, "portalToPortal", $0.portalIdA, $0.portalIdB) } }
+            doc.payload.noteToNoteConnections.forEach { if ids.contains($0.noteNodeIdA) || ids.contains($0.noteNodeIdB) { pruned($0.id, "noteToNote", $0.noteNodeIdA, $0.noteNodeIdB) } }
+            doc.payload.crossFloorConnections.forEach { if ids.contains($0.nodeIdA) || ids.contains($0.nodeIdB) { pruned($0.id, "crossFloor", $0.nodeIdA, $0.nodeIdB) } }
             doc.payload.connections.removeAll { ids.contains($0.terminalIdA) || ids.contains($0.terminalIdB) }
             doc.payload.noteConnections.removeAll { ids.contains($0.terminalId) || ids.contains($0.noteNodeId) }
             doc.payload.portalConnections.removeAll { ids.contains($0.terminalId) || ids.contains($0.portalNodeId) }
@@ -1753,6 +1792,9 @@ public final class InterAgentServer {
                 try pm.saveSync(doc, to: pm.workspaceURL(id: wsId))
             } catch {
                 return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace", allowedOrigin: allowedOrigin)
+            }
+            for ev in prunedEvents {
+                EventBroadcaster.shared.publish(type: "connectionRemoved", workspaceId: wsId, payload: ev)
             }
             EventBroadcaster.shared.publish(type: "nodeRemoved", workspaceId: wsId, payload: ["nodeId": nodeId.uuidString])
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)

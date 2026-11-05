@@ -86,6 +86,42 @@ final class EventStreamTests: XCTestCase {
         XCTAssertEqual(result, ["ok"])
     }
 
+    func testConnectionCreatedAndRemovedEvents() async throws {
+        let (port, token): (UInt16, String) = try await MainActor.run {
+            try InterAgentServer.shared.start()
+            return (InterAgentServer.shared.port, InterAgentServer.shared.authToken)
+        }
+        defer { Task { @MainActor in InterAgentServer.shared.stop() } }
+
+        let a = UUID(), b = UUID(), connId = UUID()
+        try await Task.detached {
+            let auth = "Authorization: Bearer \(token)\r\n"
+            // 确保存在活动 workspace
+            _ = try Self.exchange(port: port, request: "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            let ws = try Self.openEventSocket(port: port, token: token)
+            defer { close(ws) }
+
+            let body = "{\"id\":\"\(connId.uuidString)\",\"a\":\"\(a.uuidString)\",\"b\":\"\(b.uuidString)\",\"kind\":\"terminalToTerminal\"}"
+            let post = try Self.exchange(port: port, request:
+                "POST /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)")
+            XCTAssertTrue(post.contains("200 OK"), post)
+            let created = try Self.readEvent(ws, type: "connectionCreated")
+            XCTAssertEqual(created["connectionId"] as? String, connId.uuidString)
+            XCTAssertEqual(created["kind"] as? String, "terminalToTerminal")
+            XCTAssertEqual(created["a"] as? String, a.uuidString)
+            XCTAssertEqual(created["b"] as? String, b.uuidString)
+            XCTAssertEqual((created["ropePoints"] as? [[Double]])?.count, 21)
+
+            let del = try Self.exchange(port: port, request:
+                "DELETE /api/connections/\(connId.uuidString) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(del.contains("200 OK"))
+            let removed = try Self.readEvent(ws, type: "connectionRemoved")
+            XCTAssertEqual(removed["connectionId"] as? String, connId.uuidString)
+            XCTAssertEqual(removed["a"] as? String, a.uuidString)
+            XCTAssertEqual(removed["kind"] as? String, "terminalToTerminal")
+        }.value
+    }
+
     // MARK: - Helpers (blocking, call off the main actor)
 
     private static func connect(port: UInt16) throws -> Int32 {

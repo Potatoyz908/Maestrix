@@ -106,7 +106,9 @@ final class EventsWebSocketSession: @unchecked Sendable {
 /// 事件帧格式（JSON 文本帧）:
 /// `{"type":"nodeAdded","ts":"2026-...Z","workspaceId":"UUID?", ...payload}`
 /// type ∈ nodeAdded | nodeRemoved | terminalCreated | terminalExited |
-///        terminalResized | terminalRemoved
+///        terminalResized | terminalRemoved | connectionCreated | connectionRemoved
+/// 连接事件 payload: connectionId, kind(terminalToTerminal|terminalToNote|terminalToPortal|
+/// portalToPortal|noteToNote|crossFloor), a, b (与 workspace.json 中 A/B 顺序一致)
 final class EventBroadcaster: @unchecked Sendable {
     static let shared = EventBroadcaster()
 
