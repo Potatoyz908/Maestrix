@@ -95,7 +95,7 @@ final class NoteHandler {
         // 通过 terminalId 查找所属工作区，写入正确的 workspaces/{id}/notes/ 目录
         let workspaceId: UUID?
         if let tid = terminalId {
-            workspaceId = await MainActor.run { TerminalManager.shared.terminalWorkspaceMap[tid] }
+            workspaceId = await MainActor.run { PlatformHooks.terminals.terminalWorkspaceMap[tid] }
         } else {
             workspaceId = nil
         }

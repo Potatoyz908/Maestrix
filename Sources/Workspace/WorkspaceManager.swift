@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(Observation) && !os(Linux)
 import Observation
+#endif
 #if canImport(OSLog)
 import OSLog
 #endif
@@ -7,7 +9,9 @@ import OSLog
 /// 单个工作区的状态管理（Story 1.4 + 1.5）
 /// - 节点/连接的运行时状态
 /// - workspace.json 读写（通过 PersistenceManager 原子写入）
+#if canImport(Observation) && !os(Linux)
 @Observable
+#endif
 final class WorkspaceManager: Identifiable {
     let id: UUID
     var name: String

@@ -40,7 +40,7 @@ final class MaestroHandlers {
             default: i += 1
             }
         }
-        let tm = TerminalManager.shared
+        let tm = PlatformHooks.terminals
         let cm = ConnectionManager.shared
         let prefs = PersistenceManager.shared.loadPreferencesSync()
 
@@ -92,7 +92,7 @@ final class MaestroHandlers {
         tm.writeLine(to: recruitId, text: "export OMAESTRI_AGENT_NAME=\"\(recruitName)\"")
         // 同步到 TerminalSession 供 ListHandler 使用
         tm.terminals[recruitId]?.agentName = recruitName
-        let conn = cm.connectTerminals(idA: maestroId, idB: recruitId, serverPort: InterAgentServer.shared.port)
+        let conn = cm.connectTerminals(idA: maestroId, idB: recruitId, serverPort: PlatformHooks.serverPort())
 
         // 在画布上创建节点并自动布局在 Maestro 下方
         // 通过 NotificationCenter 通知主线程（AppState）更新工作区节点
@@ -132,7 +132,7 @@ final class MaestroHandlers {
         guard args.count >= 2 else { return "error: usage: omaestri dismiss \"Name\"" }
         let targetName = args[1]
         guard let maestroId = fromTerminalId else { return "error: missing terminal ID" }
-        let tm = TerminalManager.shared
+        let tm = PlatformHooks.terminals
         let cm = ConnectionManager.shared
         let connectedIds = cm.connectedNodeIds(for: maestroId)
         let lower = targetName.lowercased()
@@ -154,7 +154,7 @@ final class MaestroHandlers {
     private func handleConnectAsync(args: [String], fromTerminalId: UUID?) async -> String {
         guard args.count >= 3 else { return "error: usage: omaestri connect \"From\" \"To\"" }
         let (fromName, toName) = (args[1], args[2])
-        let tm = TerminalManager.shared
+        let tm = PlatformHooks.terminals
         let cm = ConnectionManager.shared
         guard let fromS = tm.terminals.values.first(where: {
             $0.command.lowercased().contains(fromName.lowercased()) ||
@@ -164,7 +164,7 @@ final class MaestroHandlers {
             $0.command.lowercased().contains(toName.lowercased()) ||
             ($0.roleName ?? "").lowercased().contains(toName.lowercased())
         }) else { return "error: '\(toName)' not found" }
-        _ = cm.connectTerminals(idA: fromS.id, idB: toS.id, serverPort: InterAgentServer.shared.port)
+        _ = cm.connectTerminals(idA: fromS.id, idB: toS.id, serverPort: PlatformHooks.serverPort())
         return "Connected '\(fromName)' ↔ '\(toName)'"
     }
 
@@ -229,7 +229,7 @@ final class MaestroHandlers {
                 return "error: usage: omaestri role assign \"AgentName\" \"RoleName\" (use --none to clear)"
             }
             let (agentName, roleName) = (args[2], args[3])
-            let tm = TerminalManager.shared
+            let tm = PlatformHooks.terminals
             guard let session = tm.terminals.values.first(where: {
                 $0.command.lowercased().contains(agentName.lowercased())
             }) else { return "error: agent '\(agentName)' not found" }

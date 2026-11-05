@@ -1,6 +1,12 @@
 import XCTest
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+#if canImport(open_maestri)
 @testable import open_maestri
+#else
+@testable import OpenMaestriCore
+#endif
 
 // Story 1.2 AC: frame [[x,y],[w,h]] 格式兼容性测试（NFR14: 与 Maestri v0.25.4 兼容）
 final class CGRectFrameTests: XCTestCase {

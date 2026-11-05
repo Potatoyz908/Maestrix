@@ -73,7 +73,7 @@ final class PortalHandler {
         let url = args[2]
         let name = args.count >= 4 ? args[3] : "Portal-\(UUID().uuidString.prefix(6))"
         let portalId = UUID()
-        await PortalWebViewStore.shared.createWebView(for: portalId, initialURL: url)
+        await PlatformHooks.portals.ensureWebView(for: portalId, initialURL: url)
 
         var pc = PortalContent(name: name, url: url)
         pc.id = portalId
@@ -96,7 +96,7 @@ final class PortalHandler {
         var i = 3
         while i < args.count {
             if args[i] == "--url" && i + 1 < args.count {
-                try await PortalWebViewStore.shared.navigate(portalId: portalId, to: args[i+1])
+                try await PlatformHooks.portals.navigate(portalId: portalId, to: args[i+1])
                 i += 2
             } else { i += 1 }
         }
@@ -110,7 +110,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        try await PortalWebViewStore.shared.navigate(portalId: portalId, to: args[3])
+        try await PlatformHooks.portals.navigate(portalId: portalId, to: args[3])
         return "Navigating to \(args[3])"
     }
 
@@ -121,7 +121,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        try await PortalWebViewStore.shared.goBack(portalId: portalId)
+        try await PlatformHooks.portals.goBack(portalId: portalId)
         return "went back"
     }
 
@@ -132,7 +132,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        try await PortalWebViewStore.shared.goForward(portalId: portalId)
+        try await PlatformHooks.portals.goForward(portalId: portalId)
         return "went forward"
     }
 
@@ -143,7 +143,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        try await PortalWebViewStore.shared.reload(portalId: portalId)
+        try await PlatformHooks.portals.reload(portalId: portalId)
         return "reloaded"
     }
 
@@ -154,7 +154,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        let b64 = try await PortalWebViewStore.shared.screenshot(portalId: portalId)
+        let b64 = try await PlatformHooks.portals.screenshot(portalId: portalId)
         return b64.isEmpty ? "error: screenshot failed" : b64
     }
 
@@ -165,10 +165,10 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        guard let wv = await PortalWebViewStore.shared.webView(for: portalId) else {
+        guard let tree = await PlatformHooks.portals.accessibilityTree(for: portalId) else {
             return "error: WebView not ready"
         }
-        return await PortalSnapshotService.shared.buildAccessibilityTree(for: wv)
+        return tree
     }
 
     // MARK: - html
@@ -178,7 +178,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        return try await PortalWebViewStore.shared.evaluate(
+        return try await PlatformHooks.portals.evaluate(
             portalId: portalId,
             javascript: "document.documentElement.outerHTML"
         )
@@ -196,12 +196,12 @@ final class PortalHandler {
             let idx = ref.replacingOccurrences(of: "@e", with: "")
             guard let index = Int(idx) else { return "error: invalid element reference '\(ref)'" }
             let js = "(function(){const el=document.querySelectorAll('a,button,input,select,textarea,[role]')[\(index-1)];return el?el.innerText||el.value||el.textContent:'error: not found';})()"
-            return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+            return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
         } else {
             // CSS selector
             let escaped = ref.replacingOccurrences(of: "\"", with: "\\\"")
             let js = "(function(){const el=document.querySelector(\"\(escaped)\");return el?el.innerText||el.value||el.textContent:'error: not found';})()"
-            return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+            return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
         }
     }
 
@@ -212,9 +212,9 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        let url   = try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: "window.location.href")
-        let title = try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: "document.title")
-        let vw    = try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: "window.innerWidth + 'x' + window.innerHeight")
+        let url   = try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: "window.location.href")
+        let title = try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: "document.title")
+        let vw    = try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: "window.innerWidth + 'x' + window.innerHeight")
         return "URL: \(url)\nTitle: \(title)\nViewport: \(vw)"
     }
 
@@ -227,7 +227,7 @@ final class PortalHandler {
         }
         let ref = args[3]
         let js = buildClickJS(ref: ref)
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     private func buildClickJS(ref: String) -> String {
@@ -260,7 +260,7 @@ final class PortalHandler {
             selector = "document.querySelector(\"\(escaped)\")"
         }
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.value='';el.value=\"\(value)\";el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return'filled';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - type
@@ -281,7 +281,7 @@ final class PortalHandler {
           return 'typed';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - key
@@ -301,7 +301,7 @@ final class PortalHandler {
           return 'key pressed';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - hover
@@ -314,7 +314,7 @@ final class PortalHandler {
         let ref = args[3]
         let selector = buildSelector(ref: ref)
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));return'hovered';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - scroll
@@ -335,7 +335,7 @@ final class PortalHandler {
         default:      (dx, dy) = (0, amount)
         }
         let js = "window.scrollBy(\(dx), \(dy)); 'scrolled'"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - drag
@@ -361,7 +361,7 @@ final class PortalHandler {
           return 'dragged';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - wait
@@ -386,7 +386,7 @@ final class PortalHandler {
           check();
         })
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - evaluate
@@ -396,7 +396,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: args[3])
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: args[3])
     }
 
 
@@ -426,7 +426,7 @@ final class PortalHandler {
           return 'started';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - logs
@@ -443,7 +443,7 @@ final class PortalHandler {
           return logs.length > 0 ? logs.join('\\n') : '(no logs)';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - select
@@ -468,7 +468,7 @@ final class PortalHandler {
           return 'selected';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - check
@@ -480,7 +480,7 @@ final class PortalHandler {
         }
         let selector = buildSelector(ref: args[3])
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));return'checked';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - uncheck
@@ -492,7 +492,7 @@ final class PortalHandler {
         }
         let selector = buildSelector(ref: args[3])
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.checked=false;el.dispatchEvent(new Event('change',{bubbles:true}));return'unchecked';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - focus
@@ -504,7 +504,7 @@ final class PortalHandler {
         }
         let selector = buildSelector(ref: args[3])
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.focus();return'focused';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     // MARK: - scrollintoview / selectall / clear
@@ -516,7 +516,7 @@ final class PortalHandler {
         }
         let sel = buildSelector(ref: args[3])
         let js = "(function(){const el=\(sel);if(!el)return'error: not found';el.scrollIntoView({block:'center'});return'scrolled into view';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     private func handleSelectAll(args: [String], terminalId: UUID?) async throws -> String {
@@ -525,7 +525,7 @@ final class PortalHandler {
             return "error: portal '\(args[2])' not found"
         }
         let js = "document.execCommand('selectAll', false, null); 'selected all'"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
     private func handleClear(args: [String], terminalId: UUID?) async throws -> String {
@@ -535,7 +535,7 @@ final class PortalHandler {
         }
         let sel = buildSelector(ref: args[3])
         let js = "(function(){const el=\(sel);if(!el)return'error: not found';el.value='';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return'cleared';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
     }
 
         // MARK: - Portal ID 解析
@@ -544,7 +544,7 @@ final class PortalHandler {
     private func resolvePortalId(name: String, callerTid: UUID?) -> UUID? {
         guard let tid = callerTid else { return nil }
         return ConnectionManager.shared.connectedNodeIds(for: tid).first {
-            PortalWebViewStore.shared.webView(for: $0) != nil
+            PlatformHooks.portals.hasWebView(for: $0)
         }
     }
 

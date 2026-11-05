@@ -1,6 +1,12 @@
 import XCTest
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+#if canImport(open_maestri)
 @testable import open_maestri
+#else
+@testable import OpenMaestriCore
+#endif
 
 final class PersistenceManagerTests: XCTestCase {
     let pm = PersistenceManager.shared

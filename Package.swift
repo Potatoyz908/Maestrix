@@ -20,6 +20,7 @@ let coreSources: [String] = [
     "Shared/LoggingService.swift",
     "Shared/LocalizedFallback+Linux.swift",
     "Shared/PlatformHooks.swift",
+    "Shared/PlatformServices.swift",
     "Shared/Extensions/CGRect+Frame.swift",
     "Shared/Extensions/Date+ISO8601.swift",
     "Shared/Extensions/UUID+Coding.swift",
@@ -44,6 +45,22 @@ let coreSources: [String] = [
     "Note/NoteFileManager.swift",
     "Routine/RoutineModels.swift",
     "Terminal/ScrollbackStore.swift",
+    "Terminal/TerminalActivityMonitor.swift",
+    "Terminal/TerminalSession.swift",
+    "InterAgent/CLIRouter.swift",
+    "InterAgent/Handlers/AskHandler.swift",
+    "InterAgent/Handlers/CheckHandler.swift",
+    "InterAgent/Handlers/ListHandler.swift",
+    "InterAgent/Handlers/MaestroHandlers.swift",
+    "InterAgent/Handlers/NoteHandler.swift",
+    "InterAgent/Handlers/PortalHandler.swift",
+]
+
+let coreTestSources: [String] = [
+    "Workspace/CGRectFrameTests.swift",
+    "Workspace/CanvasNodeLegacyDecodeTests.swift",
+    "Workspace/PersistenceManagerTests.swift",
+    "Workspace/MigrationTests.swift",
 ]
 
 #if os(Linux)
@@ -64,6 +81,13 @@ let package = Package(
             name: "omaestri",
             dependencies: [],
             path: "Sources/CLI"
+        ),
+        // Linux 仅运行无头（纯 Workspace）测试；其余测试仍依赖 AppKit，仅在 macOS 的 OpenMaestriTests 中运行。
+        .testTarget(
+            name: "OpenMaestriCoreTests",
+            dependencies: ["OpenMaestriCore"],
+            path: "Tests/OpenMaestriTests",
+            sources: coreTestSources
         ),
     ]
 )

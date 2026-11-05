@@ -12,7 +12,7 @@ final class ListHandler {
     func handleAsync(args: [String], terminalId: UUID?) async -> String {
         guard let tid = terminalId else { return "error: missing terminal ID" }
         let cm = ConnectionManager.shared
-        let tm = TerminalManager.shared
+        let tm = PlatformHooks.terminals
 
         var sections: [String] = []
 
@@ -78,10 +78,9 @@ final class ListHandler {
 
     @MainActor
     private func resolvePortalInfo(nodeId: UUID) -> (name: String, url: String?) {
-        if let wv = PortalWebViewStore.shared.webView(for: nodeId) {
-            let name = wv.title ?? "Portal"
-            let url = wv.url?.absoluteString
-            return (name.isEmpty ? "Portal" : name, url)
+        if let info = PlatformHooks.portals.portalInfo(for: nodeId) {
+            let name = info.title ?? "Portal"
+            return (name.isEmpty ? "Portal" : name, info.url)
         }
         return ("Portal", nil)
     }

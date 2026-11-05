@@ -17,7 +17,7 @@ final class CheckHandler {
         let lineCount = args.count >= 3 ? Int(args[2]) ?? 20 : 20
 
         guard let callerTid = terminalId else { return "error: missing terminal ID" }
-        let tm = TerminalManager.shared
+        let tm = PlatformHooks.terminals
         let cm = ConnectionManager.shared
         let connectedIds = cm.connectedNodeIds(for: callerTid)
         let lower = targetName.lowercased()

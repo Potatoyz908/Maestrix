@@ -14,6 +14,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var updaterController: SPUStandardUpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 平台服务注入：必须先于 InterAgentServer 启动（Handler 通过 PlatformHooks 访问终端/Portal）。
+        // Core（WorkspaceManager / InterAgent Handlers）保持无 AppKit/WebKit 依赖。
+        PlatformHooks.terminalsService = TerminalManager.shared
+        PlatformHooks.portalsService = PortalWebViewStore.shared
+        PlatformHooks.serverPort = { InterAgentServer.shared.port }
+        PlatformHooks.onTerminalRemoved = { TerminalManager.shared.removeTerminal(id: $0) }
+        PlatformHooks.onPortalRemoved = { PortalWebViewStore.shared.removeWebView(for: $0) }
+
         // 1. InterAgentServer 必须在任何终端创建前启动（消除 port=0 竞态）
         do {
             try InterAgentServer.shared.start()
@@ -21,10 +29,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             logger.error("InterAgentServer failed to start: \(error)")
         }
-
-        // 平台钩子：Core（WorkspaceManager）通过它们回调 UI 层资源清理，保持 Core 无 UI 依赖
-        PlatformHooks.onTerminalRemoved = { TerminalManager.shared.removeTerminal(id: $0) }
-        PlatformHooks.onPortalRemoved = { PortalWebViewStore.shared.removeWebView(for: $0) }
 
         // 2. 写入 omaestri skill 到用户全局 ~/.claude/skills/（幂等，后台执行避免阻塞主线程）
         DispatchQueue.global(qos: .userInitiated).async {

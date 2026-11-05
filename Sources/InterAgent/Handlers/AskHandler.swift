@@ -18,7 +18,7 @@ final class AskHandler {
         let prompt = args[2]
         guard let callerTid = terminalId else { return "error: missing terminal ID" }
 
-        let tm = TerminalManager.shared
+        let tm = PlatformHooks.terminals
         let cm = ConnectionManager.shared
         let connectedIds = cm.connectedNodeIds(for: callerTid)
         guard let targetSession = tm.terminals.values.first(where: { session in
@@ -66,35 +66,34 @@ final class AskHandler {
 
     /// 订阅 PTY 输出回调，每次有新输出时检测提示符，匹配即立即返回
     @MainActor
-    private func waitForPromptEvent(session: TerminalSession, in tm: TerminalManager, baselineLineCount: Int) async -> String {
+    private func waitForPromptEvent(session: TerminalSession, in tm: any TerminalManaging, baselineLineCount: Int) async -> String {
         try? await Task.sleep(for: .milliseconds(150))
 
         return await withCheckedContinuation { continuation in
             let deadline = Date().addingTimeInterval(responseTimeout)
             var resumed = false
 
-            guard let provider = tm.providers[session.id] else {
-                continuation.resume(returning: snapshot(session: session, in: tm))
-                return
+            var removeObserver: (() -> Void)?
+            let finish: @MainActor () -> Void = { [weak self] in
+                guard !resumed else { return }
+                resumed = true
+                removeObserver?()
+                continuation.resume(returning: self?.snapshot(session: session, in: tm) ?? "")
             }
 
-            let previousCallback = provider.onDataReceived
-
-            provider.onDataReceived = { [weak self] text in
-                previousCallback?(text)
+            removeObserver = tm.observeOutput(for: session.id) { [weak self] _ in
                 guard let self, !resumed else { return }
                 Task { @MainActor in
                     guard !resumed else { return }
-                    if self.hasPromptReturned(session: session, in: tm, baselineLineCount: baselineLineCount) {
-                        resumed = true
-                        provider.onDataReceived = previousCallback
-                        continuation.resume(returning: self.snapshot(session: session, in: tm))
-                    } else if Date() >= deadline {
-                        resumed = true
-                        provider.onDataReceived = previousCallback
-                        continuation.resume(returning: self.snapshot(session: session, in: tm))
+                    if self.hasPromptReturned(session: session, in: tm, baselineLineCount: baselineLineCount)
+                        || Date() >= deadline {
+                        finish()
                     }
                 }
+            }
+            if removeObserver == nil {
+                finish()
+                return
             }
 
             // 超时保底
@@ -103,10 +102,7 @@ final class AskHandler {
                 if remaining > 0 {
                     try? await Task.sleep(for: .seconds(remaining))
                 }
-                guard !resumed else { return }
-                resumed = true
-                provider.onDataReceived = previousCallback
-                continuation.resume(returning: self.snapshot(session: session, in: tm))
+                finish()
             }
         }
     }
@@ -115,7 +111,7 @@ final class AskHandler {
 
     /// 监听 .terminalBecameIdle 通知，target 终端空闲后立即返回
     @MainActor
-    private func waitForIdleNotification(session: TerminalSession, in tm: TerminalManager) async -> String {
+    private func waitForIdleNotification(session: TerminalSession, in tm: any TerminalManaging) async -> String {
         // 短暂延迟等待 agent 开始处理（避免注入后 activityMonitor 尚未感知到新输出）
         try? await Task.sleep(for: .milliseconds(500))
 
@@ -159,16 +155,12 @@ final class AskHandler {
 
     /// 判断目标终端是否已回到提示符（命令执行完毕）
     @MainActor
-    private func hasPromptReturned(session: TerminalSession, in tm: TerminalManager, baselineLineCount: Int) -> Bool {
-        guard let provider = tm.providers[session.id],
-              let termView = provider.terminalView else {
+    private func hasPromptReturned(session: TerminalSession, in tm: any TerminalManaging, baselineLineCount: Int) -> Bool {
+        guard let text = tm.bufferText(for: session.id) else {
             return session.isIdle
         }
+        guard !text.isEmpty else { return false }
 
-        let data = termView.getTerminal().getBufferAsData()
-        guard !data.isEmpty else { return false }
-
-        let text = String(decoding: data, as: UTF8.self)
         var lines = text.components(separatedBy: "\n")
 
         guard lines.count > baselineLineCount + 1 else { return false }
@@ -186,25 +178,17 @@ final class AskHandler {
 
     /// 注入前获取 buffer 当前行数（作为 baseline）
     @MainActor
-    private func bufferLineCount(session: TerminalSession, in tm: TerminalManager) -> Int {
-        guard let provider = tm.providers[session.id],
-              let termView = provider.terminalView else { return 0 }
-        let data = termView.getTerminal().getBufferAsData()
-        guard !data.isEmpty else { return 0 }
-        return String(decoding: data, as: UTF8.self).components(separatedBy: "\n").count
+    private func bufferLineCount(session: TerminalSession, in tm: any TerminalManaging) -> Int {
+        guard let text = tm.bufferText(for: session.id), !text.isEmpty else { return 0 }
+        return text.components(separatedBy: "\n").count
     }
 
     /// 从 SwiftTerm buffer 取纯文本快照
     @MainActor
-    private func snapshot(session: TerminalSession, in tm: TerminalManager) -> String {
-        guard let provider = tm.providers[session.id],
-              let termView = provider.terminalView else {
+    private func snapshot(session: TerminalSession, in tm: any TerminalManaging) -> String {
+        guard let fullText = tm.bufferText(for: session.id), !fullText.isEmpty else {
             return session.recentOutput(lines: 50)
         }
-        let data = termView.getTerminal().getBufferAsData()
-        guard !data.isEmpty else { return session.recentOutput(lines: 50) }
-
-        let fullText = String(decoding: data, as: UTF8.self)
         var lines = fullText.components(separatedBy: "\n")
         while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true {
             lines.removeLast()

@@ -1,5 +1,9 @@
 import XCTest
+#if canImport(open_maestri)
 @testable import open_maestri
+#else
+@testable import OpenMaestriCore
+#endif
 
 final class MigrationTests: XCTestCase {
 

@@ -9,4 +9,18 @@ enum PlatformHooks {
     static var onTerminalRemoved: ((UUID) -> Void)?
     /// Portal 节点被删除：UI 层应释放 WebView
     static var onPortalRemoved: ((UUID) -> Void)?
+
+    /// 终端 / Portal 服务（启动时由平台层注入）
+    static var terminalsService: (any TerminalManaging)?
+    static var portalsService: (any PortalManaging)?
+    static var terminals: any TerminalManaging {
+        guard let s = terminalsService else { fatalError("PlatformHooks.terminals 未注入（须在 InterAgentServer 启动前设置）") }
+        return s
+    }
+    static var portals: any PortalManaging {
+        guard let s = portalsService else { fatalError("PlatformHooks.portals 未注入（须在 InterAgentServer 启动前设置）") }
+        return s
+    }
+    /// InterAgent 服务器当前监听端口（CLIRouter debug、连接注入用）
+    nonisolated(unsafe) static var serverPort: () -> UInt16 = { 0 }
 }

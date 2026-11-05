@@ -1,6 +1,12 @@
 import XCTest
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+#if canImport(open_maestri)
 @testable import open_maestri
+#else
+@testable import OpenMaestriCore
+#endif
 
 /// 测试 CanvasNode 旧版数据格式的向后兼容解码
 final class CanvasNodeLegacyDecodeTests: XCTestCase {
