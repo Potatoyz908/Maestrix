@@ -49,10 +49,11 @@ final class InterAgentServer {
     private var tcpSocketSource: DispatchSourceRead?
 
     /// Starts the TCP HTTP server on a dynamic port on Linux via POSIX sockets.
-    @MainActor
     func start() throws {
-        if PlatformHooks.terminalsService == nil {
-            PlatformHooks.terminalsService = LinuxTerminalManager.shared
+        MainActor.assumeIsolated {
+            if PlatformHooks.terminalsService == nil {
+                PlatformHooks.terminalsService = LinuxTerminalManager.shared
+            }
         }
         PlatformHooks.serverPort = { [weak self] in self?.port ?? 0 }
 

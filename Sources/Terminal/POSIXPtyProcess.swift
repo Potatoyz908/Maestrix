@@ -62,18 +62,16 @@ final class POSIXPtyProcess: @unchecked Sendable {
         }
 
         // 确定要执行的 shell / 命令
+        let defaultShell = Constants.defaultShellPath
         let execPath: String
         let execArgs: [String]
-        if command.isEmpty || command == "bash" || command.hasSuffix("/bash") {
-            execPath = "/bin/bash"
-            execArgs = ["/bin/bash", "--login"]
-        } else if command == "zsh" || command.hasSuffix("/zsh") {
-            execPath = "/bin/zsh"
-            execArgs = ["/bin/zsh", "--login"]
+        if command.isEmpty || command == "bash" || command == "zsh" || command.hasSuffix("/bash") || command.hasSuffix("/zsh") {
+            execPath = defaultShell
+            execArgs = [defaultShell, "--login"]
         } else {
             // 对标 Maestri：始终在 login shell 中启动命令，保持持久交互
-            execPath = "/bin/bash"
-            execArgs = ["/bin/bash", "-l", "-c", command]
+            execPath = defaultShell
+            execArgs = [defaultShell, "-l", "-c", command]
         }
 
         // 构建环境变量
@@ -81,6 +79,7 @@ final class POSIXPtyProcess: @unchecked Sendable {
         env["TERM"] = "xterm-256color"
         env["MAESTRI_TERMINAL_ID"] = terminalId.uuidString
         env["OMAESTRI_TERMINAL_ID"] = terminalId.uuidString
+        env["MAESTRI_SERVER_PORT"] = "\(PlatformHooks.serverPort())"
         if let socketPath = InterAgentServer.shared.currentSocketPath {
             env["MAESTRI_SOCKET"] = socketPath
         }
