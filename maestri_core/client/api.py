@@ -29,7 +29,7 @@ from ..models.workspace import WorkspaceDocument, WorkspaceEntry, WorkspacePaylo
 SCHEMA_VERSION = 2
 
 
-class MaestriAPIError(Exception):
+class MaestriAPIError(requests.RequestException):
     """Base exception for Maestri API client errors."""
 
     def __init__(self, message: str, status_code: Optional[int] = None, response_body: Optional[str] = None) -> None:
@@ -211,7 +211,11 @@ class PTYWebSocketClient:
         Returns (opcode, payload) or None on timeout/close.
         """
         start_time = time.time()
-        while self._is_open and self.sock:
+        while self._is_open:
+            sock = self.sock
+            if not sock or not self._is_open:
+                return None
+
             # Try to decode from buffer
             frame = self._decode_frame()
             if frame is not None:
@@ -233,16 +237,20 @@ class PTYWebSocketClient:
                     return None
 
             try:
-                r, _, _ = select.select([self.sock], [], [], rem_timeout)
-                if not r:
+                if not self._is_open or not self.sock:
                     return None
-                chunk = self.sock.recv(4096)
+                r, _, _ = select.select([sock], [], [], rem_timeout)
+                if not r or not self._is_open or not self.sock:
+                    return None
+                chunk = sock.recv(4096)
                 if not chunk:
                     self.close()
                     return None
                 self._rx_buffer.extend(chunk)
-            except (socket.error, OSError) as e:
+            except (socket.error, OSError, ValueError) as e:
                 self.close()
+                if not self._is_open:
+                    return None
                 raise ConnectionError(f"Socket error while receiving frame: {e}") from e
 
         return None
@@ -329,8 +337,10 @@ class PTYWebSocketClient:
             if not self._is_open:
                 return
             self._is_open = False
-            try:
-                if self.sock:
+            sock = self.sock
+            self.sock = None
+            if sock:
+                try:
                     # Try sending close frame
                     try:
                         fin = 0x80 | self.OPCODE_CLOSE
@@ -338,13 +348,12 @@ class PTYWebSocketClient:
                         mask_key = os.urandom(4)
                         close_pkt = bytearray([fin, mask, 0, 0, 0, 0])
                         close_pkt[2:6] = mask_key
-                        self.sock.sendall(close_pkt)
+                        sock.sendall(close_pkt)
                     except Exception:
                         pass
-                    self.sock.close()
-            except Exception:
-                pass
-            self.sock = None
+                    sock.close()
+                except Exception:
+                    pass
 
 
 # ============================================================================
@@ -486,10 +495,10 @@ class MaestriClient:
                 headers=self._headers(),
                 timeout=self.timeout,
             )
-            data = self._handle_response(resp).json()
-            return [WorkspaceEntry.from_dict(item) for item in data]
         except requests.RequestException:
             return []
+        data = self._handle_response(resp).json()
+        return [WorkspaceEntry.from_dict(item) for item in data]
 
     def create_workspace(
         self,
@@ -641,9 +650,9 @@ class MaestriClient:
                 headers=self._headers(),
                 timeout=self.timeout,
             )
-            return self._handle_response(resp).text
         except requests.RequestException:
             return ""
+        return self._handle_response(resp).text
 
     def put_note(self, name: str, content: str) -> bool:
         """Writes Markdown content to a sticky note atomically."""

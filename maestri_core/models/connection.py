@@ -41,16 +41,16 @@ class Connection:
             self.id = str(uuid.UUID(str(self.id))).upper()
         except Exception:
             self.id = str(self.id).upper()
-        try:
-            if self.a_id:
+        if self.a_id:
+            try:
                 self.a_id = str(uuid.UUID(str(self.a_id))).upper()
-        except Exception:
-            pass
-        try:
-            if self.b_id:
+            except Exception:
+                self.a_id = str(self.a_id).upper()
+        if self.b_id:
+            try:
                 self.b_id = str(uuid.UUID(str(self.b_id))).upper()
-        except Exception:
-            pass
+            except Exception:
+                self.b_id = str(self.b_id).upper()
         if not self.created_at:
             self.created_at = current_iso8601()
 
@@ -79,6 +79,7 @@ class Connection:
         else:
             data["a"] = self.a_id
             data["b"] = self.b_id
+            data["type"] = self.kind
         return data
 
     @classmethod

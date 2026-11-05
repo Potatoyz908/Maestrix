@@ -19,6 +19,18 @@ def current_iso8601() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def normalize_iso8601(val: Any) -> str:
+    """Normalizes any ISO8601 date string to strict UTC '%Y-%m-%dT%H:%M:%SZ' format."""
+    if not val or not isinstance(val, str):
+        return current_iso8601()
+    try:
+        clean = val.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean)
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return str(val)
+
+
 @dataclass
 class NodeFrame:
     x: float = 100.0
@@ -299,7 +311,12 @@ class CanvasNode:
         return self.node_type.capitalize()
 
     def to_dict(self) -> dict:
-        inner_payload = self.content.to_dict() if hasattr(self.content, "to_dict") else {}
+        if hasattr(self.content, "to_dict"):
+            inner_payload = self.content.to_dict()
+        elif isinstance(self.content, dict):
+            inner_payload = dict(self.content)
+        else:
+            inner_payload = {}
         type_obj = {
             self.node_type: {
                 "_0": inner_payload
@@ -353,7 +370,7 @@ class CanvasNode:
             content=content_obj,
             z_index=int(d.get("zIndex", 0)),
             is_locked=bool(d.get("isLocked", False)),
-            created_at=d.get("createdAt", current_iso8601()),
-            last_modified_at=d.get("lastModifiedAt", current_iso8601()),
+            created_at=normalize_iso8601(d.get("createdAt")),
+            last_modified_at=normalize_iso8601(d.get("lastModifiedAt")),
             _extra=extra,
         )

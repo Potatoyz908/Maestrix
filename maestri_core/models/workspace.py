@@ -132,7 +132,9 @@ class WorkspacePayload:
         n2n_conns = [Connection.from_dict(c, "noteToNote") for c in d.get("noteToNoteConnections", [])]
 
         origin = d.get("canvasOrigin", [9800.0, 8500.0])
-        if not isinstance(origin, list) or len(origin) < 2:
+        if isinstance(origin, dict) and "x" in origin and "y" in origin:
+            origin = [float(origin["x"]), float(origin["y"])]
+        elif not isinstance(origin, list) or len(origin) < 2:
             origin = [9800.0, 8500.0]
 
         known = {

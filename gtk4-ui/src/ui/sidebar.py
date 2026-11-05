@@ -7,6 +7,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib
 
+import threading
 from typing import List, Optional
 from maestri_core.models.workspace import WorkspaceEntry, SidebarLayout
 from maestri_core.client.api import MaestriClient
@@ -57,16 +58,29 @@ class SidebarView(Gtk.Box):
         scrolled.set_child(content_box)
         self.append(scrolled)
 
-        # Initial data load
-        GLib.idle_add(self.refresh)
+        # Initial asynchronous data load (never blocks UI)
+        self.refresh()
 
     def refresh(self):
-        """Fetch workspaces, floors, and agents from backend."""
+        """Fetch workspaces, floors, and agents asynchronously in background thread."""
+        def worker():
+            try:
+                workspaces = self.client.get_workspaces()
+            except Exception:
+                workspaces = []
+            try:
+                agents = self.client.get_agents()
+            except Exception:
+                agents = []
+            GLib.idle_add(self._apply_refresh, workspaces, agents)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_refresh(self, workspaces, agents):
         # 1. Populate Workspaces
         while self.ws_list_box.get_first_child():
             self.ws_list_box.remove(self.ws_list_box.get_first_child())
 
-        workspaces = self.client.get_workspaces()
         if not workspaces:
             lbl = Gtk.Label(label="Default Workspace", xalign=0.0)
             lbl.set_margin_start(8)
@@ -97,10 +111,6 @@ class SidebarView(Gtk.Box):
         while self.agents_list_box.get_first_child():
             self.agents_list_box.remove(self.agents_list_box.get_first_child())
 
-        try:
-            agents = self.client.get_agents()
-        except Exception:
-            agents = []
         if not agents:
             # Show canvas squad
             default_agents = [
@@ -121,6 +131,7 @@ class SidebarView(Gtk.Box):
                 lbl = Gtk.Label(label=f"🤖 {a.get('name', 'Agent')}", xalign=0.0)
                 lbl.set_margin_start(8)
                 self.agents_list_box.append(lbl)
+        return GLib.SOURCE_REMOVE
 
     def _on_ws_selected(self, listbox, row):
         child = row.get_child()

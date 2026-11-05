@@ -10,6 +10,7 @@ from gi.repository import Gtk, Gdk, GLib
 
 import os
 import sys
+import threading
 from pathlib import Path
 
 # Add paths
@@ -183,12 +184,23 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         btn_zoom.connect("clicked", lambda b: self.reset_zoom())
         header.pack_end(btn_zoom)
 
-        # Backend Connection status indicator
-        is_online = self.client.is_connected()
-        status_text = f"🟢 Porta {self.client.port}" if is_online else "⚪ Standalone"
-        self.lbl_status = Gtk.Label(label=status_text)
+        # Backend Connection status indicator (checked asynchronously)
+        self.lbl_status = Gtk.Label(label="⚪ Conectando...")
         self.lbl_status.set_margin_end(8)
         header.pack_end(self.lbl_status)
+        self._check_connection_async()
+
+    def _check_connection_async(self):
+        def worker():
+            is_online = self.client.is_connected()
+            status_text = f"🟢 Porta {self.client.port}" if is_online else "⚪ Standalone"
+            GLib.idle_add(self._update_status_label, status_text)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update_status_label(self, status_text: str):
+        self.lbl_status.set_label(status_text)
+        return GLib.SOURCE_REMOVE
 
     def _setup_shortcuts(self):
         """Ctrl+N (new terminal), Ctrl+S (save), Ctrl+0 (reset zoom), Ctrl+Q (quit).
@@ -273,22 +285,75 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             node = self._find_node(nid)
             if node is not None:
                 self.document.payload.nodes.remove(node)
+                self.document.payload.last_modified_at = current_iso8601()
+            # Clean orphan connections from all 5 connection arrays
+            nid_u = nid.upper()
+            payload = self.document.payload
+            payload.connections = [c for c in payload.connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
+            payload.note_connections = [c for c in payload.note_connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
+            payload.portal_connections = [c for c in payload.portal_connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
+            payload.portal_to_portal_connections = [c for c in payload.portal_to_portal_connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
+            payload.note_to_note_connections = [c for c in payload.note_to_note_connections if c.a_id.upper() != nid_u and c.b_id.upper() != nid_u]
+
             self.canvas_widget.remove_node(nid)
             bus.emit("node-removed", nid)
 
     def _on_canvas_connect_requested(self, _canvas, a, side_a, b, side_b):
         if not self.canvas_widget.scene.can_connect(a, b):
             return
-        conn = None
-        try:
-            conn = self.client.create_connection(a, b)
-        except Exception:
-            conn = None  # standalone / backend offline: draw locally only
-        cid = conn.id if conn is not None else f"local-{a[:8]}-{b[:8]}"
-        self.canvas_widget.add_connection(ConnItem(cid, a, b, side_a, side_b, pending=conn is None))
+        node_a = self._find_node(a)
+        node_b = self._find_node(b)
+        type_a = node_a.node_type if node_a else "terminal"
+        type_b = node_b.node_type if node_b else "terminal"
+
+        payload = self.document.payload
+        # Determine connection kind based on endpoint types
+        if type_a == "terminal" and type_b == "terminal":
+            kind = "terminal"
+            target_list = payload.connections
+        elif (type_a == "terminal" and type_b == "stickyNote") or (type_a == "stickyNote" and type_b == "terminal"):
+            kind = "terminalToNote"
+            target_list = payload.note_connections
+            if type_a != "terminal":
+                a, b = b, a
+        elif (type_a == "terminal" and type_b == "portal") or (type_a == "portal" and type_b == "terminal"):
+            kind = "terminalToPortal"
+            target_list = payload.portal_connections
+            if type_a != "terminal":
+                a, b = b, a
+        elif type_a == "portal" and type_b == "portal":
+            kind = "portalToPortal"
+            target_list = payload.portal_to_portal_connections
+        elif type_a == "stickyNote" and type_b == "stickyNote":
+            kind = "noteToNote"
+            target_list = payload.note_to_note_connections
+        else:
+            kind = "terminal"
+            target_list = payload.connections
+
+        cid = f"local-{a[:8]}-{b[:8]}"
+        self.canvas_widget.add_connection(ConnItem(cid, a, b, side_a, side_b, pending=True))
+
+        def create_worker():
+            try:
+                conn = self.client.create_connection(a, b, kind=kind)
+            except Exception:
+                conn = None
+            GLib.idle_add(self._apply_connection_created, cid, conn, target_list)
+
+        threading.Thread(target=create_worker, daemon=True).start()
+
+    def _apply_connection_created(self, temp_cid: str, conn, target_list):
         if conn is not None:
-            self.document.payload.connections.append(conn)
+            # Upgrade temporary connection item to confirmed id and pending=False
+            if temp_cid in self.canvas_widget.scene.connections:
+                old = self.canvas_widget.scene.connections.pop(temp_cid)
+                confirmed = ConnItem(conn.id, old.a, old.b, old.side_a, old.side_b, pending=False)
+                self.canvas_widget.scene.connections[conn.id] = confirmed
+                self.canvas_widget.controller.dirty = True
+            target_list.append(conn)
             bus.emit("connection-created", conn)
+        return GLib.SOURCE_REMOVE
 
     def reset_zoom(self):
         """Ctrl+0: zoom back to 100% keeping the viewport center fixed."""
@@ -341,7 +406,17 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
     def _on_workspace_switched(self, bus_obj, workspace_id: str):
         # Persist the workspace we are leaving before replacing the document.
         self.sync.flush()
-        doc = self.client.get_workspace(workspace_id)
+
+        def switch_worker():
+            try:
+                doc = self.client.get_workspace(workspace_id)
+            except Exception:
+                doc = None
+            GLib.idle_add(self._apply_workspace_switched, doc)
+
+        threading.Thread(target=switch_worker, daemon=True).start()
+
+    def _apply_workspace_switched(self, doc):
         if doc and doc.payload:
             self.document = doc
             cw = self.canvas_widget
@@ -352,3 +427,4 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self._load_payload_into_canvas()
             cw.controller.dirty = True
             bus.emit("workspace-loaded", doc.payload)
+        return GLib.SOURCE_REMOVE
