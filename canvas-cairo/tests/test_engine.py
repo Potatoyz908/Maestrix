@@ -327,7 +327,11 @@ def test_keyboard_shortcuts_and_focus_routing():
     assert not ctl.key("delete", N, canvas_focused=False)                                 # plain keys belong to the focused widget
     assert ctl.key("delete", N, canvas_focused=True)
     assert [e for e in ev if isinstance(e, DeleteRequested)][-1].ids == ("AA",)
-    assert ctl.key("w", Mods.CTRL, canvas_focused=False)
+    n_del = len([e for e in ev if isinstance(e, DeleteRequested)])
+    assert not ctl.key("w", Mods.CTRL, canvas_focused=False)                              # readline word-rubout inside a terminal: never delete the node
+    assert len([e for e in ev if isinstance(e, DeleteRequested)]) == n_del
+    assert ctl.key("w", Mods.CTRL | Mods.SHIFT, canvas_focused=False)                      # explicit chord from inside a node
+    assert ctl.key("w", Mods.CTRL, canvas_focused=True)                                    # from the canvas, as on macOS
     assert ctl.key("right", N, True) and sc.get("aa").frame.x == 16
     assert ctl.key("down", Mods.SHIFT, True) and sc.get("aa").frame.y == 160
     assert ctl.key("a", Mods.CTRL, True) and sc.selection == {"AA", "BB", "CC"}

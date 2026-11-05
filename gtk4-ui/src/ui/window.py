@@ -14,14 +14,18 @@ from pathlib import Path
 
 # Add paths
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(ROOT_DIR / "canvas-cairo" / "src"))
+sys.path.insert(0, str(ROOT_DIR / "canvas-cairo"))  # provides the canonical `maestri_canvas` package
 sys.path.insert(0, str(ROOT_DIR))
 
 from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload
 from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent
 from maestri_core.client.api import MaestriClient
 from maestri_core.signals.bus import bus
-from .canvas_widget import CanvasWidget
+from maestri_core.sync import WorkspaceSync
+from maestri_canvas.geometry import Point, Rect
+from maestri_canvas.scene import WIDGET_KINDS, ConnItem, NodeItem
+from maestri_canvas.viewport import Viewport
+from maestri_canvas.widget import CanvasWidget
 from .sidebar import SidebarView
 
 
@@ -64,7 +68,15 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.paned.set_position(250)
 
         self.sidebar = SidebarView(self.client)
-        self.canvas_widget = CanvasWidget(self.document.payload)
+        self.canvas_widget = CanvasWidget(viewport=self._viewport_from_payload())
+        self.canvas_widget.set_hexpand(True)
+        self.canvas_widget.set_vexpand(True)
+        self._load_payload_into_canvas()
+        self.canvas_widget.connect("node-moved", self._on_canvas_frame_changed)
+        self.canvas_widget.connect("node-resized", self._on_canvas_frame_changed)
+        self.canvas_widget.connect("viewport-changed", lambda _c, x, y, z: bus.emit("viewport-changed", x, y, z))
+        self.canvas_widget.connect("delete-requested", self._on_canvas_delete_requested)
+        self.canvas_widget.connect("connect-requested", self._on_canvas_connect_requested)
 
         self.paned.set_start_child(self.sidebar)
         self.paned.set_end_child(self.canvas_widget)
@@ -73,12 +85,18 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         # 4. Setup Shortcuts
         self._setup_shortcuts()
 
-        # 5. Connect bus signals for persistence
-        bus.connect("node-moved", self._on_node_changed)
-        bus.connect("node-resized", self._on_node_changed)
-        bus.connect("node-removed", self._on_node_changed)
-        bus.connect("connection-created", self._on_node_changed)
+        # 5. Real-time sync: bus events -> debounced snapshot -> REST (schemaVersion 2)
+        self.sync = WorkspaceSync(
+            self.client,
+            get_document=lambda: self.document,
+            get_viewport=lambda: (
+                self.canvas_widget.viewport.origin.x,
+                self.canvas_widget.viewport.origin.y,
+                self.canvas_widget.viewport.zoom,
+            ),
+        )
         bus.connect("workspace-switched", self._on_workspace_switched)
+        self.connect("close-request", self._on_close_request)
 
         # Apply dark theme styling
         self._setup_theme()
@@ -162,7 +180,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         # Reset Zoom button (Right side)
         btn_zoom = Gtk.Button(label="🔍 100%")
         btn_zoom.set_tooltip_text("Reset Zoom to 100%")
-        btn_zoom.connect("clicked", lambda b: self.canvas_widget.reset_zoom())
+        btn_zoom.connect("clicked", lambda b: self.reset_zoom())
         header.pack_end(btn_zoom)
 
         # Backend Connection status indicator
@@ -173,77 +191,164 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         header.pack_end(self.lbl_status)
 
     def _setup_shortcuts(self):
-        controller = Gtk.EventControllerKey.new()
-        controller.connect("key-pressed", self._on_key_pressed)
+        """Ctrl+N (new terminal), Ctrl+S (save), Ctrl+0 (reset zoom), Ctrl+Q (quit).
+        CAPTURE phase so they work even while a node's content widget (terminal/text view) has focus."""
+        controller = Gtk.ShortcutController()
+        controller.set_scope(Gtk.ShortcutScope.GLOBAL)
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        bindings = (
+            ("<Control>n", lambda: self._create_node("terminal")),
+            ("<Control>s", lambda: self._save_to_backend()),
+            ("<Control>0", lambda: self.reset_zoom()),
+            ("<Control>q", lambda: self.close()),
+        )
+        for accel, fn in bindings:
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(accel),
+                Gtk.CallbackAction.new(lambda _w, _a, f=fn: (f(), True)[1]),
+            ))
         self.add_controller(controller)
-
-    def _on_key_pressed(self, controller, keyval, keycode, state):
-        ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
-        if ctrl:
-            if keyval == Gdk.KEY_n:
-                self._create_node("terminal")
-                return True
-            elif keyval == Gdk.KEY_s:
-                self._save_to_backend()
-                return True
-            elif keyval == Gdk.KEY_0:
-                self.canvas_widget.reset_zoom()
-                return True
-            elif keyval == Gdk.KEY_q:
-                self.close()
-                return True
-        return False
 
     def _on_toggle_sidebar(self, btn):
         is_visible = self.sidebar.get_visible()
         self.sidebar.set_visible(not is_visible)
 
-    def _create_node(self, node_type: str):
-        # Place node near center of current viewport
-        vp = self.canvas_widget.viewport
-        w = self.canvas_widget.get_width() or 1200
-        h = self.canvas_widget.get_height() or 800
-        cx, cy = vp.screen_to_canvas(w / 2.0 - 200, h / 2.0 - 150)
+    # ---- canvas <-> document -------------------------------------------------------------------
+    def _viewport_from_payload(self) -> Viewport:
+        p = self.document.payload
+        ox = p.canvas_origin[0] if len(p.canvas_origin) > 0 else 9800.0
+        oy = p.canvas_origin[1] if len(p.canvas_origin) > 1 else 8500.0
+        return Viewport(Point(ox, oy), p.canvas_zoom or 1.0)
 
-        max_z = max((n.z_index for n in self.document.payload.nodes), default=0)
+    @staticmethod
+    def _make_content_widget(node: CanvasNode) -> Gtk.Widget:
+        """Placeholder body per node kind (real PTY/WebKit/file-tree widgets plug in here)."""
+        c = node.content
+        if node.node_type == "stickyNote":
+            view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
+            view.set_left_margin(8)
+            view.set_top_margin(8)
+            return view
+        if node.node_type == "portal":
+            text = getattr(c, "current_url", "") or "about:blank"
+        elif node.node_type == "fileTree":
+            text = getattr(c, "root_path", "") or "~"
+        else:
+            text = getattr(c, "command", "") or "bash"
+        return Gtk.Label(label=text, xalign=0, yalign=0, margin_start=8, margin_top=8, selectable=False)
+
+    def _add_node_to_canvas(self, node: CanvasNode) -> None:
+        f = node.frame
+        item = NodeItem(node.id, Rect(f.x, f.y, f.width, f.height), node.z_index, node.node_type, node.title)
+        self.canvas_widget.add_node(item, self._make_content_widget(node))
+
+    def _load_payload_into_canvas(self) -> None:
+        for node in self.document.payload.nodes:
+            self._add_node_to_canvas(node)
+        for conn in self.document.payload.all_connections():
+            if conn.a_id and conn.b_id:
+                self.canvas_widget.add_connection(ConnItem(conn.id, conn.a_id, conn.b_id))
+
+    def _find_node(self, node_id: str):
+        nid = node_id.upper()
+        return next((n for n in self.document.payload.nodes if n.id.upper() == nid), None)
+
+    def _on_canvas_frame_changed(self, _canvas, node_id, x, y, w, h, final):
+        node = self._find_node(node_id)
+        if node is None:
+            return
+        old = node.frame
+        resized = (old.width, old.height) != (w, h)
+        node.frame = NodeFrame(x=x, y=y, width=w, height=h)
+        # Bridge canvas-widget signals onto the SignalBus; WorkspaceSync debounces + persists.
+        if resized:
+            bus.emit("node-resized", node.id, x, y, w, h)
+        else:
+            bus.emit("node-moved", node.id, x, y)
+        if final:
+            self.sync.flush()
+
+    def _on_canvas_delete_requested(self, _canvas, ids):
+        for nid in tuple(ids):
+            node = self._find_node(nid)
+            if node is not None:
+                self.document.payload.nodes.remove(node)
+            self.canvas_widget.remove_node(nid)
+            bus.emit("node-removed", nid)
+
+    def _on_canvas_connect_requested(self, _canvas, a, side_a, b, side_b):
+        if not self.canvas_widget.scene.can_connect(a, b):
+            return
+        conn = None
+        try:
+            conn = self.client.create_connection(a, b)
+        except Exception:
+            conn = None  # standalone / backend offline: draw locally only
+        cid = conn.id if conn is not None else f"local-{a[:8]}-{b[:8]}"
+        self.canvas_widget.add_connection(ConnItem(cid, a, b, side_a, side_b, pending=conn is None))
+        if conn is not None:
+            self.document.payload.connections.append(conn)
+            bus.emit("connection-created", conn)
+
+    def reset_zoom(self):
+        """Ctrl+0: zoom back to 100% keeping the viewport center fixed."""
+        cw = self.canvas_widget
+        w = cw.get_width() or 1200
+        h = cw.get_height() or 800
+        cw.viewport.set_zoom_at(Point(w / 2.0, h / 2.0), 1.0)
+        cw.controller.dirty = True
+
+    def _create_node(self, node_type: str):
+        """Add a node of a valid kind (terminal | stickyNote | portal | fileTree) at the viewport center."""
+        if node_type not in WIDGET_KINDS:
+            raise ValueError(f"invalid node type: {node_type!r}")
+        cw = self.canvas_widget
+        w = cw.get_width() or 1200
+        h = cw.get_height() or 800
+        center = cw.viewport.to_canvas(Point(w / 2.0, h / 2.0))
+        cx, cy = center.x - 210, center.y - 150
+
+        n = len(self.document.payload.nodes) + 1
+        max_z = max((x.z_index for x in self.document.payload.nodes), default=0)
 
         if node_type == "terminal":
-            content = TerminalContent(name=f"Terminal {len(self.document.payload.nodes) + 1}", command="bash")
+            content = TerminalContent(name=f"Terminal {n}", command="bash")
         elif node_type == "stickyNote":
-            content = StickyNoteContent(name=f"Note-{len(self.document.payload.nodes) + 1}")
+            content = StickyNoteContent(name=f"Note-{n}")
         elif node_type == "portal":
             content = PortalContent(name="Portal", current_url="https://google.com")
-        elif node_type == "fileTree":
-            content = FileTreeContent(name="Files", root_path=os.path.expanduser("~"))
         else:
-            content = TerminalContent()
+            content = FileTreeContent(name="Files", root_path=os.path.expanduser("~"))
 
         new_node = CanvasNode(
             frame=NodeFrame(x=cx, y=cy, width=420, height=300),
             node_type=node_type,
             content=content,
-            z_index=max_z + 1
+            z_index=max_z + 1,
         )
         self.document.payload.nodes.append(new_node)
-        bus.emit("node-added", new_node)
-        self._save_to_backend()
-
-    def _on_node_changed(self, *args):
-        # Debounced save to backend
-        GLib.timeout_add(500, self._save_to_backend)
+        self._add_node_to_canvas(new_node)
+        bus.emit("node-added", new_node)  # WorkspaceSync schedules the save
 
     def _save_to_backend(self):
-        # Update origin & zoom
-        self.document.payload.canvas_origin = [
-            self.canvas_widget.viewport.origin_x,
-            self.canvas_widget.viewport.origin_y
-        ]
-        self.document.payload.canvas_zoom = self.canvas_widget.viewport.zoom
-        self.client.save_workspace(self.document)
-        return False  # Run once in GLib timeout
+        """Ctrl+S: flush any pending change immediately."""
+        self.sync.flush()
+
+    def _on_close_request(self, *_args):
+        self.sync.close()
+        return False
 
     def _on_workspace_switched(self, bus_obj, workspace_id: str):
+        # Persist the workspace we are leaving before replacing the document.
+        self.sync.flush()
         doc = self.client.get_workspace(workspace_id)
         if doc and doc.payload:
             self.document = doc
+            cw = self.canvas_widget
+            for nid in list(cw.scene.nodes):
+                cw.remove_node(nid)
+            cw.viewport.origin = self._viewport_from_payload().origin
+            cw.viewport.zoom = self._viewport_from_payload().zoom
+            self._load_payload_into_canvas()
+            cw.controller.dirty = True
             bus.emit("workspace-loaded", doc.payload)

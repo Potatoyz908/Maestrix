@@ -4,9 +4,8 @@ Structure (Gtk.Overlay):
     CairoLayer   - Gtk.Widget whose snapshot is a pycairo ImageSurface uploaded as a Gdk.MemoryTexture
     Gtk.Fixed    - node widgets (NodeFrame), positioned/zoomed with per-child GskTransforms
 
-Why not Gtk.DrawingArea + set_draw_func: PyGObject needs the foreign-struct bridge `gi._gi_cairo` (Debian/Ubuntu python3-gi-cairo)
-to hand a cairo.Context to a Python callback; it is missing on this host (ImportError). Rendering into our own ImageSurface needs no
-bridge. If it becomes available, CairoLayer can switch to a DrawingArea without touching the renderer (it accepts any cairo.Context).
+CairoLayer is a Gtk.DrawingArea. When PyGObject has the foreign-struct bridge `gi._gi_cairo` it uses set_draw_func; otherwise
+it renders into its own ImageSurface and uploads a texture (same drawing routine, same pixels: see tests/test_widget.py).
 
 Input model: ONE capture-phase GestureDrag on the CanvasWidget sees every press, asks `pick()` what is under the pointer and tags it with a
 role (header / edge / pin / content / background). Chrome roles are claimed by the engine; content roles are DENIED so the child widget
@@ -20,6 +19,9 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Graphene", "1.0")
 gi.require_version("Gsk", "4.0")
+import os
+import signal
+
 import cairo
 from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk
 
@@ -39,30 +41,155 @@ CORNER, CORNER_OUT = 16, 6    # corner handle: 16px square, 6 outside
 _ROLE = "_canvas_role"   # python attribute set on chrome widgets: ("header"|"edge"|"pin", payload)
 
 
-class CairoLayer(Gtk.Widget):
+def _cairo_foreign_available() -> bool:
+    """True when PyGObject can hand a cairo.Context to Python callbacks (gi._gi_cairo / python3-gi-cairo)."""
+    try:
+        gi.require_foreign("cairo")
+        return True
+    except ImportError:
+        return False
+
+
+USE_DRAWING_AREA = _cairo_foreign_available()   # tests flip this to exercise the fallback
+
+
+# ---- native terminal (VTE for GTK 4 = namespace Vte 3.91) ------------------------------------------------------------------
+VTE_TYPELIB_DIRS = (os.path.expanduser("~/.local/lib/girepository-1.0"),)   # user-installed Vte-3.91.typelib
+_vte_module = None
+_vte_tried = False
+
+
+def load_vte():
+    """Import Vte 3.91 (GTK 4 build) once; None when unavailable (the canvas then falls back to a placeholder label).
+    The typelib may live outside the default search path, so the user dirs are prepended to the GI repository first."""
+    global _vte_module, _vte_tried
+    if _vte_tried:
+        return _vte_module
+    _vte_tried = True
+    dirs = [d for d in VTE_TYPELIB_DIRS if os.path.isdir(d)]
+    if dirs:
+        try:
+            gi.require_version("GIRepository", "3.0")
+            from gi.repository import GIRepository
+            repo = GIRepository.Repository.dup_default()
+            for d in dirs:
+                if d not in repo.get_search_path():
+                    repo.prepend_search_path(d)
+        except (ValueError, ImportError, AttributeError):
+            try:   # PyGObject < 3.52: girepository-2.0, class-level API
+                gi.require_version("GIRepository", "2.0")
+                from gi.repository import GIRepository
+                for d in dirs:
+                    GIRepository.Repository.prepend_search_path(d)
+            except (ValueError, ImportError, AttributeError):
+                pass
+    try:
+        gi.require_version("Vte", "3.91")
+        from gi.repository import Vte
+        _vte_module = Vte
+    except (ValueError, ImportError):
+        _vte_module = None
+    return _vte_module
+
+
+def default_shell_argv() -> list[str]:
+    """Login shell: the user's shell when it is bash-compatible enough to take -l, else /bin/bash."""
+    Vte = load_vte()
+    shell = os.environ.get("SHELL") or (Vte.get_user_shell() if Vte else None) or "/bin/bash"
+    if not os.access(shell, os.X_OK):
+        shell = "/bin/bash"
+    return [shell, "-l"]
+
+
+def create_terminal(cwd: str | None = None, argv: list[str] | None = None, env: dict[str, str] | None = None,
+                    on_exit=None) -> Gtk.Widget | None:
+    """A Vte.Terminal running a login shell on its own PTY. VTE resizes the PTY (TIOCSWINSZ) on every size-allocate, so
+    resizing the node resizes the shell; canvas zoom is a Gsk transform, so cols/rows stay those of the unscaled frame.
+    Returns None when Vte 3.91 is not importable. `on_exit(status)` runs when the child exits."""
+    Vte = load_vte()
+    if Vte is None:
+        return None
+    term = Vte.Terminal()
+    term.set_focusable(True)
+    term.set_focus_on_click(True)
+    term.set_scrollback_lines(10000)
+    term.set_mouse_autohide(True)
+    term.set_size_request(80, 40)   # keep the node shrinkable: VTE's natural size (80x24) must not become a minimum
+    term.maestri_pid = -1
+    envv = [f"{k}={v}" for k, v in {"TERM": "xterm-256color", "COLORTERM": "truecolor", **(env or {})}.items()]
+
+    def spawned(_t, pid, error, *_):
+        if error is not None:
+            term.feed(f"\r\n[failed to start shell: {error.message}]\r\n".encode())
+        else:
+            term.maestri_pid = pid
+
+    def exited(_t, status):
+        term.maestri_pid = -1
+        term.feed(f"\r\n[process exited with status {status}]\r\n".encode())
+        if on_exit:
+            on_exit(status)
+
+    term.connect("child-exited", exited)
+    term.spawn_async(Vte.PtyFlags.DEFAULT, cwd or os.path.expanduser("~"), argv or default_shell_argv(), envv,
+                     GLib.SpawnFlags.DEFAULT, None, None, -1, None, spawned, None)
+    return term
+
+
+def is_terminal(w: Gtk.Widget | None) -> bool:
+    Vte = _vte_module
+    return Vte is not None and isinstance(w, Vte.Terminal)
+
+
+def terminate_terminal(w: Gtk.Widget) -> None:
+    """SIGHUP the shell, like closing a terminal window."""
+    pid = getattr(w, "maestri_pid", -1)
+    if pid > 0:
+        try:
+            os.kill(pid, signal.SIGHUP)
+        except ProcessLookupError:
+            pass
+        w.maestri_pid = -1
+
+
+class CairoLayer(Gtk.DrawingArea):
     """A Cairo-painted layer. `top=False`: grid, ropes, canvas-drawn nodes (below the node widgets).
-    `top=True`: gesture overlays on a transparent surface (above them); it paints nothing when no gesture is active."""
+    `top=True`: gesture overlays on a transparent surface (above them); it paints nothing when no gesture is active.
+
+    Two paint paths, one drawing routine (`_paint`):
+      * DrawingArea draw_func (needs gi._gi_cairo): GTK records the Cairo calls; HiDPI is automatic. Measured ~15-25% less
+        whole-process CPU per frame than the texture path on a 100-node / 30-rope scene.
+      * fallback: draw into our own ImageSurface and upload it as a Gdk.MemoryTexture (no foreign-struct bridge needed)."""
     __gtype_name__ = "MaestriCairoLayer"
 
     def __init__(self, canvas: "CanvasWidget", top: bool = False) -> None:
         super().__init__()
         self._canvas, self._top = canvas, top
+        self._da = USE_DRAWING_AREA
         self.set_hexpand(True)
         self.set_vexpand(True)
         self.set_can_target(False)   # pure paint: never steals pointer events
+        if self._da:
+            self.set_draw_func(lambda _a, cr, w, h: self._paint(cr, w, h))
+
+    def _paint(self, cr: cairo.Context, w: int, h: int) -> None:
+        c = self._canvas
+        if self._top:
+            if not c.controller.overlay.is_empty():
+                c.renderer.draw_overlay(cr, c.scene, c.viewport, c.controller.overlay)
+        else:
+            c.renderer.draw(cr, c.scene, c.viewport, w, h, c.controller.ropes, None)
 
     def do_snapshot(self, snapshot: Gtk.Snapshot) -> None:
+        if self._da:
+            Gtk.DrawingArea.do_snapshot(self, snapshot)
+            return
         w, h, s = self.get_width(), self.get_height(), self.get_scale_factor()
-        c = self._canvas
-        if w <= 0 or h <= 0 or (self._top and c.controller.overlay.is_empty()):
+        if w <= 0 or h <= 0 or (self._top and self._canvas.controller.overlay.is_empty()):
             return
         surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w * s, h * s)
         surf.set_device_scale(s, s)   # draw in logical px; HiDPI handled by the surface
-        cr = cairo.Context(surf)
-        if self._top:
-            c.renderer.draw_overlay(cr, c.scene, c.viewport, c.controller.overlay)
-        else:
-            c.renderer.draw(cr, c.scene, c.viewport, w, h, c.controller.ropes, None)
+        self._paint(cairo.Context(surf), w, h)
         surf.flush()
         tex = Gdk.MemoryTexture.new(w * s, h * s, Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED,
                                     GLib.Bytes.new(bytes(surf.get_data())), surf.get_stride())
@@ -159,6 +286,7 @@ class CanvasWidget(Gtk.Overlay):
         "draw-requested": (GObject.SignalFlags.RUN_FIRST, None, (str, float, float, float, float)),     # kind, frame
         "tool-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "viewport-changed": (GObject.SignalFlags.RUN_FIRST, None, (float, float, float)),
+        "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
     }
 
     def __init__(self, scene: Scene | None = None, viewport: Viewport | None = None) -> None:
@@ -217,18 +345,29 @@ class CanvasWidget(Gtk.Overlay):
         self.add_tick_callback(self._tick)
 
     # ---- public API ---------------------------------------------------------------------------
-    def add_node(self, item: NodeItem, content: Gtk.Widget | None = None) -> None:
+    def add_node(self, item: NodeItem, content: Gtk.Widget | None = None, cwd: str | None = None,
+                 env: dict[str, str] | None = None, focus: bool = False) -> None:
+        """`content=None` on a "terminal" node spawns a native VTE login shell (cwd/env apply to it); `focus` gives it the keyboard."""
         self.scene.add_node(item)
         self.controller.dirty = True
+        if item.kind == "terminal" and content is None:
+            nid = item.id
+            content = create_terminal(cwd=cwd, env=env, on_exit=lambda st: self.emit("terminal-exited", nid, st))
+            if content is None:
+                content = Gtk.Label(label="Vte 3.91 (GTK 4) not available")
         if item.kind in WIDGET_KINDS and content is not None:
             frame = NodeFrame(item, content, on_close=lambda i: self.emit("delete-requested", (i,)))
             self.frames[item.id] = frame
             self.fixed.put(frame, 0, 0)
+            if focus:
+                GLib.idle_add(lambda: (content.grab_focus(), False)[1])
 
     def remove_node(self, node_id: str) -> None:
         k = norm(node_id)
         frame = self.frames.pop(k, None)
         if frame is not None:
+            if is_terminal(frame.content):
+                terminate_terminal(frame.content)
             self.fixed.remove(frame)
         for c in self.scene.connections_of({k}):
             self.controller.ropes.remove(c.id)
@@ -342,10 +481,15 @@ class CanvasWidget(Gtk.Overlay):
         return Background()
 
     def _drag_begin(self, g: Gtk.GestureDrag, x: float, y: float) -> None:
-        self.grab_focus() if not self._focus_in_node() else None
+        target = self.target_at(x, y)
+        frame = self.frames.get(target.id) if isinstance(target, NodeContent) else None
+        if frame is not None and is_terminal(frame.content):
+            frame.content.grab_focus()   # click into a terminal = keyboard goes to the shell
+        elif not self._focus_in_node():
+            self.grab_focus()
         ev = g.get_current_event()
         mods = self._mods(ev.get_modifier_state() if ev else 0)
-        claimed = self.controller.press(Point(x, y), g.get_current_button(), mods, self.target_at(x, y))
+        claimed = self.controller.press(Point(x, y), g.get_current_button(), mods, target)
         g.set_state(Gtk.EventSequenceState.CLAIMED if claimed else Gtk.EventSequenceState.DENIED)
         self._apply_cursor()
 
@@ -387,14 +531,31 @@ class CanvasWidget(Gtk.Overlay):
         self.controller.pinch(self._pointer, scale / self._pinch_prev)   # scale is cumulative since 'begin'
         self._pinch_prev = scale
 
-    def _focus_in_node(self) -> bool:
+    def _focus_widget(self) -> Gtk.Widget | None:
         root = self.get_root()
-        f = root.get_focus() if root else None
+        return root.get_focus() if root else None
+
+    def _focus_in_node(self) -> bool:
+        f = self._focus_widget()
         return f is not None and f is not self and f.is_ancestor(self)
+
+    def _focus_in_terminal(self) -> bool:
+        f = self._focus_widget()
+        while f is not None and f is not self:
+            if is_terminal(f):
+                return True
+            f = f.get_parent()
+        return False
+
+    _TERMINAL_PASSTHROUGH = frozenset({"equal", "plus", "minus", "underscore", "0"})   # Ctrl+=/-/0 still zoom the canvas
 
     def _key_pressed(self, _c: Gtk.EventControllerKey, keyval: int, _code: int, state: Gdk.ModifierType) -> bool:
         name = (Gdk.keyval_name(keyval) or "").lower()
-        return self.controller.key(name, self._mods(state), canvas_focused=not self._focus_in_node())
+        mods = self._mods(state)
+        # A focused shell owns the keyboard (Ctrl+W = delete word, Ctrl+A = line start...): only canvas zoom chords are taken.
+        if self._focus_in_terminal() and not (mods & Mods.CTRL and name in self._TERMINAL_PASSTHROUGH):
+            return False
+        return self.controller.key(name, mods, canvas_focused=not self._focus_in_node())
 
     def _install_css(self) -> None:
         display = Gdk.Display.get_default()

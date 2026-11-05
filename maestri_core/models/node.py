@@ -55,9 +55,18 @@ class TerminalContent:
     terminal_id: str = ""
     id: str = ""
     shell_path: str = "/bin/bash"
-    status: str = "running"
+    status: str = "idle"
     is_manager: bool = False
+    monitor_with_ombro: bool = False
+    auto_scroll_locked: bool = False
+    shortcut_mode: Dict[str, Any] = field(default_factory=lambda: {"kind": "none"})
+    scrollback_line_count: int = 0
     font_size: Optional[float] = None
+    assigned_role_id: Optional[str] = None
+    scrollback_file: Optional[str] = None
+    last_active_at: Optional[str] = None
+    theme_id: Optional[str] = None
+    font_family: Optional[str] = None
     _extra: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -74,6 +83,7 @@ class TerminalContent:
 
     def to_dict(self) -> dict:
         d = dict(self._extra)
+        # Required non-optional fields in Swift Codable TerminalContent
         d.update({
             "name": self.name,
             "agentType": self.agent_type,
@@ -84,20 +94,34 @@ class TerminalContent:
             "id": str(self.terminal_id).upper(),
             "shellPath": self.shell_path,
             "status": self.status,
-            "isManager": self.is_manager,
-            "monitorWithOmbro": self._extra.get("monitorWithOmbro", False),
-            "autoScrollLocked": self._extra.get("autoScrollLocked", False),
-            "shortcutMode": self._extra.get("shortcutMode", {"kind": "none"}),
+            "isManager": bool(self.is_manager),
+            "monitorWithOmbro": bool(self.monitor_with_ombro),
+            "autoScrollLocked": bool(self.auto_scroll_locked),
+            "shortcutMode": self.shortcut_mode if self.shortcut_mode else {"kind": "none"},
+            "scrollbackLineCount": int(self.scrollback_line_count),
         })
+        # Optional fields: omit if None to match Swift Optional encoding
         if self.font_size is not None:
             d["fontSize"] = float(self.font_size)
+        if self.assigned_role_id is not None:
+            d["assignedRoleId"] = str(self.assigned_role_id).upper()
+        if self.scrollback_file is not None:
+            d["scrollbackFile"] = str(self.scrollback_file)
+        if self.last_active_at is not None:
+            d["lastActiveAt"] = str(self.last_active_at)
+        if self.theme_id is not None:
+            d["themeId"] = str(self.theme_id)
+        if self.font_family is not None:
+            d["fontFamily"] = str(self.font_family)
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "TerminalContent":
         known = {
             "name", "agentType", "command", "workingDirectory", "color",
-            "icon", "id", "shellPath", "status", "isManager", "fontSize"
+            "icon", "id", "shellPath", "status", "isManager", "fontSize",
+            "monitorWithOmbro", "autoScrollLocked", "shortcutMode", "scrollbackLineCount",
+            "assignedRoleId", "scrollbackFile", "lastActiveAt", "themeId", "fontFamily"
         }
         extra = {k: v for k, v in d.items() if k not in known}
         return cls(
@@ -109,9 +133,18 @@ class TerminalContent:
             icon=d.get("icon", "terminal"),
             terminal_id=str(d.get("id", uuid.uuid4())).upper(),
             shell_path=d.get("shellPath", "/bin/bash"),
-            status=d.get("status", "running"),
+            status=d.get("status", "idle"),
             is_manager=d.get("isManager", False),
+            monitor_with_ombro=d.get("monitorWithOmbro", False),
+            auto_scroll_locked=d.get("autoScrollLocked", False),
+            shortcut_mode=d.get("shortcutMode", {"kind": "none"}),
+            scrollback_line_count=int(d.get("scrollbackLineCount", 0)),
             font_size=d.get("fontSize"),
+            assigned_role_id=d.get("assignedRoleId"),
+            scrollback_file=d.get("scrollbackFile"),
+            last_active_at=d.get("lastActiveAt"),
+            theme_id=d.get("themeId"),
+            font_family=d.get("fontFamily"),
             _extra=extra,
         )
 
@@ -161,16 +194,24 @@ class StickyNoteContent:
 @dataclass
 class PortalContent:
     name: str = "Portal"
-    current_url: str = "https://google.com"
+    current_url: str = ""
     status: str = "idle"  # "idle" | "loading"
     chrome_hidden: bool = False
     storage_scope: str = "isolated"
     portal_id: str = field(default_factory=lambda: str(uuid.uuid4()).upper())
+    source: Optional[Dict[str, Any]] = None
     _extra: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = dict(self._extra)
-        src = {"url": {"_0": self.current_url}} if self.current_url else {}
+        # Preserve original source if present, else construct according to current_url
+        if self.source is not None:
+            src = self.source
+        elif self.current_url:
+            src = {"url": {"_0": self.current_url}}
+        else:
+            src = {}
+
         d.update({
             "id": str(self.portal_id).upper(),
             "name": self.name,
@@ -189,6 +230,7 @@ class PortalContent:
         return cls(
             name=d.get("name", "Portal"),
             current_url=d.get("currentURL", ""),
+            source=d.get("source"),
             status=d.get("status", "idle"),
             chrome_hidden=d.get("chromeHidden", False),
             storage_scope=d.get("storageScope", "isolated"),
@@ -264,10 +306,10 @@ class CanvasNode:
             }
         }
         d = dict(self._extra)
+        # In schemaVersion: 2, only "content" is present (no duplicate "type" key)
         d.update({
             "id": self.id,
             "frame": self.frame.to_list(),
-            "type": type_obj,
             "content": type_obj,
             "zIndex": int(self.z_index),
             "isLocked": self.is_locked,

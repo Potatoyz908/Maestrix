@@ -26,6 +26,9 @@ from ..models.node import CanvasNode
 from ..models.workspace import WorkspaceDocument, WorkspaceEntry, WorkspacePayload
 
 
+SCHEMA_VERSION = 2
+
+
 class MaestriAPIError(Exception):
     """Base exception for Maestri API client errors."""
 
@@ -520,7 +523,8 @@ class MaestriClient:
         return WorkspaceEntry.from_dict(data)
 
     def get_workspace(self, workspace_id: Optional[str] = None) -> Optional[WorkspaceDocument]:
-        """Fetches a full WorkspaceDocument schemaVersion: 2."""
+        """Fetches a full WorkspaceDocument. Returns None if offline or if the
+        document is not schemaVersion 2 (never silently reinterpret other schemas)."""
         url = f"{self.base_url}/api/workspace"
         if workspace_id:
             url += f"?id={urllib.parse.quote(workspace_id)}"
@@ -528,12 +532,22 @@ class MaestriClient:
         try:
             resp = self.session.get(url, headers=self._headers(), timeout=self.timeout)
             data = self._handle_response(resp).json()
-            return WorkspaceDocument.from_dict(data)
-        except requests.RequestException:
+        except (requests.RequestException, ValueError):
             return None
+        if not isinstance(data, dict) or int(data.get("schemaVersion", 0) or 0) != SCHEMA_VERSION:
+            return None
+        return WorkspaceDocument.from_dict(data)
 
     def save_workspace(self, document: WorkspaceDocument, workspace_id: Optional[str] = None) -> bool:
-        """Atomically saves a WorkspaceDocument on the server."""
+        """Atomically saves a WorkspaceDocument on the server (forces schemaVersion 2)."""
+        return self.save_workspace_dict(document.to_dict(), workspace_id)
+
+    def save_workspace_dict(self, data: Dict[str, Any], workspace_id: Optional[str] = None) -> bool:
+        """Saves an already-serialized document. Safe to call from a worker thread,
+        since `data` is an immutable snapshot taken on the main thread."""
+        data = dict(data)
+        data["schemaVersion"] = SCHEMA_VERSION
+        data.setdefault("type", "workspace")
         url = f"{self.base_url}/api/workspace"
         if workspace_id:
             url += f"?id={urllib.parse.quote(workspace_id)}"
@@ -541,7 +555,7 @@ class MaestriClient:
         try:
             resp = self.session.post(
                 url,
-                json=document.to_dict(),
+                json=data,
                 headers=self._headers({"Content-Type": "application/json"}),
                 timeout=self.timeout,
             )

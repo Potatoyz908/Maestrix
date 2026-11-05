@@ -65,7 +65,6 @@ class WorkspacePayload:
     name: str = "Default"
     working_directory: str = ""
     icon: str = "folder"
-    color: str = "blue"
     is_pinned: bool = False
     canvas_origin: List[float] = field(default_factory=lambda: [9800.0, 8500.0])
     canvas_zoom: float = 1.0
@@ -99,7 +98,6 @@ class WorkspacePayload:
             "name": self.name,
             "workingDirectory": self.working_directory,
             "icon": self.icon,
-            "color": self.color,
             "isPinned": self.is_pinned,
             "locationType": d.get("locationType", "local"),
             "preferredIDE": d.get("preferredIDE", "cursor"),
@@ -138,7 +136,7 @@ class WorkspacePayload:
             origin = [9800.0, 8500.0]
 
         known = {
-            "id", "name", "workingDirectory", "icon", "color", "isPinned",
+            "id", "name", "workingDirectory", "icon", "isPinned",
             "canvasOrigin", "canvasZoom", "nodes", "connections", "noteConnections",
             "portalConnections", "portalToPortalConnections", "noteToNoteConnections",
             "crossFloorConnections", "floors", "drawings", "createdAt", "lastModifiedAt", "lastOpenedAt"
@@ -150,7 +148,6 @@ class WorkspacePayload:
             name=d.get("name", "Default"),
             working_directory=d.get("workingDirectory", ""),
             icon=d.get("icon", "folder"),
-            color=d.get("color", "blue"),
             is_pinned=d.get("isPinned", False),
             canvas_origin=[float(origin[0]), float(origin[1])],
             canvas_zoom=float(d.get("canvasZoom", 1.0)),

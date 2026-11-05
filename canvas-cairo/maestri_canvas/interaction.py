@@ -342,7 +342,9 @@ class CanvasController:
                 self.vp.zoom_step(center, -1); self._viewport_changed(); return True
             if name == "0":
                 self.vp.set_zoom_at(center, 1.0); self._viewport_changed(); return True
-            if name == "w" and self.scene.selection:
+            # Ctrl+W deletes only from the canvas: inside a terminal it is readline's word-rubout, and a stray delete would destroy a
+            # node (and kill its shell) mid-typing. From inside a node use Ctrl+Shift+W (the usual terminal "close" chord).
+            if name == "w" and self.scene.selection and (canvas_focused or mods & Mods.SHIFT):
                 self._emit(DeleteRequested(tuple(sorted(self.scene.selection)))); return True
             if name == "a" and canvas_focused:
                 self._set_selection(set(self.scene.nodes)); return True

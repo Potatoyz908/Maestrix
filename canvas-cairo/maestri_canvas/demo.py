@@ -1,6 +1,6 @@
 """Interactive demo / screenshot harness:  python -m maestri_canvas.demo [--screenshot out.png --seconds 1.5]
 
-Content widgets here are stand-ins (labels, a TextView); in the app they are VTE/WebView/etc. supplied by the node factories."""
+The terminal node is a real VTE shell; other content widgets are stand-ins (a TextView) for the app's node factories."""
 from __future__ import annotations
 
 import argparse
@@ -20,7 +20,7 @@ from .widget import CanvasWidget
 def build_canvas() -> CanvasWidget:
     canvas = CanvasWidget(viewport=Viewport(Point(0, 0), 1.0))
     tv = Gtk.TextView(); tv.get_buffer().set_text("# a note\nplain text editor stand-in")
-    canvas.add_node(NodeItem("AAAAAAAA-0000-0000-0000-000000000001", Rect(60, 80, 360, 220), 1, "terminal", "Terminal A"), Gtk.Label(label="$ (terminal stand-in)"))
+    canvas.add_node(NodeItem("AAAAAAAA-0000-0000-0000-000000000001", Rect(60, 80, 360, 220), 1, "terminal", "Terminal A"), focus=True)   # native VTE login shell
     canvas.add_node(NodeItem("BBBBBBBB-0000-0000-0000-000000000002", Rect(560, 140, 320, 240), 2, "stickyNote", "Note 1"), tv)
     canvas.add_node(NodeItem("CCCCCCCC-0000-0000-0000-000000000003", Rect(300, 400, 220, 120), 3, "shape", "shape"))
     canvas.add_connection(ConnItem("11111111-0000-0000-0000-000000000001", "AAAAAAAA-0000-0000-0000-000000000001", "BBBBBBBB-0000-0000-0000-000000000002"))

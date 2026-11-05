@@ -50,7 +50,10 @@ class SignalBus(GObject.Object):
 
     def emit_main_thread(self, signal_name: str, *args):
         """Emit signal safely on GTK Main Thread."""
-        GLib.idle_add(lambda: self.emit(signal_name, *args))
+        def _cb():
+            self.emit(signal_name, *args)
+            return GLib.SOURCE_REMOVE
+        GLib.idle_add(_cb)
 
 
 # Global shared bus

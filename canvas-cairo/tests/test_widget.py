@@ -163,3 +163,34 @@ def test_connecting_reveals_pins_and_top_layer_paints_only_during_gestures(canva
     canvas.controller.release(Point(900, 500), Mods.NONE)
     pump(0.15)
     assert not canvas.has_css_class("maestri-connecting") and canvas.controller.overlay.is_empty()
+
+
+def _shot(canvas, path):
+    from maestri_canvas.demo import screenshot
+    screenshot(canvas, path)
+    surf = __import__("cairo").ImageSurface.create_from_png(path)
+    return surf.get_width(), surf.get_height(), bytes(surf.get_data())
+
+
+def test_drawing_area_and_texture_paths_paint_the_same_pixels(tmp_path):
+    import maestri_canvas.widget as W
+    from maestri_canvas.demo import build_canvas
+    results = {}
+    for use_da in ([True, False] if W.USE_DRAWING_AREA else [False]):
+        saved = W.USE_DRAWING_AREA
+        W.USE_DRAWING_AREA = use_da
+        try:
+            c = build_canvas()
+            c.controller.vp.zoom_at(Point(500, 300), 0.9)
+            win = Gtk.Window(default_width=1000, default_height=620); win.set_child(c); win.present()
+            pump(0.6)
+            results[use_da] = _shot(c, str(tmp_path / f"{use_da}.png"))
+            win.destroy(); pump(0.05)
+        finally:
+            W.USE_DRAWING_AREA = saved
+    assert results[False][2].count(b"\xf2") > 1000                # the fallback really painted the background (0.949 -> 242)
+    if len(results) == 2:
+        (w1, h1, a), (w2, h2, b) = results[True], results[False]
+        assert (w1, h1) == (w2, h2)
+        diff = sum(abs(x - y) for x, y in zip(a, b)) / len(a)       # mean abs difference per byte
+        assert diff < 1.0, f"paint paths diverge (mean abs byte diff {diff:.2f})"
