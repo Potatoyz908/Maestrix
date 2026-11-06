@@ -38,7 +38,7 @@ final class WorkspaceManager: Identifiable {
 
     /// Terminal 节点数量（侧边栏徽章用，避免在 View body 里做 O(n) filter）
     var terminalCount: Int {
-        nodes.count(where: { if case .terminal = $0.content { true } else { false } })
+        WorkspacePayload.terminalCount(in: nodes)
     }
 
     private let logger = Logger.make(category: "WorkspaceManager")

@@ -740,8 +740,8 @@ public final class InterAgentServer {
             do {
                 try pm.ensureWorkspaceDirectoryExists(id: doc.payload.id)
                 try pm.saveSync(doc, to: pm.workspaceURL(id: doc.payload.id))
-                EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: doc.payload.id, payload: [:])
-                let respJson = "{\"status\":\"ok\",\"id\":\"\(doc.payload.id.uuidString)\"}"
+                Self.publishWorkspaceSaved(doc.payload.id)
+                let respJson = "{\"status\":\"ok\",\"id\":\"\(doc.payload.id.uuidString)\",\"terminalCount\":\(doc.payload.terminalCount)}"
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: respJson, allowedOrigin: allowedOrigin)
             } catch {
                 return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
@@ -1190,7 +1190,7 @@ public final class InterAgentServer {
                         "ropePoints": ropePoints,
                     ]
                 )
-                EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
+                Self.publishWorkspaceSaved(wsId)
                 let resp = "{\"id\":\"\(connId.uuidString)\",\"status\":\"ok\"}"
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp, allowedOrigin: allowedOrigin)
             } catch {
@@ -1252,7 +1252,7 @@ public final class InterAgentServer {
                         info["connectionId"] = connId.uuidString
                         EventBroadcaster.shared.publish(type: "connectionRemoved", workspaceId: wsId, payload: info)
                     }
-                    EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
+                    Self.publishWorkspaceSaved(wsId)
                 }
             }
 
@@ -1300,7 +1300,7 @@ public final class InterAgentServer {
                 type: "connectionChanged", workspaceId: wsId,
                 payload: ["connectionId": connId.uuidString, "kind": resolvedKind, "ropePoints": points]
             )
-            EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
+            Self.publishWorkspaceSaved(wsId)
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
         }
 
@@ -1398,7 +1398,8 @@ public final class InterAgentServer {
                     "color": w.color,
                     "isPinned": w.isPinned,
                     "locationType": w.locationType,
-                    "createdAt": isoFormatter.string(from: Date())
+                    "createdAt": isoFormatter.string(from: Date()),
+                    "terminalCount": Self.terminalCount(workspaceId: w.id)
                 ])
             }
             if let data = try? JSONSerialization.data(withJSONObject: list, options: [.prettyPrinted]) {
@@ -1455,7 +1456,8 @@ public final class InterAgentServer {
                 "color": color,
                 "isPinned": isPinned,
                 "locationType": locationType,
-                "createdAt": isoFormatter.string(from: Date())
+                "createdAt": isoFormatter.string(from: Date()),
+                "terminalCount": Self.terminalCount(workspaceId: id)
             ]
             if let data = try? JSONSerialization.data(withJSONObject: respObj) {
                 return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
@@ -1516,7 +1518,8 @@ public final class InterAgentServer {
                 "color": updated.color,
                 "isPinned": updated.isPinned,
                 "locationType": updated.locationType,
-                "createdAt": isoFormatter.string(from: updated.createdAt)
+                "createdAt": isoFormatter.string(from: updated.createdAt),
+                "terminalCount": Self.terminalCount(workspaceId: wsId)
             ]
             if let data = try? JSONSerialization.data(withJSONObject: respObj) {
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
@@ -1577,7 +1580,8 @@ public final class InterAgentServer {
                 "color": newEntry.color,
                 "isPinned": newEntry.isPinned,
                 "locationType": newEntry.locationType,
-                "createdAt": isoFormatter.string(from: newEntry.createdAt)
+                "createdAt": isoFormatter.string(from: newEntry.createdAt),
+                "terminalCount": Self.terminalCount(workspaceId: newId)
             ]
             if let data = try? JSONSerialization.data(withJSONObject: respObj) {
                 return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
@@ -1703,7 +1707,7 @@ public final class InterAgentServer {
                     payload: ["floorId": floor.id.uuidString, "name": floor.name,
                               "branchName": floor.branchName, "worktreePath": floor.worktreePath]
                 )
-                EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
+                Self.publishWorkspaceSaved(wsId)
 
                 let respObj = Self.floorJSON(floorEntry)
                 if let data = try? JSONSerialization.data(withJSONObject: respObj) {
@@ -1813,7 +1817,7 @@ public final class InterAgentServer {
                 type: "floorChanged", workspaceId: wsId,
                 payload: ["floorId": updated.id.uuidString, "name": updated.name, "branchName": updated.branchName]
             )
-            EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
+            Self.publishWorkspaceSaved(wsId)
             let data = (try? JSONSerialization.data(withJSONObject: Self.floorJSON(updated))) ?? Data("{}".utf8)
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
         }
@@ -1851,7 +1855,7 @@ public final class InterAgentServer {
                 return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
             EventBroadcaster.shared.publish(type: "floorRemoved", workspaceId: wsId, payload: ["floorId": floorId.uuidString])
-            EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: wsId, payload: [:])
+            Self.publishWorkspaceSaved(wsId)
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
         }
 
@@ -2218,7 +2222,8 @@ public final class InterAgentServer {
             let fileURL = pm.workspaceURL(id: wsId)
             try? pm.saveSync(doc, to: fileURL)
 
-            var nodePayload: [String: Any] = ["nodeId": nodeId.uuidString, "nodeType": nodeType]
+            var nodePayload: [String: Any] = ["nodeId": nodeId.uuidString, "nodeType": nodeType,
+                                              "terminalCount": doc.payload.terminalCount]
             if let enc = try? pm.encoder.encode(node),
                let obj = try? JSONSerialization.jsonObject(with: enc) {
                 nodePayload["node"] = obj
@@ -2280,7 +2285,8 @@ public final class InterAgentServer {
             for ev in prunedEvents {
                 EventBroadcaster.shared.publish(type: "connectionRemoved", workspaceId: wsId, payload: ev)
             }
-            EventBroadcaster.shared.publish(type: "nodeRemoved", workspaceId: wsId, payload: ["nodeId": nodeId.uuidString])
+            EventBroadcaster.shared.publish(type: "nodeRemoved", workspaceId: wsId,
+                                            payload: ["nodeId": nodeId.uuidString, "terminalCount": doc.payload.terminalCount])
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
         }
 
@@ -2338,6 +2344,18 @@ public final class InterAgentServer {
         floor.hooks = entry.hooks
         floor.createdAt = entry.createdAt
         return floor
+    }
+
+    /// Terminal 节点数量，读自 workspace.json（唯一事实来源，见 `WorkspacePayload.terminalCount`）；
+    /// 文档不存在或无法解码时为 0。
+    static func terminalCount(workspaceId: UUID) -> Int {
+        (try? PersistenceManager.shared.loadWorkspace(id: workspaceId))?.payload.terminalCount ?? 0
+    }
+
+    /// `workspaceSaved` 事件：附带保存后的 `terminalCount`，侧边栏无需重新拉取 /api/workspaces。
+    static func publishWorkspaceSaved(_ workspaceId: UUID) {
+        EventBroadcaster.shared.publish(type: "workspaceSaved", workspaceId: workspaceId,
+                                        payload: ["terminalCount": terminalCount(workspaceId: workspaceId)])
     }
 
     static func floorJSON(_ f: FloorEntry) -> [String: Any] {

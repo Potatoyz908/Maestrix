@@ -66,6 +66,7 @@ let coreTestSources: [String] = [
     "Workspace/CanvasNodeLegacyDecodeTests.swift",
     "Workspace/PersistenceManagerTests.swift",
     "Workspace/MigrationTests.swift",
+    "Workspace/WorkspaceTerminalCountTests.swift",
     "InterAgent/LinuxPtyAndServerTests.swift",
     "InterAgent/EventStreamTests.swift",
     "Workspace/CrossLanguageDecodingTests.swift",

@@ -61,6 +61,17 @@ struct WorkspacePayload: Codable {
     }
 }
 
+extension WorkspacePayload {
+    /// Terminal 节点数量 —— 总是由 `nodes` 中 `NodeContent.terminal` 派生，从不存储：
+    /// 不参与 Codable（计算属性），workspace.json schemaVersion 2 / manifest 格式不变。
+    /// 侧边栏徽章与 `/api/workspaces` 的 `terminalCount` 字段都以此为唯一来源。
+    var terminalCount: Int { Self.terminalCount(in: nodes) }
+
+    static func terminalCount(in nodes: [CanvasNode]) -> Int {
+        nodes.reduce(0) { $0 + ($1.content.terminalContent != nil ? 1 : 0) }
+    }
+}
+
 // MARK: - Connection Types
 
 /// Terminal↔Terminal 连接

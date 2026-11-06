@@ -277,6 +277,100 @@ final class EventStreamTests: XCTestCase {
         }.value
     }
 
+    /// Sidebar contract: `terminalCount` in /api/workspaces (and create/edit/duplicate responses, save response,
+    /// nodeAdded/nodeRemoved/workspaceSaved events) always equals the `.terminal` nodes in workspace.json.
+    func testWorkspaceTerminalCountFollowsNodesAndWorkspaceLifecycle() async throws {
+        let (port, token): (UInt16, String) = try await MainActor.run {
+            try InterAgentServer.shared.start()
+            return (InterAgentServer.shared.port, InterAgentServer.shared.authToken)
+        }
+        defer { Task { @MainActor in InterAgentServer.shared.stop() } }
+        let pm = PersistenceManager.shared
+        let previousActive = (try? pm.loadAppState())?.activeWorkspaceId   // POST /api/workspaces switches it
+        let wsId = UUID()
+        var copyId: String?
+        defer {
+            for id in [wsId.uuidString, copyId].compactMap({ $0 }) {
+                _ = try? Self.exchange(port: port, request:
+                    "DELETE /api/workspaces/\(id) HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer \(token)\r\nConnection: close\r\n\r\n")
+            }
+            var st = (try? pm.loadAppState()) ?? AppStateData()
+            st.activeWorkspaceId = previousActive
+            try? pm.saveAppState(st)
+        }
+
+        copyId = try await Task.detached { () -> String in
+            let auth = "Authorization: Bearer \(token)\r\n"
+            func send(_ method: String, _ path: String, _ body: String = "") throws -> String {
+                try Self.exchange(port: port, request:
+                    "\(method) \(path) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)")
+            }
+            func object(_ resp: String) throws -> [String: Any] {
+                try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.extractJSONBody(resp).utf8)) as? [String: Any], resp)
+            }
+            func listed(_ id: String) throws -> Int? {
+                let list = try XCTUnwrap(JSONSerialization.jsonObject(
+                    with: Data(Self.extractJSONBody(send("GET", "/api/workspaces")).utf8)) as? [[String: Any]])
+                guard let e = list.first(where: { $0["id"] as? String == id }) else { return nil }
+                return try XCTUnwrap(e["terminalCount"] as? Int, "every entry carries terminalCount")
+            }
+            let id = wsId.uuidString
+            let ws = try Self.openEventSocket(port: port, token: token)
+            defer { close(ws) }
+
+            // create -> 0
+            let created = try object(send("POST", "/api/workspaces",
+                "{\"id\":\"\(id)\",\"name\":\"Count \(id.prefix(4))\",\"workingDirectory\":\"/tmp\"}"))
+            XCTAssertEqual(created["terminalCount"] as? Int, 0)
+            XCTAssertEqual(try listed(id), 0)
+
+            // add 2 terminals + 1 note -> 2 (nodeAdded carries the count)
+            var terminalNodes: [String] = []
+            for (i, type) in ["terminal", "stickyNote", "terminal"].enumerated() {
+                let node = try object(send("POST", "/api/nodes?workspace=\(id)", "{\"nodeType\":\"\(type)\"}"))
+                let added = try Self.readEvent(ws, type: "nodeAdded")
+                XCTAssertEqual(added["terminalCount"] as? Int, [1, 1, 2][i])
+                if type == "terminal" { terminalNodes.append(try XCTUnwrap(node["id"] as? String)) }
+            }
+            XCTAssertEqual(try listed(id), 2)
+
+            // remove one terminal -> 1
+            XCTAssertTrue(try send("DELETE", "/api/nodes/\(terminalNodes[0])?workspace=\(id)").contains("200 OK"))
+            XCTAssertEqual(try Self.readEvent(ws, type: "nodeRemoved")["terminalCount"] as? Int, 1)
+            XCTAssertEqual(try listed(id), 1)
+
+            // client save (duplicate a terminal on the canvas + move it) -> 2, in the response and in workspaceSaved
+            var doc = try object(send("GET", "/api/workspace?id=\(id)"))
+            var payload = try XCTUnwrap(doc["payload"] as? [String: Any])
+            var nodes = try XCTUnwrap(payload["nodes"] as? [[String: Any]])
+            var dup = try XCTUnwrap(nodes.first(where: { ($0["content"] as? [String: Any])?["terminal"] != nil }))
+            dup["id"] = UUID().uuidString
+            dup["frame"] = [[10400.0, 8900.0], [500.0, 350.0]]
+            nodes.append(dup)
+            payload["nodes"] = nodes
+            doc["payload"] = payload
+            let saved = try object(send("POST", "/api/workspace",
+                String(decoding: JSONSerialization.data(withJSONObject: doc), as: UTF8.self)))
+            XCTAssertEqual(saved["terminalCount"] as? Int, 2)
+            let savedEvent = try Self.readEvent(ws, type: "workspaceSaved")
+            XCTAssertEqual(savedEvent["workspaceId"] as? String, id)
+            XCTAssertEqual(savedEvent["terminalCount"] as? Int, 2)
+            XCTAssertEqual(try listed(id), 2)
+
+            // rename keeps it; duplicate copies it; delete drops the entry
+            let renamed = try object(send("PUT", "/api/workspaces/\(id)", "{\"name\":\"Count renamed\"}"))
+            XCTAssertEqual(renamed["terminalCount"] as? Int, 2)
+            let copy = try object(send("POST", "/api/workspaces/\(id)/duplicate"))
+            let cid = try XCTUnwrap(copy["id"] as? String)
+            XCTAssertEqual(copy["terminalCount"] as? Int, 2)
+            XCTAssertEqual(try listed(cid), 2)
+            XCTAssertTrue(try send("DELETE", "/api/workspaces/\(cid)").contains("200 OK"))
+            XCTAssertNil(try listed(cid))
+            XCTAssertEqual(try listed(id), 2, "deleting the copy leaves the original untouched")
+            return cid
+        }.value
+    }
+
     // MARK: - Helpers (blocking, call off the main actor)
 
     private static func connect(port: UInt16) throws -> Int32 {
