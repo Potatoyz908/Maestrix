@@ -191,6 +191,17 @@ final class EventStreamTests: XCTestCase {
                 "GET /api/floors?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
             XCTAssertTrue(floorsResp.contains(floorId), "Floor must survive POST /api/workspace without floors: \(floorsResp)")
 
+            // GET /api/floors/:id/land-preview -> returns merge-tree diff/stat and broadcasts floorLandPreview
+            let previewResp = try Self.exchange(port: port, request:
+                "GET /api/floors/\(floorId)/land-preview?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(previewResp.contains("200 OK"), previewResp)
+            XCTAssertTrue(previewResp.contains("\"diff\":"), previewResp)
+            XCTAssertTrue(previewResp.contains("\"treeOid\":"), previewResp)
+            let fPreview = try Self.readEvent(ws, type: "floorLandPreview")
+            XCTAssertEqual(fPreview["floorId"] as? String, floorId)
+            XCTAssertEqual(fPreview["floorBranch"] as? String, "floor/sprint-4-ui")
+            XCTAssertNotNil(fPreview["diff"] as? String)
+
             // Delete floor -> floorRemoved event
             let delFloor = try Self.exchange(port: port, request:
                 "DELETE /api/floors/\(floorId)?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")

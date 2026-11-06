@@ -1531,7 +1531,10 @@ public final class InterAgentServer {
             let branchName = (json["branchName"] as? String) ?? "floor/\(FloorManager.slugify(name))"
 
             do {
-                let floor = try FloorManager.shared.createFloor(name: name, branchName: branchName, workingDirectory: workingDirectory)
+                let floor = try FloorManager.shared.createFloor(
+                    name: name, branchName: branchName, workingDirectory: workingDirectory,
+                    existingBranch: (json["existingBranch"] as? Bool) ?? false,
+                    baseBranch: json["baseBranch"] as? String)
                 var hooks = floor.hooks
                 if let hooksDict = json["hooks"] as? [String: Any] {
                     hooks = Self.decodeFloorHooks(hooksDict, fallback: hooks)
@@ -1561,6 +1564,52 @@ public final class InterAgentServer {
                 return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", body: "{\"id\":\"\(floor.id.uuidString)\"}", allowedOrigin: allowedOrigin)
             } catch {
                 return Self.buildHTTPResponse(status: 400, body: "error: failed to create floor - \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
+        }
+
+        // GET /api/floors/:id/land-preview?target=<branch>  -> {floorBranch, target, branches, dirty, dirtyFiles, sameBranch,
+        //                                                     ahead, fastForward, stat, conflicts, canLand}
+        // POST /api/floors/:id/land  body: {target}          -> {status, commit, target}
+        if (method == "GET" && cleanPath.hasPrefix("/api/floors/") && cleanPath.hasSuffix("/land-preview"))
+            || (method == "POST" && cleanPath.hasPrefix("/api/floors/") && cleanPath.hasSuffix("/land")) {
+            let isPreview = method == "GET"
+            let rawId = String(cleanPath.dropFirst("/api/floors/".count).dropLast(isPreview ? "/land-preview".count : "/land".count))
+            guard let floorId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid floor ID", allowedOrigin: allowedOrigin)
+            }
+            let pm = PersistenceManager.shared
+            guard let wsId = Self.resolveWorkspaceId(pathParts: pathParts, pm: pm),
+                  let doc = try? pm.loadWorkspace(id: wsId),
+                  let entry = doc.payload.floors.first(where: { $0.id == floorId }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: floor not found", allowedOrigin: allowedOrigin)
+            }
+            let wd = Self.floorRepoDirectory(entry: entry, fallback: doc.payload.workingDirectory)
+            let floor = Self.floor(from: entry, workingDirectory: wd)
+            do {
+                if isPreview {
+                    let preview = try FloorManager.shared.landPreview(floor: floor, target: Self.queryValue(pathParts, "target"), workingDirectory: wd)
+                    var respObj = preview.json
+                    respObj["floorId"] = entry.id.uuidString
+                    EventBroadcaster.shared.publish(
+                        type: "floorLandPreview", workspaceId: wsId,
+                        payload: respObj
+                    )
+                    let data = (try? JSONSerialization.data(withJSONObject: respObj)) ?? Data("{}".utf8)
+                    return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+                }
+                let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+                guard let target = json?["target"] as? String, !target.isEmpty else {
+                    return Self.buildHTTPResponse(status: 400, body: "error: missing target branch", allowedOrigin: allowedOrigin)
+                }
+                let commit = try FloorManager.shared.land(floor: floor, targetBranch: target, workingDirectory: wd)
+                EventBroadcaster.shared.publish(
+                    type: "floorLanded", workspaceId: wsId,
+                    payload: ["floorId": entry.id.uuidString, "target": target, "commit": commit]
+                )
+                let data = (try? JSONSerialization.data(withJSONObject: ["status": "ok", "commit": commit, "target": target])) ?? Data("{}".utf8)
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            } catch {
+                return Self.buildHTTPResponse(status: 409, body: "error: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
         }
 
@@ -1615,12 +1664,13 @@ public final class InterAgentServer {
             guard let entry = doc.payload.floors.first(where: { $0.id == floorId }) else {
                 return Self.buildHTTPResponse(status: 404, body: "error: floor not found", allowedOrigin: allowedOrigin)
             }
-            let keepWorktree = pathParts.count > 1 && pathParts[1].contains("removeWorktree=0")
-            if !keepWorktree && FileManager.default.fileExists(atPath: entry.worktreePath) {
-                var floor = Floor(id: entry.id, name: entry.name, branchName: entry.branchName, workspaceDir: doc.payload.workingDirectory)
-                floor.worktreePath = entry.worktreePath
+            let keepWorktree = Self.queryValue(pathParts, "removeWorktree") == "0"
+            let deleteBranch = Self.queryValue(pathParts, "deleteBranch") == "1"
+            if !keepWorktree {
+                let wd = Self.floorRepoDirectory(entry: entry, fallback: doc.payload.workingDirectory)
+                let floor = Self.floor(from: entry, workingDirectory: wd)
                 do {
-                    try FloorManager.shared.removeFloor(floor, workingDirectory: doc.payload.workingDirectory)
+                    try FloorManager.shared.removeFloor(floor, workingDirectory: wd, deleteBranch: deleteBranch)
                 } catch {
                     return Self.buildHTTPResponse(status: 400, body: "error: failed to remove worktree - \(error.localizedDescription)", allowedOrigin: allowedOrigin)
                 }
@@ -2092,6 +2142,34 @@ public final class InterAgentServer {
         }
         if let id = (try? pm.loadAppState())?.activeWorkspaceId { return id }
         return ((try? pm.loadManifest()) ?? WorkspaceManifest()).workspaces.first?.id
+    }
+
+    /// Percent-decoded value of `key` in the request query (pathParts[1]).
+    static func queryValue(_ pathParts: [String], _ key: String) -> String? {
+        guard pathParts.count > 1 else { return nil }
+        for pair in pathParts[1].components(separatedBy: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            if kv.count == 2 && kv[0] == key {
+                return kv[1].replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? kv[1]
+            }
+        }
+        return nil
+    }
+
+    static func floorRepoDirectory(entry: FloorEntry, fallback: String) -> String {
+        if let range = entry.worktreePath.range(of: "/.open-maestri/floors/") {
+            let candidate = String(entry.worktreePath[..<range.lowerBound])
+            if !candidate.isEmpty { return candidate }
+        }
+        return fallback
+    }
+
+    static func floor(from entry: FloorEntry, workingDirectory: String) -> Floor {
+        var floor = Floor(id: entry.id, name: entry.name, branchName: entry.branchName, workspaceDir: workingDirectory)
+        floor.worktreePath = entry.worktreePath
+        floor.hooks = entry.hooks
+        floor.createdAt = entry.createdAt
+        return floor
     }
 
     static func floorJSON(_ f: FloorEntry) -> [String: Any] {

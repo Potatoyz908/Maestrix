@@ -86,39 +86,154 @@ final class FloorManager {
 
     // MARK: - Floor 创建
 
-    func createFloor(name: String, branchName: String, workingDirectory: String) throws -> Floor {
+    /// `existingBranch`: check out a branch that already exists (no `-b`). `baseBranch`: start point of a new branch
+    /// (default: Ground's HEAD).
+    func createFloor(name: String, branchName: String, workingDirectory: String,
+                     existingBranch: Bool = false, baseBranch: String? = nil) throws -> Floor {
         // 验证工作目录是 git repo
         let gitDir = workingDirectory + "/.git"
         guard FileManager.default.fileExists(atPath: gitDir) else {
             let fmt = Bundle.main.localizedString(forKey: "floor.error.not_git_repo", value: nil, table: nil)
-            throw MaestriError.terminalConnectionFailed(String(format: fmt, workingDirectory))
+            throw MaestriError.floorOperationFailed(String(format: fmt, workingDirectory))
         }
 
         Self.ensureGitExclude(in: workingDirectory)
         let floor = Floor(name: name, branchName: branchName, workspaceDir: workingDirectory)
-        try runGit(["worktree", "add", "-b", branchName, floor.worktreePath], in: workingDirectory)
+        try runGit(Self.worktreeAddArgs(branch: branchName, path: floor.worktreePath,
+                                        existingBranch: existingBranch, baseBranch: baseBranch), in: workingDirectory)
         logger.info("Floor '\(name)' created at \(floor.worktreePath)")
         return floor
     }
 
     // MARK: - Floor 删除
 
-    func removeFloor(_ floor: Floor, workingDirectory: String) throws {
-        try runGit(["worktree", "remove", "--force", floor.worktreePath], in: workingDirectory)
-        logger.info("Floor '\(floor.name)' removed")
+    /// `git worktree add` argv (pure, unit-tested). `--` keeps a hostile path from being read as an option.
+    static func worktreeAddArgs(branch: String, path: String, existingBranch: Bool, baseBranch: String?) -> [String] {
+        if existingBranch {
+            return ["worktree", "add", "--", path, branch]
+        }
+        var args = ["worktree", "add", "-b", branch, "--", path]
+        if let base = baseBranch, !base.isEmpty { args.append(base) }
+        return args
     }
 
-    // MARK: - Landing（合并提交到目标分支）
+    /// Removes the worktree (always) and, when `deleteBranch`, the floor's branch. The `floors/` directory goes away with
+    /// the last floor.
+    func removeFloor(_ floor: Floor, workingDirectory: String, deleteBranch: Bool = false) throws {
+        if FileManager.default.fileExists(atPath: floor.worktreePath) {
+            try runGit(["worktree", "remove", "--force", "--", floor.worktreePath], in: workingDirectory)
+        } else {
+            _ = try? runGit(["worktree", "prune"], in: workingDirectory)
+        }
+        if deleteBranch {
+            try runGit(["branch", "-D", "--", floor.branchName], in: workingDirectory)
+        }
+        let floorsDir = URL(fileURLWithPath: floor.worktreePath).deletingLastPathComponent().path
+        if let rest = try? FileManager.default.contentsOfDirectory(atPath: floorsDir), rest.isEmpty {
+            try? FileManager.default.removeItem(atPath: floorsDir)
+        }
+        logger.info("Floor '\(floor.name)' removed (deleteBranch=\(deleteBranch))")
+    }
 
-    func land(floor: Floor, targetBranch: String, workingDirectory: String) throws {
-        // 获取 Floor 分支提交到主仓库
-        try runGit([
-            "fetch",
-            floor.worktreePath,
-            "\(floor.branchName):\(floor.branchName)"
-        ], in: workingDirectory)
-        try runGit(["merge", floor.branchName, "--no-ff", "-m", "Landing: \(floor.name)"], in: workingDirectory)
-        logger.info("Floor '\(floor.name)' landed onto '\(targetBranch)'")
+    // MARK: - Landing preview / landing (git plumbing; Ground's working tree is only touched by a --ff-only update)
+
+    struct LandPreview {
+        var floorBranch: String
+        var target: String
+        var branches: [String]
+        var dirty: Bool
+        var dirtyFiles: [String]
+        var sameBranch: Bool
+        var ahead: Int
+        var fastForward: Bool
+        var stat: String
+        var diff: String = ""
+        var treeOid: String = ""
+        var conflicts: [String]
+
+        var canLand: Bool { !dirty && conflicts.isEmpty && !sameBranch && ahead > 0 }
+
+        var json: [String: Any] {
+            ["floorBranch": floorBranch, "target": target, "branches": branches, "dirty": dirty, "dirtyFiles": dirtyFiles,
+             "sameBranch": sameBranch, "ahead": ahead, "fastForward": fastForward, "stat": stat, "diff": diff,
+             "treeOid": treeOid, "conflicts": conflicts, "canLand": canLand]
+        }
+    }
+
+    /// Ground's checked-out branch (nil when detached).
+    func groundBranch(workingDirectory: String) -> String? {
+        guard let out = try? runGit(["symbolic-ref", "--quiet", "--short", "HEAD"], in: workingDirectory) else { return nil }
+        let b = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return b.isEmpty ? nil : b
+    }
+
+    func landPreview(floor: Floor, target requested: String?, workingDirectory: String) throws -> LandPreview {
+        let branches = (try runGit(["for-each-ref", "--format=%(refname:short)", "refs/heads/"], in: workingDirectory))
+            .split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        let target = (requested?.isEmpty == false ? requested : nil)
+            ?? groundBranch(workingDirectory: workingDirectory) ?? branches.first ?? "main"
+        let porcelain = FileManager.default.fileExists(atPath: floor.worktreePath)
+            ? try runGit(["status", "--porcelain"], in: floor.worktreePath) : ""
+        let dirtyFiles = porcelain.split(separator: "\n").map { String($0.dropFirst(3)) }.filter { !$0.isEmpty }
+        var p = LandPreview(floorBranch: floor.branchName, target: target, branches: branches, dirty: !dirtyFiles.isEmpty,
+                            dirtyFiles: dirtyFiles, sameBranch: target == floor.branchName, ahead: 0, fastForward: false,
+                            stat: "", conflicts: [])
+        // A worktree shares refs with Ground: landing into the floor's own branch has nothing to transfer.
+        guard !p.sameBranch else { return p }
+        try runGit(["rev-parse", "--verify", "--quiet", "refs/heads/\(target)"], in: workingDirectory)
+        p.ahead = Int((try runGit(["rev-list", "--count", "\(target)..\(floor.branchName)"], in: workingDirectory))
+            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        p.fastForward = (try? runGit(["merge-base", "--is-ancestor", target, floor.branchName], in: workingDirectory)) != nil
+        p.stat = (try runGit(["diff", "--shortstat", "\(target)...\(floor.branchName)"], in: workingDirectory))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        p.diff = (try? runGit(["diff", "\(target)...\(floor.branchName)"], in: workingDirectory)) ?? ""
+        let r = runGitStatus(["merge-tree", "--write-tree", "--name-only", "--no-messages", target, floor.branchName],
+                             in: workingDirectory)
+        let lines = r.output.split(separator: "\n").map(String.init)
+        p.treeOid = lines.first ?? ""
+        if !p.fastForward {
+            if r.status == 1 {   // conflicts: line 1 = tree oid, then the conflicted paths
+                var seen = Set<String>()
+                p.conflicts = lines.dropFirst().filter { !$0.isEmpty && seen.insert($0).inserted }
+            } else if r.status != 0 {
+                throw MaestriError.floorOperationFailed("git merge-tree failed: \(r.output)")
+            }
+        }
+        return p
+    }
+
+    /// Lands `floor` into `target`. Refuses a dirty floor and conflicts. Fast-forward when possible, otherwise a merge
+    /// commit built with merge-tree + commit-tree. The target ref moves with update-ref (compare-and-swap); when the target
+    /// is the branch checked out in Ground, Ground is advanced with `merge --ff-only` instead, which refuses to clobber local
+    /// changes. Returns the new target commit.
+    @discardableResult
+    func land(floor: Floor, targetBranch: String, workingDirectory: String) throws -> String {
+        let p = try landPreview(floor: floor, target: targetBranch, workingDirectory: workingDirectory)
+        if p.dirty { throw MaestriError.floorOperationFailed("floor has uncommitted changes") }
+        if p.sameBranch { throw MaestriError.floorOperationFailed("target is the floor's own branch: nothing to land") }
+        if !p.conflicts.isEmpty { throw MaestriError.floorOperationFailed("merge conflicts: \(p.conflicts.joined(separator: ", "))") }
+        if p.ahead == 0 { throw MaestriError.floorOperationFailed("nothing to land: \(floor.branchName) has no new commits") }
+
+        let oldTarget = try runGit(["rev-parse", "refs/heads/\(targetBranch)"], in: workingDirectory)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let floorTip = try runGit(["rev-parse", "refs/heads/\(floor.branchName)"], in: workingDirectory)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var newCommit = floorTip
+        if !p.fastForward {
+            let tree = try runGit(["merge-tree", "--write-tree", targetBranch, floor.branchName], in: workingDirectory)
+                .split(separator: "\n").first.map(String.init) ?? ""
+            newCommit = try runGit(["commit-tree", tree, "-p", oldTarget, "-p", floorTip,
+                                    "-m", "Land floor '\(floor.name)' (\(floor.branchName)) into \(targetBranch)"],
+                                   in: workingDirectory).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if groundBranch(workingDirectory: workingDirectory) == targetBranch {
+            try runGit(["merge", "--ff-only", "--quiet", newCommit], in: workingDirectory)
+        } else {
+            try runGit(["update-ref", "-m", "land floor \(floor.name)", "refs/heads/\(targetBranch)", newCommit, oldTarget],
+                       in: workingDirectory)
+        }
+        logger.info("Floor '\(floor.name)' landed onto '\(targetBranch)' at \(newCommit.prefix(8))")
+        return newCommit
     }
 
     // MARK: - Hooks 执行
@@ -139,17 +254,37 @@ final class FloorManager {
 
     // MARK: - 内部 git 调用
 
+    /// Runs git and throws on a non-zero exit (git's own message in the error), so failures reach the API as 400s.
     @discardableResult
     private func runGit(_ args: [String], in directory: String) throws -> String {
+        let r = runGitStatus(args, in: directory)
+        guard r.status == 0 else {
+            throw MaestriError.floorOperationFailed("git \(args.first ?? "") failed: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        return r.output
+    }
+
+    private func runGitStatus(_ args: [String], in directory: String) -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = args
         process.currentDirectoryURL = URL(fileURLWithPath: directory)
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
+        let out = Pipe(), err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        do { try process.run() } catch { return (-1, "\(error)") }
+        // Drain both pipes concurrently before waiting: a full pipe would otherwise block git forever.
+        var e = Data()
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            e = err.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+        let o = out.fileHandleForReading.readDataToEndOfFile()
+        group.wait()
         process.waitUntilExit()
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let text = String(data: o, encoding: .utf8) ?? ""
+        return (process.terminationStatus, process.terminationStatus == 0 ? text : text + (String(data: e, encoding: .utf8) ?? ""))
     }
 }

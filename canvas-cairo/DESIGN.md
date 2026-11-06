@@ -140,6 +140,20 @@ Mapping to `maestri_core.signals.bus` (not wired: that package does not import y
 - Refused connection pairs: toast + red flash on both nodes + `connection-refused` signal. Optimistic `local-…` ropes: `replace_connection_id` on success, `remove_connection` + error on POST failure.
 - Ctrl+scroll: the canvas' capture-phase scroll controller is an ancestor of the WebView, so it runs first. Verified with REAL wheel events (xdotool XTEST under Xvfb, `tests/e2e/test_gtk4_canvas_input_xvfb.py`): Ctrl+wheel over the page zooms the canvas and WebKit's page zoom stays 1.0; a plain wheel leaves the canvas alone and scrolls the page.
 
+## Context toolbars (Sprint 5: `context_toolbar.py`, `markdown_format.py`)
+
+A floating pill over the ONE selected, unlocked node: centred just above it in screen space, below it when there is no room,
+clamped to the canvas; hidden during a gesture, while the drawn-text editor is open and while the node is off screen. Hosted
+by `CanvasWidget.context_toolbar` (`ContextToolbarHost.sync` runs in the frame tick; re-created only when the target changes).
+It is an overlay above every layer, tagged with the node's "content" role, so the capture-phase drag gesture DENIES presses on it
+(no marquee, no deselect) and they reach the buttons. Buttons have `focus_on_click=False`: Bold must not steal the note's caret.
+(macOS docks these toolbars at the bottom of the canvas; here they sit over the node, as asked for this sprint.)
+
+| Toolbar | Content |
+|---|---|
+| `NoteContextToolbar` | B / I / S / `</>` / H1 / H2 / list / task on the RAW Markdown: `markdown_format.format_edit` (pure) -> one buffer user action (undo + the debounced save path). Toggles: same marker again removes it; H1<->H2 and list<->task replace each other; a formatted note switches to Raw first. |
+| `DrawingContextToolbar` | palette (the 10 `colorFromString` names; shape = stroke AND fill, text = `color`), stroke width 1-20 pt (shape/freehand) or font size 8-96 (text), stroke style + fill style menus (shape), delete. Emits `drawn-content-changed` with the merged dict; the app persists and calls `set_node_content`, which refreshes the toolbar. A text label re-measures (bigger font -> bigger frame). |
+
 ## Drawn nodes (Sprint 4: `drawn.py`, `drawn_editor.py`, `gtk4-ui/src/ui/drawing.py`)
 
 | Piece | How |

@@ -32,6 +32,7 @@ from .file_tree_node import FileTreeView
 from .connection_rules import plan_connection
 from .drawn import DRAWN_KINDS
 from .drawn_editor import DrawnTextEditor
+from .context_toolbar import ContextToolbarHost
 from .gi_env import webkit_available
 from .note_model import NoteMeta
 from .portal_model import PortalMeta
@@ -375,6 +376,7 @@ class CanvasWidget(Gtk.Overlay):
         self.add_overlay(self.fixed)
         self.top_layer = CairoLayer(self, top=True)
         self.add_overlay(self.top_layer)
+        self.context_toolbar = ContextToolbarHost(self, _ROLE)   # floating Note/Drawing toolbars (above every layer)
         self.set_focusable(True)
         self.set_overflow(Gtk.Overflow.HIDDEN)
 
@@ -601,6 +603,7 @@ class CanvasWidget(Gtk.Overlay):
         if node is not None:
             node.content = content
             self.controller.dirty = True
+            self.context_toolbar.content_changed(node.id, content)
 
     def edit_drawn_text(self, node_id: str) -> bool:
         """Open the inline editor on a text label or a shape caption. The result arrives as `drawn-content-changed`."""
@@ -682,6 +685,7 @@ class CanvasWidget(Gtk.Overlay):
         self.controller.size = (float(w), float(h))
         moving = self.controller.ropes.tick()
         self._place_nodes(w, h)
+        self.context_toolbar.sync(w, h)
         connecting = self.controller.overlay.connecting is not None
         if connecting != self.has_css_class("maestri-connecting"):   # reveal every pin while a rope is being dragged
             (self.add_css_class if connecting else self.remove_css_class)("maestri-connecting")
