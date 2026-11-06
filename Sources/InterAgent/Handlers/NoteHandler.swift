@@ -56,7 +56,7 @@ final class NoteHandler {
 
     // MARK: - read / write / edit
 
-    /// Maestri CLI format: header, then "<line number>\t<text>".
+    /// Maestri CLI format (macOS NoteFileManager.readWithLineRange): header, then "<line number>    <text>" (4 spaces).
     static func numbered(_ content: String, offset: Int?, limit: Int?) -> String {
         let lines = content.components(separatedBy: "\n")
         let total = lines.count
@@ -64,7 +64,7 @@ final class NoteHandler {
         guard start <= total else { return "[lines \(start)-\(start) of \(total)]" }
         let end = limit.map { min(total, start + max(1, $0) - 1) } ?? total
         let header = (offset == nil && limit == nil) ? "[\(total) lines total]" : "[lines \(start)-\(end) of \(total)]"
-        let body = (start...end).map { "\($0)\t\(lines[$0 - 1])" }.joined(separator: "\n")
+        let body = (start...end).map { "\($0)    \(lines[$0 - 1])" }.joined(separator: "\n")
         return header + "\n" + body
     }
 

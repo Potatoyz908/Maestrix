@@ -303,7 +303,7 @@ class TestSprint9Codice:
         time.sleep(0.5)
 
         # Single ask with --raw
-        ans = invoke_cli(client, ["ask", "Worker1", "echo $((6*7))", "--raw"], terminal_id=tid1, data_dir=srv["data_dir"])
+        ans = invoke_cli(client, ["ask", "Worker1", "echo $((6*7))\\n", "--raw"], terminal_id=tid1, data_dir=srv["data_dir"])
         assert "42" in ans, f"Expected '42' in ask response, got:\n{ans}"
 
         # Batch ask across Worker1 and Worker2

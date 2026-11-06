@@ -158,9 +158,9 @@ final class CollaborationTests: IsolatedDataDirTestCase {
         XCTAssertLessThan(spec.frame.maxX, 9800, "placed left of the caller")
 
         let all = try await cli(port, token, ["note", "read", "Spec"], as: author)
-        XCTAssertEqual(all, "[3 lines total]\n1\talpha\n2\tbeta\n3\tgamma")
+        XCTAssertEqual(all, "[3 lines total]\n1    alpha\n2    beta\n3    gamma")
         let range = try await cli(port, token, ["note", "read", "Spec", "2", "5"], as: author)
-        XCTAssertEqual(range, "[lines 2-3 of 3]\n2\tbeta\n3\tgamma")
+        XCTAssertEqual(range, "[lines 2-3 of 3]\n2    beta\n3    gamma")
         let denied = try await cli(port, token, ["note", "read", "Spec"], as: stranger)
         XCTAssertTrue(denied.hasPrefix("error:"), "not connected -> no access: \(denied)")
 
@@ -179,7 +179,7 @@ final class CollaborationTests: IsolatedDataDirTestCase {
         let r2 = try await cli(port, token, ["note", "edit", "chained", "v2", "v3"], as: author)
         XCTAssertEqual(r2, "OK")
         let r3 = try await cli(port, token, ["note", "read", "ChainedDoc"], as: author)
-        XCTAssertEqual(r3, "[1 lines total]\n1\tv3")
+        XCTAssertEqual(r3, "[1 lines total]\n1    v3")
 
         let specPath = NoteFileManager.shared.managedPath(workspaceId: ws, noteName: "Spec")
         let r4 = try await cli(port, token, ["note", "delete", "Spec"], as: author)
