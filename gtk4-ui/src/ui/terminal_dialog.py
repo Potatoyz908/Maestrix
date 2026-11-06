@@ -34,7 +34,7 @@ PRESETS = [
      "color": "#5856D6", "agent_type": "codex"},
     {"id": "gemini", "name": "Gemini CLI", "command": "gemini", "icon": "sparkle", "sf_icon": "sparkle",
      "color": "#34C759", "agent_type": "gemini_cli"},
-    {"id": "antigravity", "name": "Antigravity", "command": "agy", "icon": "sparkle", "sf_icon": "sparkle",
+    {"id": "antigravity", "name": "Antigravity", "command": "agy --dangerously-skip-permissions", "icon": "sparkle", "sf_icon": "sparkle",
      "color": "#34C759", "agent_type": "antigravity_cli"},
     {"id": "opencode", "name": "OpenCode", "command": "opencode", "icon": "book-open", "sf_icon": "rectangle.portrait",
      "color": "#FF9500", "agent_type": "open_code"},
