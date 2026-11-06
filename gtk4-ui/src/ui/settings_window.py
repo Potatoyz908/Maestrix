@@ -93,6 +93,10 @@ class SettingsWindow(Gtk.Window):
         auto.set_value(self.prefs.autosave_interval_seconds)
         auto.connect("value-changed", lambda s: self._set("autosave_interval_seconds", int(s.get_value())))
         self._row(g, 3, "Autosave interval (seconds)", auto)
+
+        self.snap_switch = Gtk.Switch(active=self.prefs.canvas_snapping, valign=Gtk.Align.CENTER)
+        self.snap_switch.connect("notify::active", lambda s, _p: self._set("canvas_snapping", s.get_active()))
+        self._row(g, 4, "Snap to alignment guides", self.snap_switch)
         return g
 
     def _build_terminal(self) -> Gtk.Widget:

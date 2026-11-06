@@ -2,7 +2,7 @@
 
 Reference spec (docs/reference/maestri-reference-index.md), with the macOS command key mapped to Ctrl:
   pan: two-finger scroll / middle-drag / Space+drag      zoom: Ctrl+scroll / pinch / Ctrl+= / Ctrl+-
-  move: drag a node header (Ctrl = magnetic tile snapping)   resize: drag edge/corner (snaps to the 16-unit grid)
+  move: drag a node header (smart alignment guides when `snapping` is on; Ctrl = magnetic tile snapping)   resize: drag edge/corner (snaps to the 16-unit grid)
   duplicate: Alt+drag     delete: Ctrl+W / Delete     focus node: \\     select: click, Shift+click, marquee on empty space
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ from .geometry import Point, Rect, round_half_away
 from .resize import Edge, resize_frame
 from .rope import RopeSimulation
 from .scene import ConnItem, PinSide, Scene, norm, pin_point
+from .alignment_guides import align, candidates
 from .snapping import GuideLine, snap
 from .viewport import Viewport
 
@@ -119,6 +120,7 @@ class CanvasController:
         self.cursor: str | None = None
         self.size = (1.0, 1.0)            # widget size in px, set by the widget (for focus_on / zoom-at-center)
         self.space_held = False
+        self.snapping = False             # smart alignment guides while dragging (the app turns it on from preferences)
         self.dirty = True                 # the widget redraws when set, then clears it
         self.on_event: Callable[[Event], None] | None = None
         self._state: _State = None
@@ -271,6 +273,15 @@ class CanvasController:
             moved = st.starts[st.primary].offset(dx, dy)
             snapped, guides = snap(moved, others)
             dx, dy = snapped.x - st.starts[st.primary].x, snapped.y - st.starts[st.primary].y
+            self.overlay.guides = guides
+        elif self.snapping and st.starts:   # smart guides: the whole moving group's box against the visible nodes
+            box = None
+            for f in st.starts.values():
+                box = f if box is None else box.union(f)
+            moved = box.offset(dx, dy)
+            frames = (n.frame for n in self.scene.nodes.values() if n.id not in st.starts)
+            cx, cy, guides = align(moved, candidates(frames, self.vp.visible_rect(*self.size, margin=0.0), moved), self.vp.zoom)
+            dx, dy = dx + cx, dy + cy
             self.overlay.guides = guides
         frames = {i: f.offset(dx, dy) for i, f in st.starts.items()}
         if st.duplicate:

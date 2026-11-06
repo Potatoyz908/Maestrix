@@ -348,6 +348,7 @@ class CanvasWidget(Gtk.Overlay):
         "note-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                       # stickyNote id, StickyNoteContent dict
         "portal-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                     # portal id, PortalContent dict
         "portal-popup": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                               # portal id, url (target=_blank)
+        "snapping-changed": (GObject.SignalFlags.RUN_FIRST, None, (bool,)),                              # alignment guides on/off
         "connection-refused": (GObject.SignalFlags.RUN_FIRST, None, (str, str, str)),                    # a, b, human reason
     }
 
@@ -566,6 +567,20 @@ class CanvasWidget(Gtk.Overlay):
 
     def set_tool(self, tool: str) -> None:
         self.controller.set_tool(tool)
+
+    @property
+    def snapping(self) -> bool:
+        """Smart alignment guides while dragging nodes (alignment_guides.py). Ctrl+drag tile snapping works either way."""
+        return self.controller.snapping
+
+    def set_snapping(self, on: bool) -> None:
+        on = bool(on)
+        if on == self.controller.snapping:
+            return
+        self.controller.snapping = on
+        self.controller.overlay.guides = []
+        self.controller.dirty = True
+        self.emit("snapping-changed", on)
 
     # ---- files dropped on the empty canvas (FileTree rows, Nautilus...) -> preview nodes -------------
     def _install_file_drop(self) -> None:

@@ -34,6 +34,7 @@ class Preferences:
     autosave_interval_seconds: int = 30
     scrollback_memory_limit: bool = False
     option_as_meta: bool = False
+    canvas_snapping: bool = True   # smart alignment guides while dragging nodes (Linux port; unknown keys are ignored by Swift)
     _extra: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict:
@@ -49,6 +50,7 @@ class Preferences:
             "autosaveIntervalSeconds": int(self.autosave_interval_seconds),
             "scrollbackMemoryLimit": bool(self.scrollback_memory_limit),
             "optionAsMeta": bool(self.option_as_meta),
+            "canvasSnapping": bool(self.canvas_snapping),
         })
         return d
 
@@ -57,7 +59,8 @@ class Preferences:
         """Tolerant: missing/invalid values fall back to defaults (older files, hand edits)."""
         base = cls()
         known = {"schemaVersion", "terminalFontFamily", "terminalFontSize", "terminalTheme", "canvasBackground",
-                 "preferredIDE", "language", "autosaveIntervalSeconds", "scrollbackMemoryLimit", "optionAsMeta"}
+                 "preferredIDE", "language", "autosaveIntervalSeconds", "scrollbackMemoryLimit", "optionAsMeta",
+                 "canvasSnapping"}
         try:
             size = float(d.get("terminalFontSize", base.terminal_font_size))
         except (TypeError, ValueError):
@@ -77,6 +80,7 @@ class Preferences:
             autosave_interval_seconds=min(AUTOSAVE_RANGE[1], max(AUTOSAVE_RANGE[0], interval)),
             scrollback_memory_limit=bool(d.get("scrollbackMemoryLimit", False)),
             option_as_meta=bool(d.get("optionAsMeta", False)),
+            canvas_snapping=bool(d.get("canvasSnapping", True)),
             _extra={k: v for k, v in d.items() if k not in known},
         )
 

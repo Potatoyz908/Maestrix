@@ -21,6 +21,9 @@ BG = (0.949, 0.949, 0.949)
 GRID = (0.80, 0.80, 0.80)
 ROPE = (0.54, 0.54, 0.56)
 ACCENT = (0.231, 0.510, 0.965)
+GUIDE = (0.937, 0.302, 0.459)   # alignment guides: rose, distinct from the blue selection / marquee
+GUIDE_ALPHA = 0.75
+GUIDE_MARK_PX = 2.5
 KIND_FILL = {"terminal": (0.12, 0.12, 0.12), "stickyNote": (1.0, 0.953, 0.639), "portal": (1.0, 1.0, 1.0), "fileTree": (0.98, 0.98, 0.99)}
 GRID_STEP = 40.0
 BACKGROUNDS = ("dotGrid", "solid", "transparent")   # preferences.json `canvasBackground`
@@ -156,15 +159,37 @@ class CairoRenderer:
         cr.stroke()
         cr.set_dash([])
 
-    def _overlay(self, cr: cairo.Context, scene: Scene, vp: Viewport, o: Overlay) -> None:
-        cr.set_source_rgb(*ACCENT)
-        cr.set_line_width(1 / vp.zoom)
-        for g in o.guides:
+    @staticmethod
+    def _guides(cr: cairo.Context, guides, vp: Viewport) -> None:
+        """Alignment guides: a hairline (1 screen px) in a muted rose, solid for edges, dashed for centers, with a small cross
+        on each aligned anchor. Kept translucent so they read as a hint, not as content."""
+        if not guides:
+            return
+        z = vp.zoom
+        cr.save()
+        cr.set_line_width(1 / z)
+        cr.set_line_cap(cairo.LINE_CAP_BUTT)
+        arm = GUIDE_MARK_PX / z
+        for g in guides:
+            cr.set_source_rgba(*GUIDE, GUIDE_ALPHA)
+            cr.set_dash([4 / z, 3 / z] if g.kind == "center" else [])
             if g.axis == "vertical":
                 cr.move_to(g.position, g.start); cr.line_to(g.position, g.end)
             else:
                 cr.move_to(g.start, g.position); cr.line_to(g.end, g.position)
             cr.stroke()
+            cr.set_dash([])
+            for m in g.marks:
+                x, y = (g.position, m) if g.axis == "vertical" else (m, g.position)
+                cr.move_to(x - arm, y - arm); cr.line_to(x + arm, y + arm)
+                cr.move_to(x - arm, y + arm); cr.line_to(x + arm, y - arm)
+            cr.stroke()
+        cr.restore()
+
+    def _overlay(self, cr: cairo.Context, scene: Scene, vp: Viewport, o: Overlay) -> None:
+        self._guides(cr, o.guides, vp)
+        cr.set_source_rgb(*ACCENT)
+        cr.set_line_width(1 / vp.zoom)
         for r in o.ghosts:
             self._dashed_rect(cr, r, vp)
         if o.marquee is not None:

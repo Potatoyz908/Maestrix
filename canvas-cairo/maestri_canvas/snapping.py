@@ -16,6 +16,8 @@ class GuideLine:
     position: float
     start: float
     end: float
+    kind: str = "edge"            # "edge" (solid) | "center" (dashed): see alignment_guides.py
+    marks: tuple[float, ...] = ()  # positions along the line where an aligned anchor sits (small crosses)
 
 
 def snap(dragging: Rect, others: Iterable[Rect]) -> tuple[Point, list[GuideLine]]:

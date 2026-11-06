@@ -34,7 +34,8 @@ def test_background_nodes_and_overlay_pixels():
     CairoRenderer().draw(cr, sc, vp, W, H, None, ov)
     assert px(s, 700, 500) == tuple(round(c * 255) for c in BG)          # empty background (off the grid dots)
     assert px(s, 200, 150) == (58, 58, 58)                               # canvas-drawn node fill
-    assert px(s, 600, 200)[2] > px(s, 600, 200)[0]                       # blue-ish guide line
+    r, g, b = px(s, 600, 200)
+    assert r > b > g                                                     # rose alignment guide (not the blue selection colour)
 
 
 def test_widget_kinds_are_skipped_unless_placeholders():

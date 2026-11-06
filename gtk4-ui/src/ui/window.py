@@ -72,6 +72,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.canvas_widget.set_hexpand(True)
         self.canvas_widget.set_vexpand(True)
         self.canvas_widget.renderer.background = self.preferences.canvas_background
+        self.canvas_widget.set_snapping(self.preferences.canvas_snapping)
         self.canvas_widget.connect("node-moved", self._on_canvas_frame_changed)
         self.canvas_widget.connect("node-resized", self._on_canvas_frame_changed)
         self.canvas_widget.connect("viewport-changed", lambda _c, x, y, z: bus.emit("viewport-changed", x, y, z))
@@ -362,6 +363,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         view_menu = Gio.Menu()
         view_menu.append_section(None, section([("Toggle Sidebar", "win.toggle-sidebar"), ("Reset Zoom", "win.reset-zoom")]))
+        view_menu.append_section(None, section([("Snap to Alignment Guides", "win.snapping")]))   # check item (stateful action)
         menubar.append_submenu("_View", view_menu)
 
         help_menu = Gio.Menu()
@@ -390,13 +392,35 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             action.connect("activate", lambda _a, _p, f=fn: f())
             self.add_action(action)
 
+        # View → Snap to Alignment Guides (Ctrl+;): stateful, persisted in preferences.json as canvasSnapping
+        snap = Gio.SimpleAction.new_stateful("snapping", None, GLib.Variant.new_boolean(self.canvas_widget.snapping))
+        snap.connect("change-state", lambda a, v: self._set_snapping(v.get_boolean()))
+        self.add_action(snap)
+        self._snap_action = snap
+        self.canvas_widget.connect("snapping-changed", lambda _c, on: snap.set_state(GLib.Variant.new_boolean(on)))
+
         app = self.get_application()
         if app is not None:
             for action, accel in (
                 ("win.new-terminal", "<Control>n"), ("win.save", "<Control>s"), ("win.reset-zoom", "<Control>0"),
                 ("win.quit", "<Control>q"), ("win.preferences", "<Control>comma"), ("win.toggle-sidebar", "<Control>b"),
+                ("win.snapping", "<Control>semicolon"),
             ):
                 app.set_accels_for_action(action, [accel])
+
+    def _set_snapping(self, on: bool) -> None:
+        """Toggle the canvas alignment guides and remember the choice."""
+        self.canvas_widget.set_snapping(on)
+        sw = self.settings_window
+        if sw is not None and sw.prefs.canvas_snapping != on:   # an open Preferences window must not save the old value back
+            sw.prefs.canvas_snapping = on
+            sw.snap_switch.set_active(on)
+        if self.preferences.canvas_snapping != on:
+            self.preferences.canvas_snapping = on
+            try:
+                self.prefs_store.save(self.preferences)
+            except OSError:
+                pass   # the toggle still applies for this session
 
     def show_preferences(self):
         """Open (or raise) the SettingsWindow."""
@@ -415,6 +439,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.preferences = prefs
         cw = self.canvas_widget
         cw.renderer.background = prefs.canvas_background
+        cw.set_snapping(prefs.canvas_snapping)
         cw.controller.dirty = True
         cw.queue_draw()
         for node in self.document.payload.nodes:
