@@ -4,7 +4,7 @@ import XCTest
 import Glibc
 #endif
 
-final class LinuxPtyAndServerTests: XCTestCase {
+final class LinuxPtyAndServerTests: IsolatedDataDirTestCase {
 
     func testInterAgentServerDynamicPortAndUnixSocket() async throws {
         try await MainActor.run {
@@ -346,6 +346,8 @@ final class LinuxPtyAndServerTests: XCTestCase {
             let auth = "Authorization: Bearer \(server.authToken)\r\n"
             let idA = UUID()
             let idB = UUID()
+            // Connections attach to the active workspace: make sure one exists (fresh isolated data dir).
+            _ = try self.tcpExchange(port: server.port, request: "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
 
             // Pass 2 endpoints and kind="terminalToNote"
             let body = "{\"a\":\"\(idA.uuidString)\",\"b\":\"\(idB.uuidString)\",\"kind\":\"terminalToNote\",\"ropePoints\":[[100,200],[300,400]]}"

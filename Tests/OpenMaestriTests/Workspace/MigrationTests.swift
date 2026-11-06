@@ -5,7 +5,7 @@ import XCTest
 @testable import OpenMaestriCore
 #endif
 
-final class MigrationTests: XCTestCase {
+final class MigrationTests: IsolatedDataDirTestCase {
 
     func testMigration_v1_to_v2_setsSchemaVersion() throws {
         let v1Json = """

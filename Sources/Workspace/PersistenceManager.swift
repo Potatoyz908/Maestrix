@@ -10,9 +10,26 @@ public final class PersistenceManager {
 
     private let logger = Logger.make(category: "PersistenceManager")
 
-    /// 应用数据根目录 ~/.open-maestri/
+    /// 覆盖数据根目录的环境变量（测试/隔离运行用）。设置时它取代 ~/.open-maestri，作用于所有数据：
+    /// manifest、workspaces/、run/（agent.sock、auth.token）、preferences、routines、sidebar-layout、notes、roles、backups。
+    public static let dataDirEnvironmentKey = "OPEN_MAESTRI_DATA_DIR"
+
+    /// 应用数据根目录：`$OPEN_MAESTRI_DATA_DIR`（非空时），否则 ~/.open-maestri/。
+    /// 每次读取环境（getenv 能看到进程内 setenv），因此测试可在启动后切换。
     public var appDataURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        Self.resolveDataDirectory(override: getenv(Self.dataDirEnvironmentKey).map { String(cString: $0) })
+    }
+
+    /// `override`：环境变量的值。空/缺失 -> ~/.open-maestri；`~` 会展开；相对路径相对于当前目录解析为绝对路径。
+    static func resolveDataDirectory(override: String?) -> URL {
+        if let raw = override?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let expanded = (raw as NSString).expandingTildeInPath
+            let absolute = expanded.hasPrefix("/")
+                ? expanded
+                : URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(expanded).path
+            return URL(fileURLWithPath: absolute, isDirectory: true).standardizedFileURL
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(Constants.appDataDirectoryName)
     }
 

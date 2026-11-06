@@ -6,7 +6,7 @@ import XCTest
 #endif
 
 /// Regression: `&&` chains prompts only on its own line (docs/reference/official/11-routines.md).
-final class RoutineModelsTests: XCTestCase {
+final class RoutineModelsTests: IsolatedDataDirTestCase {
     func testOwnLineSeparatorChainsPrompts() {
         let r = Routine(name: "chain", prompt: "pull the latest changes\n&&\nrun the test suite\n  &&  \nsummarize",
                         intervalSeconds: 300, targetTerminalId: UUID())

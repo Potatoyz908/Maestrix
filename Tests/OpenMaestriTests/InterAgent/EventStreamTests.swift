@@ -6,7 +6,7 @@ import Glibc
 
 /// /ws/events 生命周期事件流与 /api/terminals PTY 元数据测试。
 /// 阻塞式 socket 客户端运行在后台线程，避免与 @MainActor 的 HTTP handler 死锁。
-final class EventStreamTests: XCTestCase {
+final class EventStreamTests: IsolatedDataDirTestCase {
 
     func testEventEncodingFormat() throws {
         let ws = UUID()
@@ -285,8 +285,6 @@ final class EventStreamTests: XCTestCase {
             return (InterAgentServer.shared.port, InterAgentServer.shared.authToken)
         }
         defer { Task { @MainActor in InterAgentServer.shared.stop() } }
-        let pm = PersistenceManager.shared
-        let previousActive = (try? pm.loadAppState())?.activeWorkspaceId   // POST /api/workspaces switches it
         let wsId = UUID()
         var copyId: String?
         defer {
@@ -294,9 +292,6 @@ final class EventStreamTests: XCTestCase {
                 _ = try? Self.exchange(port: port, request:
                     "DELETE /api/workspaces/\(id) HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer \(token)\r\nConnection: close\r\n\r\n")
             }
-            var st = (try? pm.loadAppState()) ?? AppStateData()
-            st.activeWorkspaceId = previousActive
-            try? pm.saveAppState(st)
         }
 
         copyId = try await Task.detached { () -> String in

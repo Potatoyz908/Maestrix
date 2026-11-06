@@ -8,7 +8,7 @@ import CoreGraphics
 @testable import OpenMaestriCore
 #endif
 
-final class PersistenceManagerTests: XCTestCase {
+final class PersistenceManagerTests: IsolatedDataDirTestCase {
     let pm = PersistenceManager.shared
 
     // MARK: - AC1: WorkspaceDocument 结构验证

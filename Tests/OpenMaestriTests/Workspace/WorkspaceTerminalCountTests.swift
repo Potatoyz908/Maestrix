@@ -5,7 +5,7 @@ import CoreGraphics
 #endif
 
 /// `WorkspacePayload.terminalCount`: derived from the `.terminal` nodes, never stored (schema unchanged).
-final class WorkspaceTerminalCountTests: XCTestCase {
+final class WorkspaceTerminalCountTests: IsolatedDataDirTestCase {
 
     private func node(_ content: NodeContent) -> CanvasNode {
         CanvasNode(frame: CGRect(x: 9800, y: 8500, width: 500, height: 350), content: content)

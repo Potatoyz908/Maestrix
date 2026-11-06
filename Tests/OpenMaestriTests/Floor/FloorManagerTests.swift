@@ -5,7 +5,7 @@ import XCTest
 @testable import OpenMaestriCore
 #endif
 
-final class FloorManagerTests: XCTestCase {
+final class FloorManagerTests: IsolatedDataDirTestCase {
     private let fm = FloorManager.shared
     private var testDir: String!
 

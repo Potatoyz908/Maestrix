@@ -2,7 +2,7 @@ import XCTest
 import Foundation
 @testable import OpenMaestriCore
 
-final class CrossLanguageDecodingTests: XCTestCase {
+final class CrossLanguageDecodingTests: IsolatedDataDirTestCase {
 
     func testDecodePythonGeneratedWorkspace() throws {
         let fixtureURL = URL(fileURLWithPath: "Tests/OpenMaestriTests/Fixtures/PythonGeneratedWorkspace.json")

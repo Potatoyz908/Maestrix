@@ -9,7 +9,7 @@ import CoreGraphics
 #endif
 
 // Story 1.2 AC: frame [[x,y],[w,h]] 格式兼容性测试（NFR14: 与 Maestri v0.25.4 兼容）
-final class CGRectFrameTests: XCTestCase {
+final class CGRectFrameTests: IsolatedDataDirTestCase {
 
     // MARK: - CGRect+Frame 扩展
 

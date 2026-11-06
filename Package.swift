@@ -67,6 +67,8 @@ let coreTestSources: [String] = [
     "Workspace/PersistenceManagerTests.swift",
     "Workspace/MigrationTests.swift",
     "Workspace/WorkspaceTerminalCountTests.swift",
+    "Workspace/DataDirOverrideTests.swift",
+    "TestSupport/IsolatedDataDir.swift",
     "InterAgent/LinuxPtyAndServerTests.swift",
     "InterAgent/EventStreamTests.swift",
     "Workspace/CrossLanguageDecodingTests.swift",
