@@ -2119,6 +2119,7 @@ public final class InterAgentServer {
         case "codex": return "codex"
         case "gemini": return "gemini_cli"
         case "opencode": return "open_code"
+        case "agy": return "antigravity_cli"
         default: return "generic_shell"
         }
     }

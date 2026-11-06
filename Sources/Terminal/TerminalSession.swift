@@ -130,7 +130,8 @@ final class TerminalSession {
     func markIdle() {
         guard !isIdle else { return }
         isIdle = true
-        guard hasActiveTask else { return }
+        let isAgent = ["claude_code", "codex", "gemini_cli", "open_code", "antigravity_cli"].contains(agentType)
+        guard hasActiveTask || isAgent else { return }
         hasActiveTask = false
         NotificationCenter.default.post(
             name: .terminalBecameIdle,

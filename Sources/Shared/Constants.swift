@@ -40,7 +40,7 @@ enum Constants {
     static let noteDefaultWidth: CGFloat = 260
     static let noteDefaultHeight: CGFloat = 150
     static let noteDefaultColor = "#FEFDE8"
-    static let agentIdleTimeout: TimeInterval = 2.0
+    static let agentIdleTimeout: TimeInterval = 3.0
     static let skillInjectionAnimationDuration: TimeInterval = 0.5
     static let toastDismissDuration: TimeInterval = 2.0
     static let connectionStatusFadeDuration: TimeInterval = 0.15

@@ -8,6 +8,8 @@ import Foundation
 public enum NexusServices {
     private static var started = false
     private static var scrollbackTimer: DispatchSourceTimer?
+    private static var skillTimer: DispatchSourceTimer?
+    private static var lastPreferencesData: Data?
     private static var signalSources: [DispatchSourceSignal] = []
     static let scrollbackInterval: TimeInterval = 30
 
@@ -17,6 +19,17 @@ public enum NexusServices {
         if PlatformHooks.portalsService == nil {
             PlatformHooks.portalsService = LinuxPortalManager.shared
         }
+        lastPreferencesData = try? Data(contentsOf: PersistenceManager.shared.preferencesURL)
+        let skills = DispatchSource.makeTimerSource(queue: .main)
+        skills.schedule(deadline: .now() + 2, repeating: 2)
+        skills.setEventHandler {
+            let data = try? Data(contentsOf: PersistenceManager.shared.preferencesURL)
+            guard data != lastPreferencesData else { return }
+            lastPreferencesData = data
+            SkillInjector.shared.installSkillsIfNeeded()
+        }
+        skills.resume()
+        skillTimer = skills
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + scrollbackInterval, repeating: scrollbackInterval)
         timer.setEventHandler { MainActor.assumeIsolated { LinuxTerminalManager.shared.saveAllScrollback() } }

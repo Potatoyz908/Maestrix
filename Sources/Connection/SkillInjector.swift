@@ -19,9 +19,17 @@ public final class SkillInjector {
 
     /// 按需写入：将内置 skill 写入用户配置的所有活跃 skillPaths，已存在则跳过
     public func installSkillsIfNeeded() {
-        let prefs = PersistenceManager.shared.loadPreferencesSync()
-        let activePaths = prefs.skillPaths.filter { $0.isActive }.map { $0.path }
-        guard !activePaths.isEmpty else { return }
+        let pm = PersistenceManager.shared
+        // Python updates preferences atomically, outside the Swift preferences cache.
+        let prefs = (try? Data(contentsOf: pm.preferencesURL)).flatMap { try? JSONDecoder().decode(Preferences.self, from: $0) } ?? Preferences()
+        let configured = prefs.skillPaths.filter { $0.isActive }.map { $0.path }
+        let activePaths: [String]
+        if let dataDir = ProcessInfo.processInfo.environment["OPEN_MAESTRI_DATA_DIR"], !dataDir.isEmpty {
+            // Never touch real home-directory skills in isolated server runs.
+            activePaths = [URL(fileURLWithPath: dataDir).appendingPathComponent("skills").path]
+        } else {
+            activePaths = configured.isEmpty ? ["~/.claude/skills"] : configured
+        }
 
         let fm = FileManager.default
         let homeDir = fm.homeDirectoryForCurrentUser.path
