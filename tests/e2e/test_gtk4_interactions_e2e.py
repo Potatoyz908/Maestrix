@@ -62,6 +62,7 @@ def pump(seconds: float = 0.2) -> None:
 def isolated_home(tmp_path, monkeypatch):
     """Isolate HOME so PreferencesStore and notes_dir never touch the real ~/.open-maestri."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SHELL", "/bin/bash")
     (tmp_path / ".zshrc").touch()
     return tmp_path
 
@@ -99,9 +100,10 @@ def _last_content(window, kind: str):
 
 def _term_text(term) -> str:
     from gi.repository import Vte
-    cols = term.get_column_count()
-    text, _ = term.get_text_range_format(Vte.Format.TEXT, 0, 0, 10_000_000, cols - 1)
-    return text or ""
+    cols = max(1, term.get_column_count())
+    rows = max(50, term.get_row_count() * 4)
+    text, _ = term.get_text_range_format(Vte.Format.TEXT, 0, 0, rows, cols - 1)
+    return (text or "").rstrip()
 
 
 @pytest.fixture(scope="module")
@@ -199,6 +201,7 @@ class TestTerminalE2E:
         _node, term = _last_content(window, "terminal")
         assert isinstance(term, Vte.Terminal)
         assert wait_until(lambda: getattr(term, "maestri_pid", -1) > 0, timeout=10), "shell never spawned"
+        assert wait_until(lambda: bool(_term_text(term).strip()), timeout=10), "shell prompt never appeared"
 
         term.feed_child(b"echo MAESTRI_$((40+2))_OK\n")
         assert wait_until(lambda: "MAESTRI_42_OK" in _term_text(term), timeout=15), _term_text(term)
