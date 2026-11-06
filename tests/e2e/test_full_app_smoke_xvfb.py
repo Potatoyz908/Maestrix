@@ -155,7 +155,7 @@ class TestFullAppSmokeXvfb:
         # 1. Subir servidor isolado + app GTK
         # ---------------------------------------------------------------------
         with start_isolated_server(data_dir) as srv:
-            client = MaestriClient(base_url=srv.base_url, token=srv.token)
+            client = MaestriClient(port=srv['port'], auth_token=srv['token'])
             app = Gtk.Application(
                 application_id=f"com.openmaestri.smoke.s9.{uuid.uuid4().hex[:8]}",
                 flags=Gio.ApplicationFlags.NON_UNIQUE,
@@ -170,7 +170,7 @@ class TestFullAppSmokeXvfb:
             # -----------------------------------------------------------------
             # 2. Criar workspace
             # -----------------------------------------------------------------
-            ws_id = client.create_workspace("Smoke Project", working_directory=str(workdir))
+            ws_id = client.create_workspace("Smoke Project", working_directory=str(workdir)).id   # WorkspaceEntry -> id
             assert ws_id is not None
             win._on_workspace_switched(None, ws_id)
             assert wait_until(lambda: win.document.payload.id == ws_id, timeout=6.0)
@@ -379,7 +379,7 @@ class TestFullAppSmokeXvfb:
         # 14. Reiniciar o servidor e confirmar conexões e estado persistidos (K6)
         # ---------------------------------------------------------------------
         with start_isolated_server(data_dir) as srv2:
-            client2 = MaestriClient(base_url=srv2.base_url, token=srv2.token)
+            client2 = MaestriClient(port=srv2['port'], auth_token=srv2['token'])
             restarted_doc = client2.get_workspace(ws_id)
             assert restarted_doc is not None and restarted_doc.payload is not None
             # Terminals T1 and T2 persisted across server restart

@@ -81,7 +81,7 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     ws_workdir = tmp_path / "pixel-workdir"
     ws_workdir.mkdir(parents=True, exist_ok=True)
     with start_isolated_server(data_dir) as srv:
-        client = MaestriClient(base_url=srv.base_url, token=srv.token)
+        client = MaestriClient(port=srv['port'], auth_token=srv['token'])
         doc = client.get_workspace()
         assert doc is not None and doc.payload is not None
         doc.payload.working_directory = str(ws_workdir)
