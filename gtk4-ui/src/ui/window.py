@@ -1165,6 +1165,9 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             kwargs["cwd"] = (getattr(node.content, "working_directory", "") or self.document.payload.working_directory
                              or os.path.expanduser("~"))
             kwargs["env"] = self.floors.terminal_env(kwargs["cwd"])   # MAESTRI_FLOOR_* inside a floor's worktree (local VTE)
+            cmd = getattr(node.content, "command", None) if not isinstance(node.content, dict) else node.content.get("command")
+            if cmd:
+                kwargs["command"] = cmd
         self.canvas_widget.add_node(item, self._make_content_widget(node), focus=focus, **kwargs)
         if node.node_type == "terminal":
             self._style_terminal(node)

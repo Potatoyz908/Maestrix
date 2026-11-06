@@ -113,7 +113,7 @@ def default_shell_argv() -> list[str]:
 
 
 def create_terminal(cwd: str | None = None, argv: list[str] | None = None, env: dict[str, str] | None = None,
-                    on_exit=None) -> Gtk.Widget | None:
+                    on_exit=None, command: str | None = None) -> Gtk.Widget | None:
     """A Vte.Terminal running a login shell on its own PTY. VTE resizes the PTY (TIOCSWINSZ) on every size-allocate, so
     resizing the node resizes the shell; canvas zoom is a Gsk transform, so cols/rows stay those of the unscaled frame.
     Returns None when Vte 3.91 is not importable. `on_exit(status)` runs when the child exits."""
@@ -143,7 +143,16 @@ def create_terminal(cwd: str | None = None, argv: list[str] | None = None, env: 
 
     term.connect("child-exited", exited)
     term.drop_target = install_terminal_drop(term, term.paste_text)   # bracketed paste when the shell enabled it
-    term.spawn_async(Vte.PtyFlags.DEFAULT, cwd or os.path.expanduser("~"), argv or default_shell_argv(), envv,
+
+    if argv is None:
+        if command and command.strip():
+            spawn_argv = ["/bin/bash", "-i", "-l", "-c", f"{command.strip()}; exec bash"]
+        else:
+            spawn_argv = default_shell_argv()
+    else:
+        spawn_argv = argv
+
+    term.spawn_async(Vte.PtyFlags.DEFAULT, cwd or os.path.expanduser("~"), spawn_argv, envv,
                      GLib.SpawnFlags.DEFAULT, None, None, -1, None, spawned, None)
     return term
 
@@ -499,10 +508,17 @@ class CanvasWidget(Gtk.Overlay):
         self.add_tick_callback(self._tick)
 
     # ---- public API ---------------------------------------------------------------------------
+    def create_terminal(self, cwd: str | None = None, argv: list[str] | None = None,
+                        env: dict[str, str] | None = None, on_exit=None,
+                        command: str | None = None) -> Gtk.Widget | None:
+        """Create a Vte.Terminal running on the canvas."""
+        return create_terminal(cwd=cwd, argv=argv, env=env, on_exit=on_exit, command=command)
+
     def add_node(self, item: NodeItem, content: Gtk.Widget | None = None, cwd: str | None = None,
                  env: dict[str, str] | None = None, focus: bool = False, note: dict | None = None,
-                 portal: dict | None = None, file_tree: dict | None = None) -> None:
-        """`content=None` builds the native content: a VTE login shell for "terminal" (cwd/env apply to it), a FileTreeView rooted at
+                 portal: dict | None = None, file_tree: dict | None = None,
+                 command: str | None = None) -> None:
+        """`content=None` builds the native content: a VTE login shell for "terminal" (cwd/env/command apply to it), a FileTreeView rooted at
         `cwd` (default ~) for "fileTree" (`file_tree` = the persisted FileTreeContent dict: viewMode), a StickyNoteView for
         "stickyNote" (`note` = the persisted StickyNoteContent dict).
         `focus` gives the content the keyboard."""
@@ -510,7 +526,10 @@ class CanvasWidget(Gtk.Overlay):
         self.controller.dirty = True
         if item.kind == "terminal" and content is None:
             nid = item.id
-            content = create_terminal(cwd=cwd, env=env, on_exit=lambda st: self.emit("terminal-exited", nid, st))
+            term_cmd = command
+            if term_cmd is None and isinstance(item.content, dict):
+                term_cmd = item.content.get("command")
+            content = create_terminal(cwd=cwd, env=env, command=term_cmd, on_exit=lambda st: self.emit("terminal-exited", nid, st))
             if content is None:
                 content = Gtk.Label(label="Vte 3.91 (GTK 4) not available")
         elif item.kind == "fileTree" and content is None:

@@ -162,3 +162,42 @@ def test_e2e_wrong_token_is_rejected_and_never_receives_data(core):
     tr.connect()
     pump_until(lambda: "error" in statuses, what="auth failure")
     assert not tr.is_open and got == []
+
+
+def _get_vte_text(term) -> str:
+    from gi.repository import Vte
+    cols = max(term.get_column_count(), 1)
+    out = term.get_text_range_format(Vte.Format.TEXT, 0, 0, 10_000_000, cols - 1)
+    return (out[0] if isinstance(out, tuple) else out) or ""
+
+
+def test_create_terminal_with_command():
+    from maestri_canvas.widget import create_terminal
+    marker = f"TEST_CMD_{uuid.uuid4().hex[:8]}"
+    term = create_terminal(command=f"echo {marker}")
+    assert term is not None
+    win = Gtk.Window(default_width=400, default_height=300)
+    win.set_child(term)
+    win.present()
+    try:
+        pump_until(lambda: marker in _get_vte_text(term), timeout=5.0, what="command output in terminal")
+    finally:
+        win.destroy()
+
+
+def test_canvas_widget_add_node_with_command():
+    cw = CanvasWidget()
+    marker = f"NODE_CMD_{uuid.uuid4().hex[:8]}"
+    item = NodeItem("T1", Rect(0, 0, 400, 300), kind="terminal", title="Terminal")
+    cw.add_node(item, command=f"echo {marker}")
+    assert "T1" in cw.frames
+    frame = cw.frames["T1"]
+    term = frame.content
+    win = Gtk.Window(default_width=600, default_height=400)
+    win.set_child(cw)
+    win.present()
+    try:
+        pump_until(lambda: marker in _get_vte_text(term), timeout=5.0, what="command output in canvas node terminal")
+    finally:
+        win.destroy()
+

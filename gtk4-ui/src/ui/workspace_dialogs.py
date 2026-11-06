@@ -142,7 +142,8 @@ class CreateWorkspaceDialog(Gtk.Window):
         dir_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         dir_box.add_css_class("maestri-dir-row")
 
-        folder_icon = Gtk.Label(label="📁")
+        folder_icon = Gtk.Image.new_from_icon_name("maestri-folder-symbolic")
+        folder_icon.set_pixel_size(16)
         dir_box.append(folder_icon)
 
         self.dir_label = Gtk.Label(label="~", xalign=0.0, ellipsize=3)
@@ -209,12 +210,23 @@ class CreateWorkspaceDialog(Gtk.Window):
         except Exception:
             pass
 
+    def _close_dialog(self) -> None:
+        try:
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        self.close()
+
+    def destroy(self) -> None:
+        self._close_dialog()
+
     def _on_create_clicked(self, _btn: Gtk.Button) -> None:
         name = self.name_entry.get_text().strip()
         if not name:
             return
         self.on_create(name, self.working_directory, self.selected_icon)
-        self.destroy()
+        self._close_dialog()
 
 
 class EditWorkspaceDialog(Gtk.Window):
@@ -339,7 +351,8 @@ class EditWorkspaceDialog(Gtk.Window):
         dir_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         dir_box.add_css_class("maestri-dir-row")
 
-        folder_icon = Gtk.Label(label="📁")
+        folder_icon = Gtk.Image.new_from_icon_name("maestri-folder-symbolic")
+        folder_icon.set_pixel_size(16)
         dir_box.append(folder_icon)
 
         self.dir_label = Gtk.Label(label=entry.working_directory.replace(os.path.expanduser("~"), "~"), xalign=0.0, ellipsize=3)
@@ -394,6 +407,17 @@ class EditWorkspaceDialog(Gtk.Window):
         except Exception:
             pass
 
+    def _close_dialog(self) -> None:
+        try:
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        self.close()
+
+    def destroy(self) -> None:
+        self._close_dialog()
+
     def _on_save_clicked(self, _btn: Gtk.Button) -> None:
         name = self.name_entry.get_text().strip()
         if not name:
@@ -404,7 +428,7 @@ class EditWorkspaceDialog(Gtk.Window):
         updated.icon = self.selected_icon
         updated.color = self.selected_color
         self.on_save(updated)
-        self.destroy()
+        self._close_dialog()
 
 
 class DeleteWorkspaceDialog(Gtk.Window):
@@ -453,9 +477,20 @@ class DeleteWorkspaceDialog(Gtk.Window):
         root.append(btn_box)
         self.set_child(root)
 
+    def _close_dialog(self) -> None:
+        try:
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        self.close()
+
+    def destroy(self) -> None:
+        self._close_dialog()
+
     def _on_delete_clicked(self, _btn: Gtk.Button) -> None:
         self.on_confirm()
-        self.destroy()
+        self._close_dialog()
 
 
 class GroupDialog(Gtk.Window):
@@ -502,8 +537,19 @@ class GroupDialog(Gtk.Window):
         root.append(btn_box)
         self.set_child(root)
 
+    def _close_dialog(self) -> None:
+        try:
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        self.close()
+
+    def destroy(self) -> None:
+        self._close_dialog()
+
     def _on_ok_clicked(self, _btn: Gtk.Button) -> None:
         name = self.name_entry.get_text().strip()
         if name:
             self.on_ok(name)
-        self.destroy()
+        self._close_dialog()

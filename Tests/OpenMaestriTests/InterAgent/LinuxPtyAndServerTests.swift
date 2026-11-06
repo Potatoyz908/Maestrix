@@ -42,6 +42,41 @@ final class LinuxPtyAndServerTests: XCTestCase {
         XCTAssertTrue(buffer?.contains("SENTINELA_PTY_READY") == true, "Buffer should contain echo output")
     }
 
+    func testPOSIXPtyProcessPATHAndInteractiveCommand() async throws {
+        let tid = UUID()
+        let proc = POSIXPtyProcess(terminalId: tid, command: "echo \"CURRENT_PATH=$PATH\"", workingDirectory: "/tmp")
+
+        let exp = expectation(description: "PTY PATH received")
+        var received = ""
+
+        proc.onDataReceived = { text in
+            received += text
+            if received.contains("CURRENT_PATH=") {
+                exp.fulfill()
+            }
+        }
+
+        try proc.start()
+        defer { proc.terminate() }
+
+        await fulfillment(of: [exp], timeout: 5.0)
+
+        XCTAssertTrue(received.contains("/usr/bin"), "PATH should contain /usr/bin")
+        XCTAssertTrue(received.contains("/bin"), "PATH should contain /bin")
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if FileManager.default.fileExists(atPath: "\(home)/.local/bin") {
+            XCTAssertTrue(received.contains("\(home)/.local/bin"), "PATH should contain ~/.local/bin")
+        }
+        if FileManager.default.fileExists(atPath: "\(home)/.nvm/versions/node") {
+            let versions = (try? FileManager.default.contentsOfDirectory(atPath: "\(home)/.nvm/versions/node")) ?? []
+            for v in versions {
+                if FileManager.default.fileExists(atPath: "\(home)/.nvm/versions/node/\(v)/bin") {
+                    XCTAssertTrue(received.contains("\(home)/.nvm/versions/node/\(v)/bin"), "PATH should contain nvm node bin: \(v)")
+                }
+            }
+        }
+    }
+
     func testWebSocketKeyAcceptGeneration() {
         // RFC 6455 Section 1.3 test vector
         let clientKey = "dGhlIHNhbXBsZSBub25jZQ=="

@@ -85,16 +85,18 @@ final class POSIXPtyProcess: @unchecked Sendable {
         }
 
         // 确定要执行的 shell / 命令
-        let defaultShell = Constants.defaultShellPath
+        let userShell = ProcessInfo.processInfo.environment["SHELL"]
+        let defaultShell = (userShell != nil && !userShell!.isEmpty && FileManager.default.isExecutableFile(atPath: userShell!)) ? userShell! : Constants.defaultShellPath
         let execPath: String
         let execArgs: [String]
-        if command.isEmpty || command == "bash" || command == "zsh" || command.hasSuffix("/bash") || command.hasSuffix("/zsh") {
+        let trimmedCmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedCmd.isEmpty || trimmedCmd == "bash" || trimmedCmd == "zsh" || trimmedCmd.hasSuffix("/bash") || trimmedCmd.hasSuffix("/zsh") {
             execPath = defaultShell
-            execArgs = [defaultShell, "--login"]
+            execArgs = [defaultShell, "-i", "-l"]
         } else {
-            // 对标 Maestri：始终在 login shell 中启动命令，保持持久交互
+            // 对标 Maestri：始终在交互式 login shell 中启动命令，保持持久交互
             execPath = defaultShell
-            execArgs = [defaultShell, "-l", "-c", command]
+            execArgs = [defaultShell, "-i", "-l", "-c", "\(trimmedCmd); exec \(defaultShell)"]
         }
 
         // 构建环境变量
@@ -109,13 +111,60 @@ final class POSIXPtyProcess: @unchecked Sendable {
         if let socketPath = InterAgentServer.shared.currentSocketPath {
             env["MAESTRI_SOCKET"] = socketPath
         }
-        let existingPath = env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"
-        let extraPaths = [
-            "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin",
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var candidatePaths: [String] = []
+
+        // 1. ~/.nvm/versions/node/*/bin (按版本降序排列，新版本优先)
+        let nvmNodeDir = "\(home)/.nvm/versions/node"
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmNodeDir) {
+            for version in versions.sorted().reversed() {
+                candidatePaths.append("\(nvmNodeDir)/\(version)/bin")
+            }
+        }
+
+        // 2. ~/.cargo/bin
+        candidatePaths.append("\(home)/.cargo/bin")
+
+        // 3. ~/.local/bin
+        candidatePaths.append("\(home)/.local/bin")
+
+        // 4. 继承已有的 PATH 环境变量
+        if let existing = env["PATH"] {
+            candidatePaths.append(contentsOf: existing.split(separator: ":").map(String.init))
+        }
+
+        // 5. Linux 系统标准二进制目录
+        let systemPaths = [
             "/usr/local/bin",
             "/usr/bin",
-        ].filter { FileManager.default.fileExists(atPath: $0) }
-        env["PATH"] = (extraPaths + [existingPath]).joined(separator: ":")
+            "/bin",
+            "/usr/sbin",
+            "/sbin"
+        ]
+        candidatePaths.append(contentsOf: systemPaths)
+
+        // 规范化与去重：只保留存在的目录或系统标准路径，保持优先级顺序
+        var resolvedPaths: [String] = []
+        var seen = Set<String>()
+        for p in candidatePaths {
+            guard !p.isEmpty, !seen.contains(p) else { continue }
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: p, isDirectory: &isDir), isDir.boolValue {
+                seen.insert(p)
+                resolvedPaths.append(p)
+            }
+        }
+
+        // 确保无论如何包含标准基础系统 PATH
+        for fallback in systemPaths {
+            if !seen.contains(fallback) {
+                seen.insert(fallback)
+                resolvedPaths.append(fallback)
+            }
+        }
+
+        env["PATH"] = resolvedPaths.joined(separator: ":")
 
         #if canImport(Glibc)
         let pid = fork()
