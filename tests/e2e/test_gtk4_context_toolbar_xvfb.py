@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT_DIR / "canvas-cairo"))
 sys.path.insert(0, str(ROOT_DIR / "gtk4-ui" / "src"))
 sys.path.insert(0, str(ROOT_DIR))
 
-from maestri_canvas.context_toolbar import (DrawingContextToolbar, NoteContextToolbar,  # noqa: E402
+from maestri_canvas.context_toolbar import (DrawingContextToolbar, MultiContextToolbar, NoteContextToolbar,  # noqa: E402
                                             STROKE_RANGE)
 from maestri_canvas.drawn import default_freehand, default_shape, default_text  # noqa: E402
 from maestri_canvas.geometry import Point, Rect  # noqa: E402
@@ -86,6 +86,19 @@ def canvas(request):
     pump(0.05)
 
 
+def _children(w):
+    c, out = w.get_first_child(), []
+    while c is not None:
+        out.append(c)
+        c = c.get_next_sibling()
+    return out
+
+
+def _inside(cw, w):
+    x, y, ww, hh = toolbar_rect(cw, w)
+    return x + ww / 2, y + hh / 2
+
+
 def add_note(cw, nid="N1", rect=Rect(200, 200, 340, 260), text="hello world"):
     cw.add_node(NodeItem(nid, rect, 1, "stickyNote", "Note"), note={"name": "Note", "fileName": "Note.md", "color": "yellow"})
     view = cw.frames[nid].content
@@ -108,7 +121,7 @@ def test_note_toolbar_floats_above_selected_note(canvas):
     assert canvas.target_at(x + 5, y + h / 2) == NodeContent("N1")  # clicks on it are left to the toolbar (not a marquee)
 
 
-def test_drawing_toolbar_goes_below_when_node_is_at_the_top_and_hides_when_not_single(canvas):
+def test_drawing_toolbar_goes_below_when_node_is_at_the_top_multi_shows_delete_only(canvas):
     canvas.add_node(NodeItem("S1", Rect(300, 4, 200, 120), 1, "shape", content=default_shape()))
     canvas.add_node(NodeItem("S2", Rect(600, 300, 200, 120), 2, "shape", content=default_shape()))
     canvas.scene.selection = {"S1"}
@@ -116,8 +129,15 @@ def test_drawing_toolbar_goes_below_when_node_is_at_the_top_and_hides_when_not_s
     pump(0.1)
     x, y, w, h = toolbar_rect(canvas, canvas.context_toolbar.toolbar)
     assert y >= 124 + 8                                             # no room above: below the node
+    asked = []
+    canvas.connect("delete-requested", lambda _c, ids: asked.append(tuple(sorted(ids))))
     canvas.scene.selection = {"S1", "S2"}
-    assert wait_until(lambda: canvas.context_toolbar.toolbar is None)
+    assert wait_until(lambda: isinstance(canvas.context_toolbar.toolbar, MultiContextToolbar))
+    tb = canvas.context_toolbar.toolbar
+    assert [type(w).__name__ for w in _children(tb)] == ["Button"]          # only 🗑
+    assert canvas.target_at(*_inside(canvas, tb)) == NodeContent(tb.node_id) and tb.node_id in canvas.scene.selection
+    tb.delete_btn.emit("clicked")
+    assert asked == [("S1", "S2")]
     canvas.scene.selection = {"S2"}
     assert wait_until(lambda: canvas.context_toolbar.key == ("S2", "shape"))
     canvas.viewport.origin = Point(5000, 5000)                       # node off screen: hidden
@@ -138,6 +158,12 @@ def test_hidden_while_editing_text_and_absent_for_widget_kinds_and_locked(canvas
     for nid in ("TERM", "L1"):
         canvas.scene.selection = {nid}
         assert wait_until(lambda: canvas.context_toolbar.toolbar is None)
+    canvas.scene.selection = {"T1"}
+    assert wait_until(lambda: canvas.context_toolbar.toolbar is not None)
+    canvas.set_tool("rect")                                              # drawing: no toolbar in the way
+    assert wait_until(lambda: canvas.context_toolbar.toolbar is None)
+    canvas.set_tool("select")
+    assert wait_until(lambda: canvas.context_toolbar.key == ("T1", "text"))
 
 
 # ---- NoteContextToolbar ------------------------------------------------------------------------------------
@@ -159,7 +185,7 @@ def test_note_buttons_format_selection_and_switch_formatted_note_to_raw(canvas):
     tb.buttons["h2"].emit("clicked")
     tb.buttons["bullet"].emit("clicked")                               # heading + list are different families: both stay
     assert view.text().endswith("- ## second")
-    assert buf.can_undo()                                              # went through the buffer as user actions (undo + save path)
+    assert buf.get_can_undo()                                              # went through the buffer as user actions (undo + save path)
 
 
 def test_note_buttons_are_not_focusable(canvas):
@@ -197,6 +223,10 @@ def test_shape_toolbar_emits_patches_with_macos_ranges(canvas):
     tb.palette_buttons["purple"].emit("clicked")                                 # same value: no change emitted
     assert len(changes) == n
     assert canvas.scene.get("S1").content["shapeType"] == "rect"                 # untouched keys preserved
+    minus, label, plus, rng, _ = tb.steppers["fontSize"]                          # caption font, 8-72
+    assert label.get_text() == "16pt" and rng == (8, 72)
+    plus.emit("clicked")
+    assert changes[-1]["fontSize"] == 17.0
 
 
 def test_text_toolbar_is_font_size_and_freehand_has_no_style_menus(canvas):
@@ -314,13 +344,16 @@ def test_real_clicks_on_drawing_toolbar_and_palette_popover(canvas):
     canvas.add_node(NodeItem("S1", Rect(300, 300, 200, 120), 1, "shape", content=default_shape()))
     x = Xdo(canvas.title)
     x.click(400, 360)                                                  # select by clicking the drawn shape
-    assert wait_until(lambda: canvas.context_toolbar.key == ("S1", "shape") and canvas.context_toolbar.toolbar.get_visible())
-    pump(0.1)
+    assert wait_until(lambda: canvas.context_toolbar.key == ("S1", "shape") and canvas.context_toolbar.toolbar.get_visible()), \
+        f"no toolbar after clicking the shape: selection={canvas.scene.selection} key={canvas.context_toolbar.key}"
+    pump(0.2)
     tb = canvas.context_toolbar.toolbar
-    x.click(*center_in(canvas, tb.plus_btn))
-    assert wait_until(lambda: canvas.scene.get("S1").content["strokeWidth"] == 3.0)
+    px, py = center_in(canvas, tb.plus_btn)
+    x.click(px, py)
+    assert wait_until(lambda: canvas.scene.get("S1").content["strokeWidth"] == 3.0), \
+        f"+ at {(px, py)} did nothing: toolbar={toolbar_rect(canvas, tb)} selection={canvas.scene.selection}"
     x.click(*center_in(canvas, tb.color_btn))
-    assert wait_until(lambda: tb.color_popover.get_visible())         # the real click reached the MenuButton
+    assert wait_until(lambda: tb.color_popover.get_visible()), "the real click did not open the colour popover"
     tb.palette_buttons["orange"].emit("clicked")                       # the popover is its own surface: pick the swatch directly
     assert wait_until(lambda: canvas.scene.get("S1").content["strokeColor"] == "orange")
     assert canvas.scene.get("S1").frame == Rect(300, 300, 200, 120)   # toolbar clicks never moved the node

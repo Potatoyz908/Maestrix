@@ -1,8 +1,9 @@
 """Floating context toolbars for the single selected node (Sprint 5), shown over the canvas just above the node.
 
   NoteContextToolbar     sticky note: Markdown formatting on the raw editor (bold, italic, strike, code, H1, H2, list, task).
-  DrawingContextToolbar  text / shape / freehand: colour palette, stroke width or font size, stroke style and fill style
-                         (shapes), delete. Values and ranges follow ShapeContextToolbar / FreehandContextToolbar /
+  DrawingContextToolbar  text / shape / freehand: colour palette, stroke width or font size, stroke style, fill style and
+                         caption font size (shapes), delete.
+  MultiContextToolbar    several nodes selected: delete only. No toolbar while a draw tool is active. Values and ranges follow ShapeContextToolbar / FreehandContextToolbar /
                          TextContextToolbar on macOS.
 
 The CanvasWidget hosts them (`_sync_context_toolbar`): it decides which node gets one, positions it every frame and routes
@@ -167,15 +168,15 @@ class DrawingContextToolbar(ContextToolbar):
         self.append(self.color_btn)
         self.append(_separator())
 
-        # stroke width (shape/freehand) or font size (text)
-        self.value_key = "fontSize" if kind == "text" else "strokeWidth"
-        self.value_range = FONT_RANGE["text"] if kind == "text" else STROKE_RANGE
-        self.value_label = Gtk.Label(css_classes=["ctx-value"])
-        word = "fonte" if kind == "text" else "espessura do traço"
-        self.minus_btn = _button("−", f"Diminuir {word}", lambda: self._step(-1))
-        self.plus_btn = _button("+", f"Aumentar {word}", lambda: self._step(+1))
-        for w in (self.minus_btn, self.value_label, self.plus_btn):
-            self.append(w)
+        # stroke width (shape/freehand) or font size (text); key -> (minus, label, plus, (lo, hi), default)
+        self.steppers: dict[str, tuple] = {}
+        if kind == "text":
+            self.value_key = "fontSize"
+            self._stepper("fontSize", FONT_RANGE["text"], 18.0, "o tamanho da fonte")
+        else:
+            self.value_key = "strokeWidth"
+            self._stepper("strokeWidth", STROKE_RANGE, 2.0 if kind == "shape" else 3.0, "a espessura do traço")
+        self.minus_btn, self.value_label, self.plus_btn, self.value_range, _ = self.steppers[self.value_key]
 
         self.stroke_style_btn = self.fill_style_btn = None
         if kind == "shape":
@@ -184,12 +185,22 @@ class DrawingContextToolbar(ContextToolbar):
             self.fill_style_btn, self.fill_items = self._choice_menu("Estilo de preenchimento", "fillStyle", FILL_STYLES)
             self.append(self.stroke_style_btn)
             self.append(self.fill_style_btn)
+            self.append(_separator())
+            self._stepper("fontSize", FONT_RANGE["shape"], 16.0, "a fonte da legenda")   # the caption inside the shape
         if on_delete is not None:
             self.append(_separator())
             delete = _button("🗑", "Apagar", on_delete)
             delete.add_css_class("destructive")
             self.append(delete)
         self.update(self.content)
+
+    def _stepper(self, key: str, rng: tuple[int, int], default: float, what: str) -> None:
+        label = Gtk.Label(css_classes=["ctx-value"])
+        minus = _button("−", f"Diminuir {what}", lambda: self._step(key, -1))
+        plus = _button("+", f"Aumentar {what}", lambda: self._step(key, +1))
+        for w in (minus, label, plus):
+            self.append(w)
+        self.steppers[key] = (minus, label, plus, rng, default)
 
     def _choice_menu(self, tip: str, key: str, options) -> tuple[Gtk.MenuButton, dict[str, Gtk.Button]]:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=4, margin_bottom=4, margin_start=4, margin_end=4)
@@ -210,11 +221,11 @@ class DrawingContextToolbar(ContextToolbar):
         self.content = dict(content)
         self.color_swatch.color = self.content.get(self.color_key) or "blue"
         self.color_swatch.queue_draw()
-        v = self._value()
-        self.value_label.set_text(f"{v:g}pt")
-        lo, hi = self.value_range
-        self.minus_btn.set_sensitive(v > lo)
-        self.plus_btn.set_sensitive(v < hi)
+        for key, (minus, label, plus, (lo, hi), _d) in self.steppers.items():
+            v = self._value(key)
+            label.set_text(f"{v:g}pt")
+            minus.set_sensitive(v > lo)
+            plus.set_sensitive(v < hi)
         if self.stroke_style_btn is not None:
             self._mark(self.stroke_style_btn, self.stroke_items, STROKE_STYLES, self.content.get("strokeStyle", "solid"))
             self._mark(self.fill_style_btn, self.fill_items, FILL_STYLES, self.content.get("fillStyle", "solid"))
@@ -227,11 +238,12 @@ class DrawingContextToolbar(ContextToolbar):
             b.set_label(("✓ " if value == current else "    ") + labels[value])
             b.get_child().set_xalign(0)
 
-    def _value(self) -> float:
+    def _value(self, key: str) -> float:
+        default = self.steppers[key][4]
         try:
-            return float(self.content.get(self.value_key, 18.0 if self.kind == "text" else 2.0))
+            return float(self.content.get(key, default))
         except (TypeError, ValueError):
-            return 2.0
+            return default
 
     def _set(self, key: str, value) -> None:
         if self.content.get(key) != value:
@@ -243,13 +255,24 @@ class DrawingContextToolbar(ContextToolbar):
         if any(self.content.get(k) != v for k, v in patch.items()):
             self.on_change(patch)
 
-    def _step(self, direction: int) -> None:
-        lo, hi = self.value_range
-        new = max(lo, min(hi, round(self._value()) + direction))
-        self._set(self.value_key, float(new))
+    def _step(self, key: str, direction: int) -> None:
+        lo, hi = self.steppers[key][3]
+        new = max(lo, min(hi, round(self._value(key)) + direction))
+        self._set(key, float(new))
 
 
 DRAWN_TOOLBAR_KINDS = ("text", "shape", "freehand")
+
+
+class MultiContextToolbar(ContextToolbar):
+    """Several nodes selected: only Delete (Sprint 5 spec T3.1)."""
+
+    def __init__(self, node_ids: tuple[str, ...], on_delete: Callable[[], None]) -> None:
+        super().__init__(node_ids[0], "multi")
+        self.node_ids = node_ids
+        self.delete_btn = _button("🗑", f"Apagar {len(node_ids)} nós", on_delete)
+        self.delete_btn.add_css_class("destructive")
+        self.append(self.delete_btn)
 
 
 class ContextToolbarHost:
@@ -267,9 +290,12 @@ class ContextToolbarHost:
         self._pos: tuple[int, int] | None = None
 
     def _wanted(self) -> tuple[str, str] | None:
+        """(node id, kind) for one node; (comma-joined ids, "multi") for several; None = no toolbar (also while a tool is active)."""
         c = self.canvas
-        if len(c.scene.selection) != 1:
+        if c.controller.tool != "select" or not c.scene.selection:
             return None
+        if len(c.scene.selection) > 1:
+            return ",".join(sorted(c.scene.selection)), "multi"
         nid = next(iter(c.scene.selection))
         node = c.scene.get(nid)
         if node is None or node.locked:
@@ -298,8 +324,12 @@ class ContextToolbarHost:
         if key is None:
             return
         nid, kind = key
-        if kind == "stickyNote":
-            tb: ContextToolbar = NoteContextToolbar(nid, c.frames[nid].content)
+        if kind == "multi":
+            ids = tuple(nid.split(","))
+            tb: ContextToolbar = MultiContextToolbar(ids, on_delete=lambda: c.emit("delete-requested", ids))
+            nid = ids[0]   # role of a SELECTED node: pressing the toolbar keeps the whole selection
+        elif kind == "stickyNote":
+            tb = NoteContextToolbar(nid, c.frames[nid].content)
         else:
             tb = DrawingContextToolbar(nid, kind, c.scene.get(nid).content, on_change=lambda patch, n=nid: self._change(n, patch),
                                        on_delete=lambda n=nid: c.emit("delete-requested", (n,)))
@@ -320,16 +350,22 @@ class ContextToolbarHost:
     def _place(self, width: int, height: int) -> None:
         c, tb = self.canvas, self.toolbar
         editor = getattr(c, "_drawn_editor", None)
-        node = c.scene.get(self.key[0])
-        f, vp = node.frame, c.viewport
+        frames = [n.frame for n in (c.scene.get(i) for i in self.key[0].split(",")) if n is not None]
+        if not frames:
+            tb.set_visible(False)
+            return
+        f, vp = frames[0], c.viewport
+        for r in frames[1:]:
+            f = f.union(r)   # several nodes: centred over their bounding box
         tl, br = vp.to_screen(Point(f.x, f.y)), vp.to_screen(Point(f.max_x, f.max_y))
         hidden = (c.controller.busy or (editor is not None and editor.active)
                   or br.x < 0 or tl.x > width or br.y < 0 or tl.y > height)
         if hidden:
             tb.set_visible(False)
             return
-        tw = tb.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
-        th = tb.measure(Gtk.Orientation.VERTICAL, tw)[1]
+        # the allocated size once there is one (measure() can differ from what the overlay allocates), else the natural size
+        tw = tb.get_width() or tb.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
+        th = tb.get_height() or tb.measure(Gtk.Orientation.VERTICAL, tw)[1]
         x = min(max(self.MARGIN, (tl.x + br.x) / 2 - tw / 2), max(self.MARGIN, width - tw - self.MARGIN))
         y = tl.y - th - self.GAP
         if y < self.MARGIN:   # no room above: below the node, else pinned inside the top edge
