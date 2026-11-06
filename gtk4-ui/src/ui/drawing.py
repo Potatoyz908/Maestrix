@@ -18,10 +18,22 @@ from maestri_canvas.scene import WIDGET_KINDS
 from maestri_core.models.node import CanvasNode, NodeFrame, current_iso8601
 from maestri_core.signals.bus import bus
 
+# tool -> (label, outline icon of gtk4-ui/src/ui/icons - built by scripts/build-gtk-icons.py). No emoji/glyph icons.
 TOOL_LABELS = (
-    ("text", "T  Texto"), ("rect", "▭  Retângulo"), ("ellipse", "◯  Elipse"), ("diamond", "◇  Losango"),
-    ("freehand_pen", "✎  Caneta"), ("freehand_highlighter", "▬  Marca-texto"),
+    ("text", "Texto", "maestri-text-symbolic"), ("rect", "Retângulo", "maestri-square-symbolic"),
+    ("ellipse", "Elipse", "maestri-circle-symbolic"), ("diamond", "Losango", "maestri-diamond-symbolic"),
+    ("freehand_pen", "Caneta", "maestri-pencil-symbolic"), ("freehand_highlighter", "Marca-texto", "maestri-highlighter-symbolic"),
 )
+DEFAULT_LABEL, DEFAULT_ICON = "Desenho", "maestri-shapes-symbolic"
+
+
+def _icon_label(icon: str, label: str) -> tuple[Gtk.Box, Gtk.Image, Gtk.Label]:
+    box = Gtk.Box(spacing=8)
+    img = Gtk.Image.new_from_icon_name(icon)
+    lbl = Gtk.Label(label=label, xalign=0)
+    box.append(img)
+    box.append(lbl)
+    return box, img, lbl
 
 
 class DrawingTools:
@@ -39,13 +51,13 @@ class DrawingTools:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         self.popover = Gtk.Popover(child=box)
         self.tool_buttons: dict[str, Gtk.Button] = {}
-        for tool, label in TOOL_LABELS:
-            b = Gtk.Button(label=label, has_frame=False)
-            b.get_child().set_xalign(0)
+        for tool, label, icon in TOOL_LABELS:
+            b = Gtk.Button(child=_icon_label(icon, label)[0], has_frame=False)
             b.connect("clicked", lambda _b, t=tool: self.select(t))
             box.append(b)
             self.tool_buttons[tool] = b
-        btn = Gtk.MenuButton(label="✏️ Desenho", popover=self.popover)
+        child, self._button_icon, self._button_label = _icon_label(DEFAULT_ICON, DEFAULT_LABEL)
+        btn = Gtk.MenuButton(child=child, popover=self.popover)
         btn.set_tooltip_text("Texto, formas e desenho livre: escolha a ferramenta e arraste no canvas (Esc cancela)")
         return btn
 
@@ -57,8 +69,9 @@ class DrawingTools:
         self.window.canvas_widget.grab_focus()   # Esc (cancel the tool) is a canvas-focus key
 
     def _on_tool_changed(self, _cw, tool: str) -> None:
-        label = dict(TOOL_LABELS).get(tool)
-        self.button.set_label(f"✏️ {label.split('  ', 1)[1]}" if label else "✏️ Desenho")
+        label, icon = next(((lb, ic) for t, lb, ic in TOOL_LABELS if t == tool), (DEFAULT_LABEL, DEFAULT_ICON))
+        self._button_label.set_label(label)
+        self._button_icon.set_from_icon_name(icon)
 
     # ---- canvas gestures -> document -----------------------------------------------------------------
     def _on_draw_requested(self, _cw, tool: str, x: float, y: float, w: float, h: float) -> None:
