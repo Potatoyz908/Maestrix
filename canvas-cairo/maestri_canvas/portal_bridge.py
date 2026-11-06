@@ -107,10 +107,15 @@ class PortalBridge:
 
     # ---- dispatch ----------------------------------------------------------------------------------------------
     def handle_event(self, evt: dict) -> None:
-        rid = evt.get("requestId")
+        payload = evt.get("payload") if isinstance(evt.get("payload"), dict) else evt   # flat (EventBroadcaster) or nested
+        rid = payload.get("requestId") or evt.get("requestId")
         if not rid:
             return
-        payload = evt.get("payload") if isinstance(evt.get("payload"), dict) else evt   # flat (EventBroadcaster) or nested
+        ws = payload.get("workspaceId") or evt.get("workspaceId")
+        root = self.cw.get_root()
+        document = getattr(root, "document", None)
+        if ws and document is not None and str(document.payload.id).upper() != str(ws).upper():
+            return  # another window may own the requested workspace; do not race its answer
         op = str(payload.get("op") or "")
         args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
         view = self.view_for(payload.get("portalId"))
@@ -125,6 +130,9 @@ class PortalBridge:
         if not portal_id:
             return None
         frame = self.cw.frames.get(norm(str(portal_id)))
+        if frame is None:
+            frame = next((f for f in self.cw.frames.values()
+                          if norm(str(getattr(getattr(f.content, "meta", None), "portal_id", ""))) == norm(str(portal_id))), None)
         content = getattr(frame, "content", None)
         return content if content is not None and getattr(content, "web", None) is not None else None
 

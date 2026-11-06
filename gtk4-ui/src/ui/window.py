@@ -1417,7 +1417,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         """Managed notes go through the core REST API when it is reachable; offline they live in memory."""
         cw = self.canvas_widget
         if self.core_connected:
-            cw.notes_client = CoreNotesClient(self.client.port, self.client.token)
+            cw.notes_client = CoreNotesClient(self.client.port, self.client.token, workspace_id=self.document.payload.id)
         from maestri_core.paths import data_dir
         ws_dir = data_dir() / "workspaces" / self.document.payload.id
         cw.notes_dir = str(ws_dir / "notes")

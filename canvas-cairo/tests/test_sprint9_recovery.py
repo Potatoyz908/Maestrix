@@ -135,3 +135,20 @@ class TerminalActivityRecoveryTests(unittest.TestCase):
         self.assertTrue(state(live, dict(type='terminalExited', terminalId='LEGACY', exitCode=7)))
         cw.set_terminal_exited.assert_called_once_with('NODE', 7)
         self.assertFalse(state(live, dict(type='terminalExited', terminalId='unknown')))
+
+
+class WorkspaceBridgeRecoveryTests(unittest.TestCase):
+    def test_note_requests_pin_original_workspace(self):
+        import urllib.parse
+        url = method('canvas-cairo/maestri_canvas/note_storage.py', 'CoreNotesClient', '_url', dict(urllib=urllib))
+        client = NS(base='http://localhost:9999', workspace_id='FIRST')
+        self.assertEqual(url(client, 'Daily Note'), 'http://localhost:9999/api/notes/Daily%20Note?workspace=FIRST')
+
+    def test_portal_resolves_persisted_content_id(self):
+        view_for = method('canvas-cairo/maestri_canvas/portal_bridge.py', 'PortalBridge', 'view_for',
+                          dict(Any=object, norm=lambda v: v.upper()))
+        content = NS(meta=NS(portal_id='PORTAL-ID'), web=object())
+        bridge = NS(cw=NS(frames={'NODE-ID': NS(content=content)}))
+        self.assertIs(view_for(bridge, 'portal-id'), content)
+        self.assertIs(view_for(bridge, 'node-id'), content)
+        self.assertIsNone(view_for(bridge, 'unknown'))

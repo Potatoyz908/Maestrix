@@ -48,12 +48,14 @@ class MemoryNoteStorage:
 class CoreNotesClient:
     """Async client for the core's note endpoints (libsoup 3, GLib main loop). Auth: `Authorization: Bearer`, never `?token=`."""
 
-    def __init__(self, port: int, token: str = "", host: str = "127.0.0.1") -> None:
+    def __init__(self, port: int, token: str = "", host: str = "127.0.0.1", workspace_id: str | None = None) -> None:
         self.base, self.token = f"http://{host}:{port}", token
+        self.workspace_id = workspace_id
         self.session = Soup.Session()
 
     def _url(self, name: str) -> str:
-        return f"{self.base}/api/notes/{urllib.parse.quote(name, safe='')}"
+        url = f"{self.base}/api/notes/{urllib.parse.quote(name, safe='')}"
+        return url + "?" + urllib.parse.urlencode({"workspace": self.workspace_id}) if self.workspace_id else url
 
     def _request(self, method: str, name: str, body: bytes | None, cb: Callable[[int, bytes, Exception | None], None]) -> None:
         if not valid_note_name(name):
