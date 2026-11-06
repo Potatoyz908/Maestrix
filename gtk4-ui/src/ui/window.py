@@ -1169,6 +1169,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             "new-terminal-claude": lambda: self.create_terminal_preset("claude"),
             "new-terminal-codex": lambda: self.create_terminal_preset("codex"),
             "new-terminal-gemini": lambda: self.create_terminal_preset("gemini"),
+            "new-terminal-antigravity": lambda: self.create_terminal_preset("antigravity"),
             "new-terminal-opencode": lambda: self.create_terminal_preset("opencode"),
             "new-terminal-shell": lambda: self.create_terminal_preset("shell"),
             "new-note": lambda: self._create_node("stickyNote"),
@@ -1764,6 +1765,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
     def create_terminal_preset(self, preset_id: str, at: Point | None = None) -> CanvasNode:
         """Creates a terminal node directly from a Quick Start preset (Claude Code, Codex, Gemini CLI, OpenCode, Shell)."""
         preset = next((p for p in agent_presets(self) if p["id"] == preset_id), None)
+        if preset is None and preset_id == "antigravity":
+            preset = next(p for p in PRESETS if p["id"] == "antigravity")
         if preset is None:
             return None
         cwd = self.floors.terminal_cwd() or self.document.payload.working_directory or os.path.expanduser("~")

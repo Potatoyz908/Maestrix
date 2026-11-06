@@ -57,7 +57,8 @@ class NodeFrame:
 
 
 # Contract K4: the agent type the core uses for `ask` (wait for idle vs. shell prompt), derived from the launch command.
-AGENT_TYPES = {"claude": "claude_code", "codex": "codex", "gemini": "gemini_cli", "opencode": "open_code"}
+AGENT_TYPES = {"claude": "claude_code", "codex": "codex", "gemini": "gemini_cli", "opencode": "open_code",
+               "agy": "antigravity_cli"}
 
 
 def agent_type_for_command(command: str) -> str:
