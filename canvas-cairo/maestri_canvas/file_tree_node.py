@@ -195,12 +195,24 @@ class FileTreeView(Gtk.Box):
         self.btn_hidden.add_css_class("flat")
         self.btn_hidden.connect("toggled", lambda b: self.set_show_hidden(b.get_active()))
         btn_refresh = self._tool_button("view-refresh-symbolic", "Refresh", self.refresh)
-        for w in (self.btn_back, self.btn_forward, self.btn_up, self.path_label, self.git_button, modes, self.btn_hidden, btn_refresh):
+        self.btn_collapse = self._tool_button("maestri-collapse-all-symbolic", "Collapse All", self.collapse_all)
+        for w in (self.btn_back, self.btn_forward, self.btn_up, self.path_label, self.git_button, modes, self.btn_hidden,
+                  self.btn_collapse, btn_refresh):
             if w is not None:
                 bar.append(w)
         return bar
 
     # ---- public API -------------------------------------------------------------------------------
+    def collapse_all(self) -> None:
+        """Collapse every expanded folder (list mode). Bottom-up, so a parent collapse never skips its children's rows."""
+        tree = self.tree
+        if not isinstance(tree, Gtk.TreeListModel):
+            return
+        for i in range(tree.get_n_items() - 1, -1, -1):
+            row = tree.get_item(i)
+            if isinstance(row, Gtk.TreeListRow) and row.get_expanded():
+                row.set_expanded(False)
+
     @property
     def root(self) -> str:
         return self._root

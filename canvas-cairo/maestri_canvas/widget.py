@@ -593,7 +593,8 @@ class CanvasWidget(Gtk.Overlay):
                 content = Gtk.Label(label="Vte 3.91 (GTK 4) not available")
         elif item.kind == "fileTree" and content is None:
             nid = item.id
-            content = FileTreeView(cwd, view_mode=(file_tree or {}).get("viewMode", "list"))
+            # root: explicit cwd, else the persisted rootPath, else ~ (the window passes the workspace's working directory)
+            content = FileTreeView(cwd or (file_tree or {}).get("rootPath") or None, view_mode=(file_tree or {}).get("viewMode", "list"))
             content.connect("file-activated", lambda _v, path: self.emit("file-activated", nid, path))
             content.connect("ask-requested", lambda _v, text: self.emit("ask-requested", nid, text))
             content.connect("root-changed", lambda v, _p: self.emit("file-tree-changed", nid, {"rootPath": v.root, "viewMode": v.view_mode}))
