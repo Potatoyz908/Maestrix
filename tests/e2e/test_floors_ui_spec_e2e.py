@@ -1,5 +1,6 @@
-"""Floors UI (Sprint 5 T2.3-T2.6) under Xvfb: the floating button on the canvas, NewFloorDialog, LandFloorDialog and
+"""Floors UI (Sprint 5/6 T2.3-T2.6 + R6) under Xvfb: the floating button on the canvas, NewFloorDialog, LandFloorDialog and
 DeleteFloorDialog against a fake core client (no network). Run with DISPLAY=:99 (Xvfb), never on the user's display."""
+import shutil
 import sys
 import threading
 import time
@@ -21,6 +22,7 @@ sys.path.insert(0, str(ROOT_DIR / "canvas-cairo"))
 sys.path.insert(0, str(ROOT_DIR / "gtk4-ui" / "src"))
 sys.path.insert(0, str(ROOT_DIR))
 
+from maestri_canvas.demo import screenshot  # noqa: E402
 from maestri_core.client.api import MaestriAPIError, MaestriClient  # noqa: E402
 from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload  # noqa: E402
 from ui.floors import DeleteFloorDialog, FloorButton, LandFloorDialog, NewFloorDialog  # noqa: E402
@@ -41,6 +43,20 @@ def pump_until(cond, timeout=5.0):
     return cond()
 
 
+def save_dual_screenshot(widget: Gtk.Widget, sprint5_name: str, e2e_name: str) -> None:
+    """Save visual regression snapshot to both `artifacts/sprint5/` and `artifacts/e2e-screenshots/`."""
+    sprint5_dir = ROOT_DIR / "artifacts" / "sprint5"
+    e2e_dir = ROOT_DIR / "artifacts" / "e2e-screenshots"
+    sprint5_dir.mkdir(parents=True, exist_ok=True)
+    e2e_dir.mkdir(parents=True, exist_ok=True)
+    p1 = sprint5_dir / sprint5_name
+    p2 = e2e_dir / e2e_name
+    screenshot(widget, str(p1))
+    shutil.copyfile(p1, p2)
+    assert p1.stat().st_size > 1000
+    assert p2.stat().st_size > 1000
+
+
 class FakeFloorsCore(MaestriClient):
     """Connected core with an in-memory floor list; land-preview answers depend on the target."""
 
@@ -50,6 +66,7 @@ class FakeFloorsCore(MaestriClient):
         self.floors = [{"id": FLOOR_ID, "name": "Fix login", "branchName": "floor/fix-login",
                         "worktreePath": f"{root}/.open-maestri/floors/fix-login", "hooks": {}}]
         self.calls = []
+        self.fail_next_land = False
         self.lock = threading.Lock()
 
     def _log(self, *call):
@@ -74,15 +91,16 @@ class FakeFloorsCore(MaestriClient):
         return [dict(f) for f in self.floors]
 
     def floor_status(self, floor_id, workspace_id=None):
-        return {"dirty": True, "insertions": 7, "deletions": 3, "files": [{"path": "a", "status": "M"}]}
+        return {"dirty": True, "ahead": 2, "insertions": 7, "deletions": 3, "files": [{"path": "a", "status": "M"}]}
 
     def create_floor(self, name, branch_name=None, workspace_id=None, working_directory=None, base_branch=None, existing_branch=False):
         self._log("create", name, branch_name, base_branch, existing_branch)
         if branch_name == "taken":
             raise MaestriAPIError("HTTP 400", status_code=400, response_body="error: failed to create floor - branch exists")
-        f = {"id": "BBBBBBBB-0000-0000-0000-000000000002", "name": name, "branchName": branch_name,
-             "worktreePath": f"/tmp/x/{name}", "hooks": {}}
         with self.lock:
+            idx = len(self.floors) + 1
+            f = {"id": f"BBBBBBBB-0000-0000-0000-{idx:012d}", "name": name, "branchName": branch_name,
+                 "worktreePath": f"/tmp/x/{name}", "hooks": {}}
             self.floors.append(f)
         return f
 
@@ -95,8 +113,21 @@ class FakeFloorsCore(MaestriClient):
     def land_preview(self, floor_id, target=None, workspace_id=None):
         self._log("preview", target)
         target = target or "main"
-        conflicts = ["src/app.py"] if target == "release" else []
-        return {"floorBranch": "floor/fix-login", "target": target, "branches": ["main", "release", "dev", "floor/fix-login"],
+        branches = ["main", "release", "dirty", "merge-commit", "dev", "floor/fix-login"]
+        if target == "dirty":
+            return {"floorBranch": "floor/fix-login", "target": target, "branches": branches,
+                    "dirty": True, "dirtyFiles": ["src/login.py"], "sameBranch": False,
+                    "targetCheckedOut": False, "ahead": 2, "fastForward": True,
+                    "stat": "1 file changed, 5 insertions(+)", "insertions": 5, "deletions": 0,
+                    "conflicts": [], "canLand": False}
+        if target == "merge-commit":
+            return {"floorBranch": "floor/fix-login", "target": target, "branches": branches,
+                    "dirty": False, "dirtyFiles": [], "sameBranch": False,
+                    "targetCheckedOut": False, "ahead": 2, "fastForward": False,
+                    "stat": "2 files changed, 10 insertions(+), 2 deletions(-)", "insertions": 10, "deletions": 2,
+                    "conflicts": [], "canLand": True}
+        conflicts = ["src/app.py", "src/auth.py"] if target == "release" else []
+        return {"floorBranch": "floor/fix-login", "target": target, "branches": branches,
                 "dirty": False, "dirtyFiles": [], "sameBranch": target == "floor/fix-login",
                 "targetCheckedOut": target == "main", "ahead": 2, "fastForward": target == "dev",
                 "stat": "2 files changed, 10 insertions(+)", "insertions": 10, "deletions": 0, "conflicts": conflicts,
@@ -104,6 +135,10 @@ class FakeFloorsCore(MaestriClient):
 
     def land_floor(self, floor_id, target, workspace_id=None):
         self._log("land", floor_id, target)
+        with self.lock:
+            if self.fail_next_land:
+                self.fail_next_land = False
+                raise MaestriAPIError("HTTP 409", status_code=409, response_body="error: target branch updated concurrently")
         return {"status": "ok", "commit": "0123456789abcdef", "target": target}
 
 
@@ -117,6 +152,8 @@ def app():
 @pytest.fixture
 def win(app, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    (tmp_path / ".zshrc").touch()
     repo = tmp_path / "repo"
     repo.mkdir()
     core = FakeFloorsCore(repo)
@@ -161,6 +198,7 @@ class TestFloorsUI:
         assert term.content.working_directory == core.floors[0]["worktreePath"], "new terminals start in the floor"
         btn._row_activated(_rows(btn)[0])
         assert btn.get_label() == "🏢 Ground"
+        save_dual_screenshot(w, "floor_01_button_overlay.png", "08_floors_button_overlay.png")
 
     def test_button_disabled_offline(self, app, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -179,6 +217,7 @@ class TestFloorsUI:
         assert dlg.branches == ["main", "dev"]
         dlg.name_entry.set_text("Fix Signup Flow")
         assert dlg.branch_entry.get_text() == "floor/fix-signup-flow" and dlg.create_btn.get_sensitive()
+        save_dual_screenshot(dlg, "floor_02_new_floor_dialog.png", "09_new_floor_dialog.png")
         dlg.branch_entry.set_text("bad branch")
         assert not dlg.create_btn.get_sensitive() and dlg.error_label.get_visible()
         dlg.branch_entry.set_text("taken")
@@ -211,37 +250,91 @@ class TestFloorsUI:
         assert pump_until(lambda: dlg.preview_data is not None)
         assert ("preview", "floor/fix-login") in core.calls, "default target = the floor's own branch"
         assert dlg.selected_target == "floor/fix-login" and not dlg.merge_btn.get_sensitive()
+        assert "própria branch do floor" in dlg.summary.get_label()
 
         def pick(branch):
             dlg.target.set_selected(dlg._branches.index(branch))
             assert pump_until(lambda: dlg.preview_data.get("target") == branch)
 
+        # 1. Merge conflicts -> Merge disabled, red conflict file list shown
         pick("release")
         assert not dlg.merge_btn.get_sensitive()
         assert dlg.reason.get_label() == "Resolva os conflitos no terminal/IDE"
-        assert dlg.conflicts.get_visible() and "src/app.py" in dlg.conflicts.get_label()
+        assert dlg.conflicts.get_visible()
+        assert "✗ src/app.py" in dlg.conflicts.get_label() and "✗ src/auth.py" in dlg.conflicts.get_label()
+        save_dual_screenshot(dlg, "floor_04_land_dialog_conflicts.png", "10b_land_floor_conflicts.png")
+
+        # 2. Uncommitted dirty changes -> Merge disabled with commit warning
+        pick("dirty")
+        assert not dlg.merge_btn.get_sensitive()
+        assert dlg.reason.get_label() == "Faça commit antes de pousar: src/login.py"
+
+        # 3. Target checked out in Ground -> Merge disabled with checkout warning
         pick("main")
         assert not dlg.merge_btn.get_sensitive() and "checkout de outra branch" in dlg.reason.get_label()
+
+        # 4. Clean non-fast-forward merge commit -> Merge enabled
+        pick("merge-commit")
+        assert dlg.merge_btn.get_sensitive() and not dlg.reason.get_visible()
+        assert "2 commits → merge-commit (commit de merge)" in dlg.summary.get_label()
+        assert "+10 −2" in dlg.summary.get_label()
+
+        # 5. Clean fast-forward merge -> Merge enabled, error recovery (L2), then successful land
         pick("dev")
         assert dlg.merge_btn.get_sensitive() and not dlg.reason.get_visible()
         assert "2 commits → dev (fast-forward)" in dlg.summary.get_label()
+        assert "+10 −0" in dlg.summary.get_label()
+        save_dual_screenshot(dlg, "floor_03_land_dialog_clean.png", "10_land_floor_dialog.png")
+
+        core.fail_next_land = True
+        dlg.submit()
+        assert pump_until(lambda: dlg.merge_btn.get_sensitive())
+        assert dlg.reason.get_visible() and "target branch updated concurrently" in dlg.reason.get_label()
+
         dlg.submit()
         assert pump_until(lambda: ("land", FLOOR_ID, "dev") in core.calls)
         assert pump_until(lambda: w.floor_button.status.get_label() == "Floor pousado em dev")
 
-    def test_delete_dialog_three_buttons_and_back_to_ground(self, win):
+    def test_delete_dialog_three_buttons_keep_vs_delete_branch_and_back_to_ground(self, win):
         w, core = win
-        floor = w.floors.floors[0]
-        w.floors.switch_to(floor["id"])
-        dlg = w.floor_button.open_delete(floor)
-        assert isinstance(dlg, DeleteFloorDialog)
-        assert list(dlg.alert.get_buttons()) == ["Cancelar", "Manter branch", "Apagar branch"]
-        assert dlg.alert.get_cancel_button() == 0
-        dlg.choose(DeleteFloorDialog.CANCEL)
+        # Add a second floor so we can test both KEEP_BRANCH (delete_branch=False) and DELETE_BRANCH (delete_branch=True)
+        second = core.create_floor("Second Floor", branch_name="floor/second")
+        w.floors.refresh()
+        assert pump_until(lambda: len(w.floors.floors) == 2)
+
+        floor1 = w.floors.find(FLOOR_ID)
+        floor2 = w.floors.find(second["id"])
+        assert floor1 is not None and floor2 is not None
+
+        # 1. Verify 3-button contract, warning detail (L3), and Cancel (0)
+        dlg1 = w.floor_button.open_delete(floor1)
+        assert isinstance(dlg1, DeleteFloorDialog)
+        assert list(dlg1.alert.get_buttons()) == ["Cancelar", "Manter branch", "Apagar branch"]
+        assert dlg1.alert.get_cancel_button() == DeleteFloorDialog.CANCEL
+        assert dlg1.alert.get_default_button() == DeleteFloorDialog.KEEP_BRANCH
+        detail = dlg1.alert.get_detail() or ""
+        assert floor1["worktreePath"] in detail and floor1["branchName"] in detail
+        assert "Manter branch" in detail
+
+        dlg1.choose(DeleteFloorDialog.CANCEL)
         pump_until(lambda: False, 0.1)
         assert not any(c[0] == "delete" for c in core.calls)
-        dlg.choose(DeleteFloorDialog.DELETE_BRANCH)
+        assert len(w.floors.floors) == 2
+
+        # 2. Keep Branch (1 -> delete_branch=False): deletes worktree/floor but keeps git branch
+        dlg1.choose(DeleteFloorDialog.KEEP_BRANCH)
+        assert pump_until(lambda: len(w.floors.floors) == 1)
+        assert ("delete", floor1["id"], False) in core.calls
+        assert w.floor_button.status.get_label() == f"Floor “{floor1['name']}” apagado"
+        assert [f["id"] for f in w.document.payload.floors] == [floor2["id"]]
+
+        # 3. Delete Branch (2 -> delete_branch=True) on active floor: deletes branch and returns to Ground
+        w.floors.switch_to(floor2["id"])
+        assert w.floors.active_floor_id == floor2["id"] and w.floor_button.get_label() == f"🏢 {floor2['name']}"
+        dlg2 = w.floor_button.open_delete(floor2)
+        dlg2.choose(DeleteFloorDialog.DELETE_BRANCH)
         assert pump_until(lambda: w.floors.floors == [])
-        assert ("delete", floor["id"], True) in core.calls
+        assert ("delete", floor2["id"], True) in core.calls
+        assert w.floor_button.status.get_label() == f"Floor “{floor2['name']}” e a branch apagado"
         assert w.floors.active_floor_id is None and w.floor_button.get_label() == "🏢 Ground"
         assert w.document.payload.floors == []
