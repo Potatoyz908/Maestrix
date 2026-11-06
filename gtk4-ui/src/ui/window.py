@@ -2003,6 +2003,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         self._release_terminals()
 
     def _on_close_request(self, *_args):
+        if self.sync is None:
+            self._persist_offline_document()
         self._cleanup()
         return False
 
@@ -2018,12 +2020,39 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             elif getattr(content, "transport", None) is not None:
                 content.dispose()
 
+    def _persist_offline_document(self) -> None:
+        """Write the open workspace to disk when there is no core.
+
+        Without a server there is no WorkspaceSync, so nothing else saves the document: leaving the workspace or closing
+        the window used to discard every node created since it was loaded (the canvas came back empty and workspace.json
+        still had zero nodes). Uses the same atomic writer as the rest of the offline path. The offline demo document
+        ("Default") is not a workspace and is never written.
+        """
+        doc = getattr(self, "document", None)
+        if (doc is None or getattr(doc, "payload", None) is None or not doc.payload.id
+                or getattr(self, "_is_offline_placeholder", False) or not getattr(self, "_offline_mutated", False)):
+            return
+        try:
+            cw = self.canvas_widget
+            doc.schema_version = 2
+            doc.type = "workspace"
+            doc.payload.canvas_origin = [float(cw.viewport.origin.x), float(cw.viewport.origin.y)]
+            doc.payload.canvas_zoom = float(cw.viewport.zoom)
+            from maestri_core.persistence.manager import PersistenceManager
+            PersistenceManager().save_workspace(doc)
+            self._offline_mutated = False
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
     def _on_workspace_switched(self, bus_obj, workspace_id: str):
         if not self.loaded:
             return
         # Persist the workspace we are leaving before replacing the document.
         if self.sync is not None:
             self.sync.flush()
+        else:
+            self._persist_offline_document()   # no core -> no WorkspaceSync: nothing else would write it
 
         def switch_worker():
             doc = None
@@ -2056,6 +2085,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             cw.viewport.zoom = self._viewport_from_payload().zoom
             self._configure_notes_backend()   # notes_dir must follow the new workspace id
             self._load_payload_into_canvas()
+            self._is_offline_placeholder = False   # a real workspace now, not the offline demo document
+            self._offline_mutated = False          # loading is not an edit; only later changes need saving
             cw.controller.dirty = True
             self._no_workspace = False
             if self.sync is None and self.core_connected and not self.auth_failed:
