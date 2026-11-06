@@ -72,6 +72,7 @@ SF_SYMBOL_ICONS: dict[str, str] = {
     "gearshape": "settings", "wrench": "wrench", "tray.full": "archive", "display": "desktop", "doc": "file",
     "wand.and.stars": "sparkles", "sparkle": "sparkle", "sparkles": "sparkles", "seal": "asterisk",
     "rectangle.portrait": "book-open", "rectangle.inset.filled": "fill-solid",
+    "hare": "hare", "shield": "shield",
 }
 
 

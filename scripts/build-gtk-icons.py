@@ -182,6 +182,14 @@ GLYPHS.update({
     "collapse-all": '<path d="M4.5 2.5 L8 6 L11.5 2.5"/><path d="M4.5 13.5 L8 10 L11.5 13.5"/><path d="M2.5 8 H13.5"/>',
 })
 
+# ---- Sprint 9 (Pixel): the two EditTerminalSheet.swift IconPickerView symbols that were missing ("hare", "shield")
+GLYPHS.update({
+    "hare": '<ellipse cx="6.5" cy="10.5" rx="4.25" ry="2.9"/><circle cx="11.25" cy="7.6" r="2.2"/>'
+            '<path d="M10.4 5.6 L9.1 1.75 M12.1 5.55 L12.7 1.75"/><path d="M2.2 9.9 H2.3 M11.9 7.3 H12"/>'
+            '<path d="M5 13.3 L4.2 14.25 M8.6 13.3 L9.4 14.25"/>',
+    "shield": '<path d="M8 1.75 L13.25 3.75 V7.75 Q13.25 12 8 14.25 Q2.75 12 2.75 7.75 V3.75 Z"/>',
+})
+
 TEMPLATE = ('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
             '<g fill="none" stroke="#2e3436" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">{body}</g></svg>')
 

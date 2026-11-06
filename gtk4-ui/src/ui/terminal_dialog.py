@@ -40,10 +40,10 @@ PRESETS = [
      "color": "#8E8E93", "agent_type": "generic_shell"},
 ]
 
-# EditTerminalSheet.swift IconPickerView (the glyphs this port has: "hare" and "shield" have no outline here yet)
-ICON_CHOICES = ("face.smiling", "terminal", "star", "sparkle", "bubble.left.and.bubble.right", "gearshape", "rectangle",
-                "server.rack", "globe", "hammer", "wrench", "bolt", "tray.full", "desktopcomputer",
-                "rectangle.inset.filled", "display", "paintbrush", "folder", "doc", "cube", "eye", "wand.and.stars")
+# EditTerminalSheet.swift IconPickerView: the full macOS set, same order (24 symbols)
+ICON_CHOICES = ("face.smiling", "terminal", "star", "hare", "sparkle", "bubble.left.and.bubble.right", "gearshape",
+                "rectangle", "server.rack", "globe", "hammer", "wrench", "bolt", "tray.full", "desktopcomputer",
+                "rectangle.inset.filled", "display", "paintbrush", "folder", "doc", "shield", "cube", "eye", "wand.and.stars")
 # EditTerminalSheet.swift ColorPickerGridView
 COLOR_CHOICES = ("#007AFF", "#FF3B30", "#34C759", "#FF9500", "#AF52DE", "#FF2D55", "#5AC8FA", "#FFCC00", "#8E8E93")
 THEME_LABELS = {"dark": "Dark", "light": "Light", "dracula": "Dracula", "solarized-dark": "Solarized Dark",
