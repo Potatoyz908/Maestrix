@@ -1664,12 +1664,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
     def _on_new_group(self) -> None:
         """Opens macOS-matching 'New Group' modal dialog."""
         def handle_ok(name: str):
-            layout = self.sidebar._sidebar_layout
-            layout.groups.append(SidebarGroup(name=name, items=[]))
-            def worker():
-                self.client.save_sidebar_layout(layout)
-                self.sidebar.refresh()
-            threading.Thread(target=worker, daemon=True).start()
+            self.sidebar.add_group(name)   # updates the sidebar now, persists online or to sidebar-layout.json offline
 
         dlg = GroupDialog(self, "New Group", on_ok=handle_ok)
         dlg.present()
@@ -1746,7 +1741,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self.sync.close()
             self.sync = None
         if hasattr(self, "sidebar") and self.sidebar is not None:
-            self.sidebar.close_active_popovers()
+            self.sidebar.dispose()   # count poll timer + bus handlers (also closes its popovers)
         if hasattr(self, "floor_button") and self.floor_button is not None:
             try:
                 self.floor_button.popover.popdown()

@@ -19,6 +19,8 @@ class SignalBus(GObject.Object):
         "workspace-loaded": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "workspace-saved": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "workspace-switched": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        # (workspace id, terminal nodes persisted in it): from the core's nodeAdded / nodeRemoved / workspaceSaved events
+        "terminal-count-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),
 
         # Node events
         "node-added": (GObject.SignalFlags.RUN_FIRST, None, (object,)),

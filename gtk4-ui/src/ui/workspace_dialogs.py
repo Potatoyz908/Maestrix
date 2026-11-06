@@ -19,6 +19,24 @@ from gi.repository import GLib, Gtk  # noqa: E402
 from maestri_core.models.workspace import WorkspaceEntry
 
 
+def _close_modal(win: Gtk.Window) -> None:
+    """GTK4 / Python 3.14: drop modality and the transient parent BEFORE closing, else the parent can stay insensitive; then
+    really close (hiding alone kept every dialog ever opened alive). Idempotent."""
+    if getattr(win, "_maestri_closed", False):
+        return
+    win._maestri_closed = True
+    try:
+        win.set_visible(False)
+        win.set_modal(False)
+        win.set_transient_for(None)
+    except Exception:
+        pass
+    try:
+        Gtk.Window.close(win)
+    except Exception:
+        pass
+
+
 def create_workspace_record(client, name: str, wd: str, icon: str = "folder") -> str:
     """Create a workspace via the core client if available, or locally on filesystem when offline.
     Returns the workspace id."""
@@ -304,12 +322,7 @@ class CreateWorkspaceDialog(Gtk.Window):
             pass
 
     def _close_dialog(self) -> None:
-        try:
-            self.set_visible(False)
-            self.set_modal(False)
-            self.set_transient_for(None)
-        except Exception:
-            pass
+        _close_modal(self)
 
     def destroy(self) -> None:
         self._close_dialog()
@@ -501,12 +514,7 @@ class EditWorkspaceDialog(Gtk.Window):
             pass
 
     def _close_dialog(self) -> None:
-        try:
-            self.set_visible(False)
-            self.set_modal(False)
-            self.set_transient_for(None)
-        except Exception:
-            pass
+        _close_modal(self)
 
     def destroy(self) -> None:
         self._close_dialog()
@@ -571,12 +579,7 @@ class DeleteWorkspaceDialog(Gtk.Window):
         self.set_child(root)
 
     def _close_dialog(self) -> None:
-        try:
-            self.set_visible(False)
-            self.set_modal(False)
-            self.set_transient_for(None)
-        except Exception:
-            pass
+        _close_modal(self)
 
     def destroy(self) -> None:
         self._close_dialog()
@@ -631,12 +634,7 @@ class GroupDialog(Gtk.Window):
         self.set_child(root)
 
     def _close_dialog(self) -> None:
-        try:
-            self.set_visible(False)
-            self.set_modal(False)
-            self.set_transient_for(None)
-        except Exception:
-            pass
+        _close_modal(self)
 
     def destroy(self) -> None:
         self._close_dialog()

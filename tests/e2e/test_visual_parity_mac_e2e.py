@@ -276,8 +276,8 @@ class TestVisualParityMac:
         # Pin toggle updates status
         entry.is_pinned = True
         card_pinned = sidebar._create_workspace_card(entry, count=3)
-        badges = [c.get_label() for c in card_pinned.get_last_child().observe_children() if hasattr(c, "get_label")]
-        assert "📌" in badges
+        badge_icons = [c.get_icon_name() for c in card_pinned.get_last_child() if isinstance(c, Gtk.Image)]
+        assert "maestri-pin-symbolic" in badge_icons   # outline icon, no emoji
 
         sidebar.close_active_popovers()
         pump_events(0.05)

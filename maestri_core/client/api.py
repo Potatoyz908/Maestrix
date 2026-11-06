@@ -492,6 +492,10 @@ class EventsWebSocketClient(PTYWebSocketClient):
         if bus is None:
             return
         etype = event.get("type")
+        count = event.get("terminalCount")   # newer cores attach it (with workspaceId) to nodeAdded / nodeRemoved / workspaceSaved
+        if (etype in ("workspaceSaved", "nodeAdded", "nodeRemoved") and event.get("workspaceId")
+                and isinstance(count, int) and not isinstance(count, bool)):
+            bus.emit("terminal-count-changed", str(event["workspaceId"]).upper(), count)
         if etype == "workspaceSaved":
             bus.emit("workspace-saved", str(event.get("workspaceId", "")))
         elif etype == "nodeAdded":
