@@ -42,7 +42,7 @@ from .floors import install_floors
 from .core_link import CoreReconnector
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
-from .terminal_dialog import EditTerminalDialog, NewTerminalDialog
+from .terminal_dialog import EditTerminalDialog, NewTerminalDialog, PRESETS
 from .workspace_dialogs import CreateWorkspaceDialog, GroupDialog
 from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
 
@@ -829,18 +829,25 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         header.pack_start(traffic_box)
 
-        # Quick Add (+) MenuButton
-        btn_quick_add = Gtk.MenuButton(label="＋ ▾")
+        # Quick Add (+ Add) MenuButton
+        btn_quick_add = Gtk.MenuButton(label="＋ Add")
         btn_quick_add.set_tooltip_text("Quick Create Node")
         btn_quick_add.add_css_class("maestri-header-btn")
         quick_menu = Gio.Menu()
         quick_menu.append("New Workspace…", "win.new-workspace")
         quick_menu.append("New Group…", "win.new-group")
-        quick_menu.append("New Terminal…", "win.new-terminal")
+        term_submenu = Gio.Menu()
+        for preset in PRESETS:
+            term_submenu.append(f"{preset['icon']}  {preset['name']}", f"win.new-terminal-{preset['id']}")
+        term_submenu.append("New Terminal…", "win.new-terminal")
+        quick_menu.append_submenu("Terminal", term_submenu)
         quick_menu.append("New Sticky Note", "win.new-note")
         quick_menu.append("New Web Portal", "win.new-portal")
         quick_menu.append("New File Tree", "win.new-file-tree")
         btn_quick_add.set_menu_model(quick_menu)
+        self.btn_quick_add = btn_quick_add
+        self.quick_menu = quick_menu
+        self.terminal_presets_menu = term_submenu
         header.pack_start(btn_quick_add)
 
         # Toggle Sidebar button (macOS [|] style)
@@ -943,6 +950,11 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             "new-workspace": lambda: self._on_new_workspace(),
             "new-group": lambda: self._on_new_group(),
             "new-terminal": lambda: self.open_new_terminal_dialog(),
+            "new-terminal-claude": lambda: self.create_terminal_preset("claude"),
+            "new-terminal-codex": lambda: self.create_terminal_preset("codex"),
+            "new-terminal-gemini": lambda: self.create_terminal_preset("gemini"),
+            "new-terminal-opencode": lambda: self.create_terminal_preset("opencode"),
+            "new-terminal-shell": lambda: self.create_terminal_preset("shell"),
             "new-note": lambda: self._create_node("stickyNote"),
             "new-portal": lambda: self._create_node("portal"),
             "new-file-tree": lambda: self._create_node("fileTree"),
@@ -1321,7 +1333,28 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         cw.viewport.set_zoom_at(Point(w / 2.0, h / 2.0), 1.0)
         cw.controller.dirty = True
 
-    def open_new_terminal_dialog(self, at: Point | None = None) -> None:
+    def create_terminal_preset(self, preset_id: str, at: Point | None = None) -> CanvasNode:
+        """Creates a terminal node directly from a Quick Start preset (Claude Code, Codex, Gemini CLI, OpenCode, Shell)."""
+        import uuid
+        preset = next((p for p in PRESETS if p["id"] == preset_id), PRESETS[0])
+        cwd = self.floors.terminal_cwd() or self.document.payload.working_directory or os.path.expanduser("~")
+        spawn_at = at or Point(
+            self.canvas_widget.viewport.origin.x + (self.canvas_widget.get_width() or 1000) / 2 / self.canvas_widget.viewport.zoom - 210,
+            self.canvas_widget.viewport.origin.y + (self.canvas_widget.get_height() or 700) / 2 / self.canvas_widget.viewport.zoom - 150,
+        )
+        node_id = str(uuid.uuid4()).upper()
+        frame = NodeFrame(x=spawn_at.x, y=spawn_at.y, width=420, height=300)
+        content = TerminalContent(name=preset["name"], command=preset["command"], working_directory=cwd)
+        node = CanvasNode(id=node_id, frame=frame, node_type="terminal", content=content, z_index=len(self.document.payload.nodes) + 1)
+        self.document.payload.nodes.append(node)
+        self._add_node_to_canvas(node)
+        self.canvas_widget.controller.dirty = True
+        bus.emit("node-added", node)
+        if self.sync is not None:
+            self.sync.flush()
+        return node
+
+    def open_new_terminal_dialog(self, at: Point | None = None, default_preset: str = "claude") -> NewTerminalDialog:
         """Opens the macOS-matching 'New Terminal' modal dialog with Quick Start presets."""
         def on_create(data: dict):
             import uuid
@@ -1343,8 +1376,16 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             if self.sync is not None:
                 self.sync.flush()
 
-        dlg = NewTerminalDialog(self, on_create=on_create, default_cwd=self.document.payload.working_directory)
+        dlg = NewTerminalDialog(
+            self,
+            on_create=on_create,
+            default_cwd=self.document.payload.working_directory,
+            default_preset=default_preset,
+        )
+        self._active_terminal_dialog = dlg
+        dlg.connect("close-request", lambda *_a: setattr(self, "_active_terminal_dialog", None) or False)
         dlg.present()
+        return dlg
 
     def edit_selected_node(self) -> None:
         """Edits the currently selected node (rename, settings, etc.)."""

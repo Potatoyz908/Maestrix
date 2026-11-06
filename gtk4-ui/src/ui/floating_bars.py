@@ -111,7 +111,7 @@ class CanvasTopToolbar(Gtk.Box):
         if tool_id == "select":
             self.cw.set_tool("select")
         elif tool_id == "terminal":
-            self.window._create_node("terminal")
+            self.window.open_new_terminal_dialog()
             self._set_active_tool_btn("select")
         elif tool_id == "stickyNote":
             self.window._create_node("stickyNote")

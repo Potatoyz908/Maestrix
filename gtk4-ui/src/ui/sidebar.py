@@ -124,33 +124,10 @@ class SidebarView(Gtk.Box):
         self.ws_box.append(self.ws_list_box)
         self.content_box.append(self.ws_box)
 
-        # 2.2 Floors Section
-        self.floors_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        floors_header = Gtk.Label(label="<b>FLOORS (WORKTREES)</b>", use_markup=True, xalign=0.0)
-        floors_header.add_css_class("maestri-sidebar-header")
-        self.floors_box.append(floors_header)
-
-        self.floors_list_box = Gtk.ListBox()
-        self.floors_list_box.add_css_class("maestri-floors-list")
-        self.floors_box.append(self.floors_list_box)
-        self.content_box.append(self.floors_box)
-
-        # 2.3 Canvas Agents Section
-        self.agents_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        agents_header = Gtk.Label(label="<b>CANVAS AGENTS</b>", use_markup=True, xalign=0.0)
-        agents_header.add_css_class("maestri-sidebar-header")
-        self.agents_box.append(agents_header)
-
-        self.agents_list_box = Gtk.ListBox()
-        self.agents_list_box.add_css_class("maestri-agents-list")
-        self.agents_box.append(self.agents_list_box)
-        self.content_box.append(self.agents_box)
-
         scrolled.set_child(self.content_box)
         self.append(scrolled)
 
         self._raw_workspaces: list[WorkspaceEntry] = []
-        self._raw_agents: list[dict] = []
         self._sidebar_layout: SidebarLayout = SidebarLayout()
         self._active_workspace_id: Optional[str] = None
 
@@ -160,7 +137,7 @@ class SidebarView(Gtk.Box):
         self._active_workspace_id = ws_id
 
     def refresh(self) -> None:
-        """Fetch workspaces, layout, and agents asynchronously in background thread."""
+        """Fetch workspaces and sidebar layout asynchronously in background thread."""
         def worker():
             try:
                 workspaces = self.client.get_workspaces()
@@ -170,21 +147,14 @@ class SidebarView(Gtk.Box):
                 layout = self.client.get_sidebar_layout()
             except Exception:
                 layout = SidebarLayout()
-            try:
-                agents = self.client.get_agents()
-            except Exception:
-                agents = []
-            GLib.idle_add(self._apply_refresh, workspaces, layout, agents)
+            GLib.idle_add(self._apply_refresh, workspaces, layout)
 
         threading.Thread(target=worker, name="maestri-sidebar-refresh", daemon=True).start()
 
-    def _apply_refresh(self, workspaces: list[WorkspaceEntry], layout: SidebarLayout, agents: list[dict]) -> bool:
+    def _apply_refresh(self, workspaces: list[WorkspaceEntry], layout: SidebarLayout) -> bool:
         self._raw_workspaces = workspaces
         self._sidebar_layout = layout
-        self._raw_agents = agents
         self._render_all(workspaces)
-        self._render_floors()
-        self._render_agents(agents)
         return GLib.SOURCE_REMOVE
 
     def _on_search_changed(self, entry: Gtk.SearchEntry) -> None:
@@ -618,43 +588,6 @@ class SidebarView(Gtk.Box):
             self.client.save_sidebar_layout(self._sidebar_layout)
             self.refresh()
         threading.Thread(target=worker, daemon=True).start()
-
-    # ---- Floors & Agents -----------------------------------------------------------------------------------
-    def _render_floors(self) -> None:
-        while self.floors_list_box.get_first_child():
-            self.floors_list_box.remove(self.floors_list_box.get_first_child())
-
-        floor_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        floor_card.add_css_class("maestri-floor-card")
-        icon = Gtk.Label(label="🌿")
-        lbl = Gtk.Label(label="<b>main</b> (Ground active)", use_markup=True, xalign=0.0)
-        lbl.add_css_class("maestri-floor-name")
-        floor_card.append(icon)
-        floor_card.append(lbl)
-        self.floors_list_box.append(floor_card)
-
-    def _render_agents(self, agents: list[dict]) -> None:
-        while self.agents_list_box.get_first_child():
-            self.agents_list_box.remove(self.agents_list_box.get_first_child())
-
-        default_agents = [
-            ("🏛️ Arquiteto", "Tech Lead & Specs"),
-            ("🎨 Pixel", "UI & Canvas"),
-            ("🛡️ Sentinela", "Core Server & IPC"),
-            ("⚙️ Forja", "QA & E2E Validation"),
-        ]
-        list_to_render = [(a.get("name", "Agent"), a.get("role", "Active")) for a in agents] if agents else default_agents
-
-        for a_name, a_role in list_to_render:
-            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            card.add_css_class("maestri-agent-card")
-            lbl_name = Gtk.Label(label=f"<b>{a_name}</b>", use_markup=True, xalign=0.0)
-            lbl_name.add_css_class("maestri-agent-name")
-            lbl_role = Gtk.Label(label=a_role, xalign=0.0)
-            lbl_role.add_css_class("maestri-agent-role")
-            card.append(lbl_name)
-            card.append(lbl_role)
-            self.agents_list_box.append(card)
 
     def _on_ws_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
         child = row.get_child()

@@ -204,11 +204,32 @@ class TestVisualParityMac:
         assert created_data[0]["command"] == "gemini"
         assert created_data[0]["monitor"] is True
 
+        # Clicking >_ on the top toolbar opens NewTerminalDialog with all 5 AI presets
+        window.top_toolbar.tool_buttons["terminal"].emit("clicked")
+        pump_events(0.1)
+        active_dlg = getattr(window, "_active_terminal_dialog", None)
+        assert isinstance(active_dlg, NewTerminalDialog)
+        assert set(active_dlg.preset_buttons.keys()) == {"claude", "codex", "gemini", "opencode", "shell"}
+        active_dlg.close()
+        pump_events(0.05)
+
+        # + Add > Terminal submenu contains the 5 AI presets
+        term_menu = window.terminal_presets_menu
+        assert term_menu.get_n_items() >= 5
+        labels = [
+            term_menu.get_item_attribute_value(i, Gio.MENU_ATTRIBUTE_LABEL, GLib.VariantType.new("s")).get_string()
+            for i in range(term_menu.get_n_items())
+        ]
+        for expected in ("Claude Code", "Codex", "Gemini CLI", "OpenCode", "Shell"):
+            assert any(expected in lbl for lbl in labels)
+
     def test_sidebar_workspace_cards_and_search(self, window):
         """Sidebar provides modern cards and search entry matching docs/images/home.png."""
         sidebar = window.sidebar
         assert sidebar.search_entry is not None
         assert sidebar.search_entry.get_placeholder_text() == "Search Workspaces"
+        assert not hasattr(sidebar, "floors_box")
+        assert not hasattr(sidebar, "agents_box")
 
         # Verify cards are rendered
         pump_events(0.1)
@@ -314,8 +335,11 @@ class TestVisualParityMac:
         """Verifies terminal creation and renaming via dialog and inline."""
         n0 = len(window.document.payload.nodes)
 
-        # 1. Direct creation via tool button
+        # 1. Creation via tool button opens NewTerminalDialog
         window.top_toolbar._on_tool_clicked("terminal")
+        pump_events(0.1)
+        assert window._active_terminal_dialog is not None
+        window._active_terminal_dialog.create_btn.emit("clicked")
         pump_events(0.1)
         assert len(window.document.payload.nodes) == n0 + 1
         new_term = window.document.payload.nodes[-1]
