@@ -20,11 +20,83 @@ from maestri_canvas.geometry import Point, Rect
 from maestri_core.signals.bus import bus
 
 
+# The two top islands (tools + node actions) as in macOS Maestri: a dark translucent pill, icons with NO button
+# background (the theme's default button gradient is cleared with background-image: none), the active tool is only
+# tinted blue. Scoped to these pills so the rest of the app keeps its own button style.
+TOP_CSS = """
+.maestri-top-toolbar, .maestri-context-actions-pill {
+    background-color: rgba(28, 28, 30, 0.86);
+    background-image: none;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 18px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    padding: 4px 10px;
+}
+.maestri-top-toolbar button.maestri-island-btn,
+.maestri-context-actions-pill button.maestri-island-btn {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    border-radius: 8px;
+    min-width: 0;
+    min-height: 0;
+    padding: 6px 9px;
+    color: rgba(235, 235, 245, 0.80);
+}
+/* The grey squares behind the glyphs were painted on the inner `image` node (found by painting each node of the button),
+   not on the button: clear it too. */
+.maestri-top-toolbar button.maestri-island-btn image,
+.maestri-context-actions-pill button.maestri-island-btn image {
+    background: none;
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    padding: 0;
+    margin: 0;
+    -gtk-icon-shadow: none;
+}
+.maestri-top-toolbar button.maestri-island-btn:hover,
+.maestri-context-actions-pill button.maestri-island-btn:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+    color: #ffffff;
+}
+.maestri-top-toolbar button.maestri-island-btn.active,
+.maestri-context-actions-pill button.maestri-island-btn.active {
+    background-color: transparent;
+    color: #0A84FF;
+}
+.maestri-context-actions-pill button.maestri-island-btn.danger:hover {
+    background-color: transparent;
+    color: #FF453A;
+}
+"""
+_top_css_installed = False
+
+
+def _install_top_css() -> None:
+    global _top_css_installed
+    display = Gdk.Display.get_default()
+    if _top_css_installed or display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_string(TOP_CSS)
+    # USER + 1, not APPLICATION: a user GTK theme (e.g. WhiteSur in ~/.config/gtk-4.0) loads at USER priority and gives
+    # icon buttons its own background, which is what painted grey squares behind the glyphs. The window's generic
+    # .maestri-floating-pill / .maestri-island-btn rules (APPLICATION) also lose to it. context_toolbar.py does the same.
+    Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
+    _top_css_installed = True
+
+
 class CanvasTopToolbar(Gtk.Box):
     """Floating top-center island toolbar matching macOS Maestri."""
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        _install_top_css()
         self.window = window
         self.cw = window.canvas_widget
         self.set_halign(Gtk.Align.CENTER)
@@ -413,6 +485,12 @@ BOTTOM_CSS = """
 .maestri-bottom-controls menubutton.maestri-capsule-btn > button:focus-visible,
 .maestri-bottom-controls menubutton.floor-button > button:focus-visible { outline: 2px solid rgba(10, 132, 255, 0.85); outline-offset: -2px; }
 .maestri-bottom-controls button.maestri-capsule-btn:disabled image { opacity: 0.35; }
+/* same cause as the top islands: the user theme paints the inner `image` node of icon buttons */
+.maestri-bottom-controls button.maestri-capsule-btn image,
+.maestri-bottom-controls menubutton.maestri-capsule-btn > button image,
+.maestri-bottom-controls menubutton.floor-button > button image {
+    background: none; background-color: transparent; background-image: none; border: none; box-shadow: none; outline: none;
+}
 .maestri-bottom-controls .maestri-zoom-label {
     font-size: 11px;
     font-weight: 500;
@@ -438,8 +516,8 @@ def _install_bottom_css() -> None:
         return
     provider = Gtk.CssProvider()
     provider.load_from_string(BOTTOM_CSS)
-    # +1 over the window's APPLICATION provider: these scoped rules must win over the generic pill rules in window.py
-    Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+    # USER + 1: a user GTK theme (WhiteSur, ~/.config/gtk-4.0) loads at USER priority and would override these rules
+    Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
     _bottom_css_installed = True
 
 
