@@ -29,6 +29,27 @@ final class LinuxPtyAndServerTests: IsolatedDataDirTestCase {
         await fulfillment(of: [idle], timeout: 1)
     }
 
+    func testAgentIdleClockWaitsForSilenceSprint9() async {
+        let idle = expectation(description: "agent output goes idle")
+        let session = await MainActor.run { () -> TerminalSession in
+            let session = TerminalSession(id: UUID(), command: "codex", workingDirectory: "/tmp", roleName: nil)
+            session.agentType = "codex"
+            return session
+        }
+        let sessionID = await MainActor.run { session.id }
+        let started = Date()
+        let observer = NotificationCenter.default.addObserver(forName: .terminalBecameIdle, object: nil, queue: nil) { note in
+            if note.userInfo?["terminalId"] as? UUID == sessionID {
+                XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 3.0)
+                idle.fulfill()
+            }
+        }
+        await MainActor.run { session.recordOutput("working") }
+        await fulfillment(of: [idle], timeout: 6)
+        NotificationCenter.default.removeObserver(observer)
+        await MainActor.run { session.terminate() }
+    }
+
     func testSkillInstallationIsolatedFallbackSprint9() throws {
         let pm = PersistenceManager.shared
         var prefs = Preferences()
