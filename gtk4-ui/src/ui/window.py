@@ -1509,31 +1509,10 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         cw.add_controller(click)
 
     def _on_canvas_right_click(self, gesture, _n_press, x, y):
-        cw = self.canvas_widget
-        target = cw.target_at(x, y)
-        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        self._ctx_point = cw.viewport.to_canvas(Point(x, y))
-        rect = Gdk.Rectangle()
-        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
-
-        from .context_menus import CanvasContextMenu, NodeContextMenu
-
-        if isinstance(target, Background):
-            pop = CanvasContextMenu(self, self._ctx_point)
-            pop.set_parent(cw)
-            pop.set_pointing_to(rect)
-            pop.connect("closed", lambda p: GLib.idle_add(lambda: (p.unparent(), False)[1]))
-            pop.popup()
-            self._ctx_popover = pop
-        else:
-            node_id = getattr(target, "node_id", None) or getattr(target, "id", None)
-            if node_id:
-                pop = NodeContextMenu(self, str(node_id))
-                pop.set_parent(cw)
-                pop.set_pointing_to(rect)
-                pop.connect("closed", lambda p: GLib.idle_add(lambda: (p.unparent(), False)[1]))
-                pop.popup()
-                self._node_ctx_popover = pop
+        """One dispatcher (context_menus.open_context_menu): canvas / connection / node menus; denied over the content
+        of notes, portals and file trees so their own menus keep working."""
+        from .context_menus import open_context_menu
+        open_context_menu(self, gesture, x, y)
 
     def _load_payload_into_canvas(self) -> None:
         for node in self.document.payload.nodes:
