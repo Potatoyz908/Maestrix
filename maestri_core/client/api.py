@@ -1056,11 +1056,18 @@ class MaestriClient:
         branch_name: Optional[str] = None,
         workspace_id: Optional[str] = None,
         working_directory: Optional[str] = None,
+        base_branch: Optional[str] = None,
+        existing_branch: bool = False,
     ) -> Dict[str, Any]:
-        """Creates an isolated floor git worktree environment."""
+        """Creates an isolated floor git worktree environment. `existing_branch=True` checks out `branch_name` as is;
+        otherwise a new branch is created from `base_branch` (default: Ground's HEAD)."""
         payload: Dict[str, Any] = {"name": name}
         if branch_name:
             payload["branchName"] = branch_name
+        if base_branch:
+            payload["baseBranch"] = base_branch
+        if existing_branch:
+            payload["existingBranch"] = True
         if workspace_id:
             payload["workspaceId"] = workspace_id
         if working_directory:
@@ -1103,13 +1110,16 @@ class MaestriClient:
         floor_id: str,
         workspace_id: Optional[str] = None,
         remove_worktree: bool = True,
+        delete_branch: bool = False,
     ) -> bool:
-        """Removes a floor from the workspace (and optionally its git worktree)."""
+        """Removes a floor from the workspace (and optionally its git worktree / its branch)."""
         params: List[str] = []
         if workspace_id:
             params.append(f"workspace={urllib.parse.quote(workspace_id)}")
         if not remove_worktree:
             params.append("removeWorktree=0")
+        if delete_branch:
+            params.append("deleteBranch=1")
         query = ("?" + "&".join(params)) if params else ""
         resp = self.session.delete(
             f"{self.base_url}/api/floors/{floor_id}{query}",
@@ -1118,6 +1128,47 @@ class MaestriClient:
         )
         self._handle_response(resp)
         return True
+
+    def floor_status(self, floor_id: str, workspace_id: Optional[str] = None) -> Dict[str, Any]:
+        """{base, dirty, files:[{path,status}], ahead, behind, insertions, deletions} of the floor against Ground's branch."""
+        url = f"{self.base_url}/api/floors/{floor_id}/status"
+        if workspace_id:
+            url += f"?workspace={urllib.parse.quote(workspace_id)}"
+        resp = self.session.get(url, headers=self._headers(), timeout=self.timeout)
+        return self._handle_response(resp).json()
+
+    def land_preview(
+        self, floor_id: str, target: Optional[str] = None, workspace_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Landing preview: {floorBranch, target, branches, dirty, dirtyFiles, sameBranch, targetCheckedOut, ahead,
+        fastForward, stat, insertions, deletions, conflicts, canLand, diff, treeOid}. `target` defaults to Ground's
+        checked-out branch."""
+        params: Dict[str, str] = {}
+        if target:
+            params["target"] = target
+        if workspace_id:
+            params["workspace"] = workspace_id
+        query = ("?" + urllib.parse.urlencode(params)) if params else ""
+        resp = self.session.get(
+            f"{self.base_url}/api/floors/{floor_id}/land-preview{query}",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        return self._handle_response(resp).json()
+
+    def land_floor(self, floor_id: str, target: str, workspace_id: Optional[str] = None) -> Dict[str, Any]:
+        """Lands the floor's commits into `target` with git plumbing (HTTP 409 when dirty, conflicting, or when `target` is
+        checked out in Ground)."""
+        url = f"{self.base_url}/api/floors/{floor_id}/land"
+        if workspace_id:
+            url += f"?workspace={urllib.parse.quote(workspace_id)}"
+        resp = self.session.post(
+            url,
+            json={"target": target},
+            headers=self._headers({"Content-Type": "application/json"}),
+            timeout=max(self.timeout, 60.0),
+        )
+        return self._handle_response(resp).json()
 
     # ------------------------------------------------------------------------
     # Routines (/api/routines)

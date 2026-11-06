@@ -498,3 +498,42 @@ def test_client_sprint4_endpoints(client):
     with patch.object(client.session, "delete", return_value=ok_resp):
         assert client.delete_routine("R-1") is True
 
+
+
+# ---- floors (Sprint 5 T2.2) ------------------------------------------------------------------------------------------
+def _floor_resp(status=200, payload=None):
+    r = MagicMock(ok=200 <= status < 300, status_code=status, text="error: nope")
+    r.json.return_value = payload
+    return r
+
+
+def test_create_floor_sends_branch_options(client):
+    with patch.object(client.session, "post", return_value=_floor_resp(201, {"id": "F"})) as post:
+        client.create_floor("Fix", branch_name="feature/x", workspace_id="W", base_branch="dev")
+        assert post.call_args.kwargs["json"] == {"name": "Fix", "branchName": "feature/x", "workspaceId": "W", "baseBranch": "dev"}
+        client.create_floor("Fix", branch_name="feature/x", existing_branch=True)
+        assert post.call_args.kwargs["json"]["existingBranch"] is True
+
+
+def test_delete_floor_delete_branch_query(client):
+    with patch.object(client.session, "delete", return_value=_floor_resp()) as delete:
+        client.delete_floor("F", workspace_id="W", delete_branch=True)
+        assert delete.call_args.args[0].endswith("/api/floors/F?workspace=W&deleteBranch=1")
+        client.delete_floor("F")
+        assert delete.call_args.args[0].endswith("/api/floors/F")
+
+
+def test_floor_status_land_preview_and_land(client):
+    with patch.object(client.session, "get", return_value=_floor_resp(200, {"dirty": True})) as get:
+        assert client.floor_status("F", workspace_id="W") == {"dirty": True}
+        assert get.call_args.args[0].endswith("/api/floors/F/status?workspace=W")
+        client.land_preview("F", target="release/1 x", workspace_id="W")
+        assert get.call_args.args[0].endswith("/api/floors/F/land-preview?target=release%2F1+x&workspace=W")
+    with patch.object(client.session, "post", return_value=_floor_resp(200, {"status": "ok", "commit": "abc"})) as post:
+        assert client.land_floor("F", "main", workspace_id="W")["commit"] == "abc"
+        assert post.call_args.args[0].endswith("/api/floors/F/land?workspace=W")
+        assert post.call_args.kwargs["json"] == {"target": "main"}
+    with patch.object(client.session, "post", return_value=_floor_resp(409)):
+        with pytest.raises(MaestriAPIError) as e:
+            client.land_floor("F", "main")
+        assert e.value.status_code == 409

@@ -1613,6 +1613,26 @@ public final class InterAgentServer {
             }
         }
 
+        // GET /api/floors/:id/status -> {base, dirty, files:[{path,status}], ahead, behind, insertions, deletions}
+        if method == "GET" && cleanPath.hasPrefix("/api/floors/") && cleanPath.hasSuffix("/status") {
+            let rawId = String(cleanPath.dropFirst("/api/floors/".count).dropLast("/status".count))
+            let pm = PersistenceManager.shared
+            guard let floorId = UUID(uuidString: rawId),
+                  let wsId = Self.resolveWorkspaceId(pathParts: pathParts, pm: pm),
+                  let doc = try? pm.loadWorkspace(id: wsId),
+                  let entry = doc.payload.floors.first(where: { $0.id == floorId }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: floor not found", allowedOrigin: allowedOrigin)
+            }
+            let wd = doc.payload.workingDirectory
+            do {
+                let st = try FloorManager.shared.status(floor: Self.floor(from: entry, workingDirectory: wd), workingDirectory: wd)
+                let data = (try? JSONSerialization.data(withJSONObject: st.json)) ?? Data("{}".utf8)
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            } catch {
+                return Self.buildHTTPResponse(status: 409, body: "error: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+            }
+        }
+
         // PATCH /api/floors/:id  body: {name?, hooks?}
         if method == "PATCH" && cleanPath.hasPrefix("/api/floors/") {
             let rawId = String(cleanPath.dropFirst("/api/floors/".count))

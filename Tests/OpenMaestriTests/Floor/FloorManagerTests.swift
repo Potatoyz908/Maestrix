@@ -149,24 +149,31 @@ final class FloorManagerTests: XCTestCase {
         try fm.removeFloor(floor, workingDirectory: testDir, deleteBranch: true)
     }
 
-    func testLandFastForwardsGroundBranchAndDeleteBranch() throws {
+    func testLandRefusesGroundCheckedOutBranchAndFastForwardsAnother() throws {
         for (k, v) in Self.identity { setenv(k, v, 1) }
         let ground = try git(["symbolic-ref", "--short", "HEAD"])
+        try git(["branch", "release"])
         let floor = try fm.createFloor(name: "ff", branchName: "floor/ff", workingDirectory: testDir)
         try commitFile("a.txt", "hello\n", in: floor.worktreePath)
+        let groundHead = try git(["rev-parse", "HEAD"])
 
         let p = try fm.landPreview(floor: floor, target: nil, workingDirectory: testDir)
         XCTAssertEqual(p.target, ground, "default target = Ground's branch")
         XCTAssertTrue(p.branches.contains(ground) && p.branches.contains("floor/ff"))
         XCTAssertEqual(p.ahead, 1)
-        XCTAssertTrue(p.fastForward && p.conflicts.isEmpty && !p.dirty && p.canLand)
-        XCTAssertTrue(p.stat.contains("1 file changed"), p.stat)
+        XCTAssertTrue(p.targetCheckedOut && !p.canLand, "Ground's checked-out branch cannot be landed into")
+        XCTAssertThrowsError(try fm.land(floor: floor, targetBranch: ground, workingDirectory: testDir))
+        XCTAssertEqual(try git(["rev-parse", "HEAD"]), groundHead)
 
-        try fm.land(floor: floor, targetBranch: ground, workingDirectory: testDir)
-        XCTAssertEqual(try git(["rev-parse", ground]), try git(["rev-parse", "floor/ff"]))
-        XCTAssertEqual(try String(contentsOfFile: testDir + "/a.txt", encoding: .utf8), "hello\n",
-                       "Ground's checked-out branch is advanced with --ff-only, files included")
-        XCTAssertEqual(try git(["status", "--porcelain"]), "", "Ground stays clean")
+        let r = try fm.landPreview(floor: floor, target: "release", workingDirectory: testDir)
+        XCTAssertTrue(r.fastForward && r.conflicts.isEmpty && !r.dirty && !r.targetCheckedOut && r.canLand)
+        XCTAssertTrue(r.stat.contains("1 file changed"), r.stat)
+        XCTAssertEqual(r.insertions, 1)
+        XCTAssertEqual(r.deletions, 0)
+        try fm.land(floor: floor, targetBranch: "release", workingDirectory: testDir)
+        XCTAssertEqual(try git(["rev-parse", "release"]), try git(["rev-parse", "floor/ff"]), "fast-forward")
+        XCTAssertEqual(try git(["rev-parse", "HEAD"]), groundHead, "Ground's HEAD did not move")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: testDir + "/a.txt"), "Ground's working tree untouched")
 
         try fm.removeFloor(floor, workingDirectory: testDir, deleteBranch: true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: floor.worktreePath))
@@ -174,7 +181,27 @@ final class FloorManagerTests: XCTestCase {
         XCTAssertEqual(try git(["branch", "--list", "floor/ff"]), "", "deleteBranch removed the branch")
     }
 
-    func testLandIntoOtherBranchBuildsMergeCommitWithoutTouchingGround() throws {
+    func testStatusAndParsers() throws {
+        for (k, v) in Self.identity { setenv(k, v, 1) }
+        XCTAssertTrue(FloorManager.parseShortstat(" 2 files changed, 5 insertions(+), 1 deletion(-)") == (5, 1))
+        XCTAssertTrue(FloorManager.parseShortstat(" 1 file changed, 1 deletion(-)") == (0, 1))
+        let parsed = FloorManager.parsePorcelain(" M a.txt\nR  old.txt -> new.txt\n?? b.txt\n")
+        XCTAssertEqual(parsed.map(\.path), ["a.txt", "new.txt", "b.txt"])
+        XCTAssertEqual(parsed.map(\.status), ["M", "R", "??"])
+
+        let floor = try fm.createFloor(name: "st", branchName: "floor/st", workingDirectory: testDir)
+        try commitFile("s.txt", "one\ntwo\n", in: floor.worktreePath)
+        try "x\n".write(toFile: floor.worktreePath + "/u.txt", atomically: true, encoding: .utf8)
+        let st = try fm.status(floor: floor, workingDirectory: testDir)
+        XCTAssertTrue(st.dirty)
+        XCTAssertEqual(st.files.map(\.path), ["u.txt"])
+        XCTAssertEqual(st.ahead, 1)
+        XCTAssertEqual(st.behind, 0)
+        XCTAssertEqual(st.insertions, 2)
+        try fm.removeFloor(floor, workingDirectory: testDir, deleteBranch: true)
+    }
+
+    func testLandArgvNeverTouchesWorkingTree() throws {
         for (k, v) in Self.identity { setenv(k, v, 1) }
         try git(["branch", "release"])
         let floor = try fm.createFloor(name: "merge", branchName: "floor/merge", workingDirectory: testDir)

@@ -38,6 +38,7 @@ from maestri_canvas.widget import CanvasWidget, is_terminal, load_vte, terminal_
 from .drawing import DrawingTools
 from .ask_agent import install_ask_agent
 from .routines_window import install_routines
+from .floors import install_floors
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
 
@@ -89,7 +90,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self._header.pack_start(self.drawing.button)
 
         self.paned.set_start_child(self.sidebar)
-        canvas_stack = Gtk.Overlay()
+        self.canvas_stack = canvas_stack = Gtk.Overlay()
         canvas_stack.set_child(self.canvas_widget)
         self.loading_label = Gtk.Label(label="Conectando...", halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
                                        css_classes=["maestri-loading"])
@@ -104,6 +105,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         # 4. Setup Shortcuts
         self._setup_shortcuts()
+        self.floors = install_floors(self)       # floating Floors button (bottom-right) + New/Land/Delete dialogs
         self.routines = install_routines(self)   # File → Routines (Ctrl+Shift+R), scheduler on the main loop
         self.ask_agent = install_ask_agent(self)  # DiffView 'Ask agent' -> bus 'ask-agent' -> active terminal
 
@@ -540,6 +542,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         elif node.node_type == "terminal":
             kwargs["cwd"] = (getattr(node.content, "working_directory", "") or self.document.payload.working_directory
                              or os.path.expanduser("~"))
+            kwargs["env"] = self.floors.terminal_env(kwargs["cwd"])   # MAESTRI_FLOOR_* inside a floor's worktree (local VTE)
         self.canvas_widget.add_node(item, self._make_content_widget(node), focus=focus, **kwargs)
         if node.node_type == "terminal":
             self._style_terminal(node)
@@ -757,7 +760,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if content is not None:
             pass
         elif node_type == "terminal":
-            content = TerminalContent(name=f"Terminal {n}", command="bash")
+            content = TerminalContent(name=f"Terminal {n}", command="bash", working_directory=self.floors.terminal_cwd())
         elif node_type == "stickyNote":
             taken = {x.content.file_name[:-3] if x.content.file_name.endswith(".md") else x.content.file_name
                      for x in self.document.payload.nodes if x.node_type == "stickyNote"}

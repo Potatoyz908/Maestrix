@@ -144,20 +144,72 @@ final class FloorManager {
         var dirty: Bool
         var dirtyFiles: [String]
         var sameBranch: Bool
+        /// The target is checked out in Ground: moving its ref would leave Ground's working tree behind, so landing is refused.
+        var targetCheckedOut: Bool = false
         var ahead: Int
         var fastForward: Bool
         var stat: String
+        var insertions: Int = 0
+        var deletions: Int = 0
         var diff: String = ""
         var treeOid: String = ""
         var conflicts: [String]
 
-        var canLand: Bool { !dirty && conflicts.isEmpty && !sameBranch && ahead > 0 }
+        var canLand: Bool { !dirty && conflicts.isEmpty && !sameBranch && !targetCheckedOut && ahead > 0 }
 
         var json: [String: Any] {
             ["floorBranch": floorBranch, "target": target, "branches": branches, "dirty": dirty, "dirtyFiles": dirtyFiles,
-             "sameBranch": sameBranch, "ahead": ahead, "fastForward": fastForward, "stat": stat, "diff": diff,
+             "sameBranch": sameBranch, "targetCheckedOut": targetCheckedOut, "ahead": ahead, "fastForward": fastForward,
+             "stat": stat, "insertions": insertions, "deletions": deletions, "diff": diff,
              "treeOid": treeOid, "conflicts": conflicts, "canLand": canLand]
         }
+    }
+
+    struct FloorStatus {
+        var base: String
+        var files: [(path: String, status: String)]
+        var ahead: Int
+        var behind: Int
+        var insertions: Int
+        var deletions: Int
+        var dirty: Bool { !files.isEmpty }
+
+        var json: [String: Any] {
+            ["base": base, "dirty": dirty, "files": files.map { ["path": $0.path, "status": $0.status] },
+             "ahead": ahead, "behind": behind, "insertions": insertions, "deletions": deletions]
+        }
+    }
+
+    /// (insertions, deletions) of a `git diff --shortstat` line.
+    static func parseShortstat(_ line: String) -> (Int, Int) {
+        func count(_ word: String) -> Int {
+            guard let r = line.range(of: "[0-9]+ \(word)", options: .regularExpression) else { return 0 }
+            return Int(line[r].split(separator: " ").first ?? "") ?? 0
+        }
+        return (count("insertion"), count("deletion"))
+    }
+
+    /// `git status --porcelain=v1` lines -> (path, status letters). Renames keep the new path.
+    static func parsePorcelain(_ text: String) -> [(path: String, status: String)] {
+        text.split(separator: "\n").compactMap { line in
+            guard line.count > 3 else { return nil }
+            let status = String(line.prefix(2)).trimmingCharacters(in: .whitespaces)
+            var path = String(line.dropFirst(3))
+            if let arrow = path.range(of: " -> ") { path = String(path[arrow.upperBound...]) }
+            return (path, status)
+        }
+    }
+
+    /// Dirty files and divergence of the floor's branch against Ground's branch (list badges: dirty dot, +ins -del).
+    func status(floor: Floor, workingDirectory: String) throws -> FloorStatus {
+        let base = groundBranch(workingDirectory: workingDirectory) ?? "HEAD"
+        let files = FileManager.default.fileExists(atPath: floor.worktreePath)
+            ? Self.parsePorcelain(try runGit(["status", "--porcelain=v1"], in: floor.worktreePath)) : []
+        let counts = (try runGit(["rev-list", "--left-right", "--count", "\(base)...\(floor.branchName)"], in: workingDirectory))
+            .split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" }).compactMap { Int($0) }
+        let (ins, del) = Self.parseShortstat(try runGit(["diff", "--shortstat", "\(base)...\(floor.branchName)"], in: workingDirectory))
+        return FloorStatus(base: base, files: files, ahead: counts.count == 2 ? counts[1] : 0,
+                           behind: counts.count == 2 ? counts[0] : 0, insertions: ins, deletions: del)
     }
 
     /// Ground's checked-out branch (nil when detached).
@@ -172,12 +224,12 @@ final class FloorManager {
             .split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         let target = (requested?.isEmpty == false ? requested : nil)
             ?? groundBranch(workingDirectory: workingDirectory) ?? branches.first ?? "main"
-        let porcelain = FileManager.default.fileExists(atPath: floor.worktreePath)
-            ? try runGit(["status", "--porcelain"], in: floor.worktreePath) : ""
-        let dirtyFiles = porcelain.split(separator: "\n").map { String($0.dropFirst(3)) }.filter { !$0.isEmpty }
+        let dirtyFiles = FileManager.default.fileExists(atPath: floor.worktreePath)
+            ? Self.parsePorcelain(try runGit(["status", "--porcelain=v1"], in: floor.worktreePath)).map(\.path) : []
         var p = LandPreview(floorBranch: floor.branchName, target: target, branches: branches, dirty: !dirtyFiles.isEmpty,
                             dirtyFiles: dirtyFiles, sameBranch: target == floor.branchName, ahead: 0, fastForward: false,
                             stat: "", conflicts: [])
+        p.targetCheckedOut = groundBranch(workingDirectory: workingDirectory) == target
         // A worktree shares refs with Ground: landing into the floor's own branch has nothing to transfer.
         guard !p.sameBranch else { return p }
         try runGit(["rev-parse", "--verify", "--quiet", "refs/heads/\(target)"], in: workingDirectory)
@@ -186,6 +238,7 @@ final class FloorManager {
         p.fastForward = (try? runGit(["merge-base", "--is-ancestor", target, floor.branchName], in: workingDirectory)) != nil
         p.stat = (try runGit(["diff", "--shortstat", "\(target)...\(floor.branchName)"], in: workingDirectory))
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        (p.insertions, p.deletions) = Self.parseShortstat(p.stat)
         p.diff = (try? runGit(["diff", "\(target)...\(floor.branchName)"], in: workingDirectory)) ?? ""
         let r = runGitStatus(["merge-tree", "--write-tree", "--name-only", "--no-messages", target, floor.branchName],
                              in: workingDirectory)
@@ -202,15 +255,17 @@ final class FloorManager {
         return p
     }
 
-    /// Lands `floor` into `target`. Refuses a dirty floor and conflicts. Fast-forward when possible, otherwise a merge
-    /// commit built with merge-tree + commit-tree. The target ref moves with update-ref (compare-and-swap); when the target
-    /// is the branch checked out in Ground, Ground is advanced with `merge --ff-only` instead, which refuses to clobber local
-    /// changes. Returns the new target commit.
+    /// Lands `floor` into `target` with plumbing only: fast-forward when possible, otherwise a merge commit built with
+    /// merge-tree + commit-tree; the ref moves with a compare-and-swap update-ref. Never touches a working tree: a target that
+    /// is checked out in Ground is refused (moving its ref would leave Ground's files behind). Returns the new target commit.
     @discardableResult
     func land(floor: Floor, targetBranch: String, workingDirectory: String) throws -> String {
         let p = try landPreview(floor: floor, target: targetBranch, workingDirectory: workingDirectory)
         if p.dirty { throw MaestriError.floorOperationFailed("floor has uncommitted changes") }
         if p.sameBranch { throw MaestriError.floorOperationFailed("target is the floor's own branch: nothing to land") }
+        if p.targetCheckedOut {
+            throw MaestriError.floorOperationFailed("\(targetBranch) is checked out in Ground: faça checkout de outra branch ou use o terminal")
+        }
         if !p.conflicts.isEmpty { throw MaestriError.floorOperationFailed("merge conflicts: \(p.conflicts.joined(separator: ", "))") }
         if p.ahead == 0 { throw MaestriError.floorOperationFailed("nothing to land: \(floor.branchName) has no new commits") }
 
@@ -226,12 +281,8 @@ final class FloorManager {
                                     "-m", "Land floor '\(floor.name)' (\(floor.branchName)) into \(targetBranch)"],
                                    in: workingDirectory).trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        if groundBranch(workingDirectory: workingDirectory) == targetBranch {
-            try runGit(["merge", "--ff-only", "--quiet", newCommit], in: workingDirectory)
-        } else {
-            try runGit(["update-ref", "-m", "land floor \(floor.name)", "refs/heads/\(targetBranch)", newCommit, oldTarget],
-                       in: workingDirectory)
-        }
+        try runGit(["update-ref", "-m", "land floor \(floor.name)", "refs/heads/\(targetBranch)", newCommit, oldTarget],
+                   in: workingDirectory)
         logger.info("Floor '\(floor.name)' landed onto '\(targetBranch)' at \(newCommit.prefix(8))")
         return newCommit
     }
