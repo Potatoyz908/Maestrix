@@ -18,6 +18,7 @@ class NoteSaver:
         self._pending: str | None = None
         self._timer: object | None = None
         self._in_flight = False
+        self._paused = False
         self._waiters: list[Callable[[], None]] = []
         self.state = "idle"
         self.last_error: Exception | None = None
@@ -47,6 +48,17 @@ class NoteSaver:
             self._timer = None
         self._pending = None
 
+    def pause(self) -> None:
+        """Keep pending edits, but stop writes until an external conflict is resolved."""
+        self._paused = True
+        if self._timer is not None:
+            self._clear(self._timer)
+            self._timer = None
+
+    def resume(self) -> None:
+        self._paused = False
+        self._pump()
+
     @property
     def dirty(self) -> bool:
         return self._pending is not None or self._in_flight
@@ -64,7 +76,7 @@ class NoteSaver:
             self._on_state(s, err)
 
     def _pump(self) -> None:
-        if self._in_flight:
+        if self._in_flight or self._paused:
             return
         if self._pending is None:
             self._release()

@@ -55,3 +55,42 @@ class CreationRecoveryTests(unittest.TestCase):
         self.assertNotEqual(a.content.file_name, b.content.file_name)
         self.create(self.win, 'fileTree', at=Point(0, 0))
         self.assertEqual(self.win.document.payload.nodes[-1].content.root_path, '/workspace')
+
+
+class NoteConflictRecoveryTests(unittest.TestCase):
+    def test_conflict_pauses_timer_flush_and_followup_writes(self):
+        from maestri_canvas.note_saver import NoteSaver
+        writes = []
+        callbacks = []
+        saver = NoteSaver(lambda text, done: (writes.append(text), callbacks.append(done)),
+                          set_timer=lambda fn, ms: fn, clear_timer=lambda timer: None)
+        saver.schedule('first')
+        saver.flush()
+        saver.schedule('local edit')
+        saver.pause()
+        callbacks.pop()(None)  # a write already in flight must not start the pending one
+        saver.flush()
+        self.assertEqual(writes, ['first'])
+        self.assertTrue(saver.dirty)
+        saver.schedule('newest local edit')
+        saver._fire()
+        self.assertEqual(writes, ['first'])
+        saver.resume()  # explicit Keep My Edits
+        self.assertEqual(writes, ['first', 'newest local edit'])
+
+    def test_load_disk_discards_pending_save(self):
+        from maestri_canvas.note_saver import NoteSaver
+        write = Mock()
+        saver = NoteSaver(write, set_timer=lambda fn, ms: fn, clear_timer=lambda timer: None)
+        saver.schedule('local')
+        saver.pause()
+        saver.cancel()
+        saver.resume()
+        write.assert_not_called()
+
+    def test_locked_note_never_reaches_file_deletion(self):
+        remove = method('canvas-cairo/maestri_canvas/widget.py', 'CanvasWidget', 'request_delete',
+                        dict(globals(), StickyNoteView=object, norm=lambda n: n))
+        win = NS(scene=NS(get=lambda nid: NS(locked=True)), frames={}, emit=Mock())
+        remove(win, ['locked-note'])
+        win.emit.assert_not_called()

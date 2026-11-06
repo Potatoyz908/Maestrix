@@ -610,6 +610,7 @@ class CanvasWidget(Gtk.Overlay):
             else:
                 storage = MemoryNoteStorage()
             content = StickyNoteView(meta, storage, client=client, name_taken=lambda n: self._note_name_taken(nid, n), base_dir=self.notes_dir)
+            content.can_remove = lambda: bool(self.scene.get(nid) and not self.scene.get(nid).locked)
             content.connect("meta-changed", lambda _v, d: self.emit("note-meta-changed", nid, d))
             content.connect("delete-requested", lambda _v: self.emit("delete-requested", (nid,)))
             content.connect("file-dropped", lambda v, path: v.adopt_file(path))   # drop a .md on a note = use that file
@@ -676,6 +677,9 @@ class CanvasWidget(Gtk.Overlay):
         one is only unlinked) and emit "delete-requested" when that is done; every other node is requested directly."""
         rest = []
         for nid in ids:
+            item = self.scene.get(nid)
+            if item is not None and item.locked:
+                continue
             frame = self.frames.get(norm(nid))
             if frame is not None and isinstance(frame.content, StickyNoteView):
                 frame.content.remove()

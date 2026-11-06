@@ -102,6 +102,8 @@ class StickyNoteView(Gtk.Box):
         self._disposed = False
         self._loaded = False
         self._saved_text = ""
+        self._external_conflict = None
+        self._conflict_dialog_open = False
         self._last_meta = self.meta.to_dict()
         self._shown_title = ""
         self._monitor: Gio.FileMonitor | None = None
@@ -272,6 +274,8 @@ class StickyNoteView(Gtk.Box):
         if self._applying or not self._loaded:
             return
         self.saver.schedule(self.text())
+        if self._external_conflict is not None:
+            self._show_external_conflict()
         self._after_text_change()
 
     def _after_text_change(self) -> None:
@@ -284,6 +288,9 @@ class StickyNoteView(Gtk.Box):
 
     def _on_save_state(self, state: str, err: Exception | None) -> None:
         label = {"dirty": "Unsaved", "saving": "Saving…", "saved": "Saved", "error": "Save failed", "idle": ""}[state]
+        if self._external_conflict is not None:
+            self.status.set_text("Changed on disk: resolve before saving")
+            return
         self.status.set_text(label)
         (self.status.add_css_class if state == "error" else self.status.remove_css_class)("error")
         if state == "error":
@@ -621,6 +628,8 @@ class StickyNoteView(Gtk.Box):
     def remove(self, done: Callable[[Exception | None], None] | None = None) -> None:
         """Delete the note (every path: Del / Ctrl+W / close button / ⋯ menu): a managed note deletes its .md, a note stored at a
         custom path is only unlinked from the canvas, its file is kept (reference 05-notes.md)."""
+        if not getattr(self, "can_remove", lambda: True)():
+            return
         if self.meta.is_custom:
             self.flush(lambda: (self.dispose(), self.emit("delete-requested"), done and done(None)))
             return
@@ -632,6 +641,7 @@ class StickyNoteView(Gtk.Box):
         self._disposed = True   # nothing new may be written after this
         self._stop_watch()
         self.saver.cancel()
+        self.saver.resume()
 
         def deleted(err: Exception | None) -> None:
             if err is not None:
@@ -682,7 +692,9 @@ class StickyNoteView(Gtk.Box):
                 self._saved_text = text   # our own write echoing back
             return
         if self.saver.dirty or self.text() != self._saved_text:
-            self.status.set_text("Changed on disk: your edits are kept")
+            self._external_conflict = text
+            self.saver.pause()
+            self._show_external_conflict()
             return
         old = self.text()
         p = 0
@@ -699,6 +711,40 @@ class StickyNoteView(Gtk.Box):
         self._saved_text = text
         self._after_text_change()
         self.status.set_text("Updated from disk")
+
+    def _show_external_conflict(self) -> None:
+        self.status.set_text("Changed on disk: resolve before saving")
+        if self._conflict_dialog_open or self._disposed:
+            return
+        self._conflict_dialog_open = True
+        dialog = Gtk.AlertDialog(message="Note changed on disk",
+                                 detail="Your unsaved edits are kept. Choose which version to keep before saving.")
+        dialog.set_buttons(["Later", "Load Disk Version", "Keep My Edits"])
+        dialog.set_cancel_button(0)
+        dialog.set_default_button(0)
+
+        def chosen(d, res):
+            self._conflict_dialog_open = False
+            try:
+                choice = d.choose_finish(res)
+            except GLib.Error:
+                return
+            if self._disposed or choice == 0:
+                return
+            disk = self._external_conflict
+            self._external_conflict = None
+            if choice == 1:
+                self.saver.cancel()
+                self._set_text(disk)
+                self._saved_text = disk
+                self._after_text_change()
+                self.status.set_text("Updated from disk")
+            else:
+                self.saver.schedule(self.text())
+            self.saver.resume()
+
+        root = self.get_root()
+        dialog.choose(root if isinstance(root, Gtk.Window) else None, None, chosen)
 
     # ---- images ------------------------------------------------------------------------------------------
     def _raw_key(self, _c: Gtk.EventControllerKey, keyval: int, _code: int, state: Gdk.ModifierType) -> bool:
