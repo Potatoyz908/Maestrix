@@ -210,6 +210,11 @@ public final class PersistenceManager {
         return prefs
     }
 
+    /// Snapshot for consumers that must detect atomic external preference writes.
+    func preferencesSnapshot() -> Data? {
+        try? Data(contentsOf: preferencesURL)
+    }
+
     /// 同步无抛出版本，供 HTTP 线程调用（返回默认值而非崩溃）
     func loadPreferencesSync() -> Preferences {
         (try? loadPreferences()) ?? Preferences()

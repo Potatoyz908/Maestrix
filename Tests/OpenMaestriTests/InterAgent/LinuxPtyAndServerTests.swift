@@ -6,6 +6,47 @@ import Glibc
 
 final class LinuxPtyAndServerTests: IsolatedDataDirTestCase {
 
+    func testAgentIdleAndCommandMappingSprint9() async {
+        XCTAssertEqual(InterAgentServer.agentType(forCommand: "/usr/bin/agy --help"), "antigravity_cli")
+        XCTAssertEqual(InterAgentServer.agentType(forCommand: "codex"), "codex")
+        XCTAssertEqual(Constants.agentIdleTimeout, 3.0)
+        let idle = expectation(description: "each agent becomes idle")
+        idle.expectedFulfillmentCount = 5
+        await MainActor.run {
+            for agent in ["claude_code", "codex", "gemini_cli", "open_code", "antigravity_cli"] {
+                let session = TerminalSession(id: UUID(), command: "", workingDirectory: "/tmp", roleName: nil)
+                session.agentType = agent
+                let sessionID = session.id
+                let token = NotificationCenter.default.addObserver(forName: .terminalBecameIdle, object: nil, queue: nil) { note in
+                    if note.userInfo?["terminalId"] as? UUID == sessionID { idle.fulfill() }
+                }
+                session.recordOutput("response")
+                session.markIdle()
+                NotificationCenter.default.removeObserver(token)
+                session.terminate()
+            }
+        }
+        await fulfillment(of: [idle], timeout: 1)
+    }
+
+    func testSkillInstallationIsolatedFallbackSprint9() throws {
+        let pm = PersistenceManager.shared
+        var prefs = Preferences()
+        prefs.skillPaths = []
+        try pm.savePreferences(prefs)
+        SkillInjector.shared.installSkillsIfNeeded()
+        let fallback = pm.appDataURL.appendingPathComponent("skills/open-maestri/SKILL.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fallback.path))
+        for name in ["open-maestri-routines", "open-maestri-workspace"] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: pm.appDataURL.appendingPathComponent("skills/\(name)/SKILL.md").path))
+        }
+        let custom = pm.appDataURL.appendingPathComponent("custom-skills")
+        prefs.skillPaths = [SkillPath(id: UUID(), name: "Test", path: custom.path, icon: "", isActive: true, isBuiltIn: false)]
+        try pm.savePreferences(prefs)
+        SkillInjector.shared.installSkillsIfNeeded()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: custom.appendingPathComponent("open-maestri/SKILL.md").path))
+    }
+
     func testInterAgentServerDynamicPortAndUnixSocket() async throws {
         try await MainActor.run {
             let server = InterAgentServer.shared

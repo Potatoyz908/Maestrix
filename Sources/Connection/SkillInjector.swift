@@ -21,12 +21,18 @@ public final class SkillInjector {
     public func installSkillsIfNeeded() {
         let pm = PersistenceManager.shared
         // Python updates preferences atomically, outside the Swift preferences cache.
-        let prefs = (try? Data(contentsOf: pm.preferencesURL)).flatMap { try? JSONDecoder().decode(Preferences.self, from: $0) } ?? Preferences()
+        let prefs = pm.preferencesSnapshot().flatMap { try? JSONDecoder().decode(Preferences.self, from: $0) } ?? Preferences()
         let configured = prefs.skillPaths.filter { $0.isActive }.map { $0.path }
         let activePaths: [String]
         if let dataDir = ProcessInfo.processInfo.environment["OPEN_MAESTRI_DATA_DIR"], !dataDir.isEmpty {
             // Never touch real home-directory skills in isolated server runs.
-            activePaths = [URL(fileURLWithPath: dataDir).appendingPathComponent("skills").path]
+            let root = URL(fileURLWithPath: dataDir).standardizedFileURL.resolvingSymlinksInPath()
+            let safePaths = configured.filter { path in
+                let expanded = (path as NSString).expandingTildeInPath
+                let target = URL(fileURLWithPath: expanded).standardizedFileURL.resolvingSymlinksInPath().path
+                return target == root.path || target.hasPrefix(root.path + "/")
+            }
+            activePaths = safePaths.isEmpty ? [root.appendingPathComponent("skills").path] : safePaths
         } else {
             activePaths = configured.isEmpty ? ["~/.claude/skills"] : configured
         }
@@ -71,7 +77,34 @@ public final class SkillInjector {
         SkillFile(name: "open-maestri", content: skillOpenMaestri),
         SkillFile(name: "open-maestri-portal", content: skillOpenMaestriPortal),
         SkillFile(name: "open-maestri-manager", content: skillOpenMaestriManager),
+        SkillFile(name: "open-maestri-routines", content: skillRoutines),
+        SkillFile(name: "open-maestri-workspace", content: skillWorkspace),
     ]
+
+    private static let skillRoutines = """
+    ---
+    name: open-maestri-routines
+    description: Manage scheduled prompts in open-maestri.
+    user-invocable: false
+    ---
+    # Routines
+    Use `omaestri routine list|show|create|edit|enable|disable|run|delete`.
+    Create: `omaestri routine create "Name" --command "prompt" --every 30m --terminal "Agent"`.
+    Run `omaestri help` for supported options. Delete only when the user asks.
+    """
+
+    private static let skillWorkspace = """
+    ---
+    name: open-maestri-workspace
+    description: Manage open-maestri workspaces and floors.
+    user-invocable: false
+    ---
+    # Workspaces and floors
+    Use `omaestri workspace list|create|rename|move|unload` and
+    `omaestri floor list|create|land|delete|status`. Run `omaestri help` for options.
+    Create a workspace with `omaestri workspace create "Name" --dir PATH`.
+    Do not delete a floor or land its changes without the user's instruction.
+    """
 
     // MARK: open-maestri
 

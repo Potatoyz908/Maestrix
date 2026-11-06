@@ -19,11 +19,11 @@ public enum NexusServices {
         if PlatformHooks.portalsService == nil {
             PlatformHooks.portalsService = LinuxPortalManager.shared
         }
-        lastPreferencesData = try? Data(contentsOf: PersistenceManager.shared.preferencesURL)
+        lastPreferencesData = PersistenceManager.shared.preferencesSnapshot()
         let skills = DispatchSource.makeTimerSource(queue: .main)
         skills.schedule(deadline: .now() + 2, repeating: 2)
         skills.setEventHandler {
-            let data = try? Data(contentsOf: PersistenceManager.shared.preferencesURL)
+            let data = PersistenceManager.shared.preferencesSnapshot()
             guard data != lastPreferencesData else { return }
             lastPreferencesData = data
             SkillInjector.shared.installSkillsIfNeeded()
