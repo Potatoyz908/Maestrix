@@ -39,6 +39,7 @@ from .drawing import DrawingTools
 from .ask_agent import install_ask_agent
 from .routines_window import install_routines
 from .floors import install_floors
+from .core_link import CoreReconnector
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
 
@@ -59,6 +60,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.loaded = False
         self.sync = None
         self._autosave_id = 0
+        self._cleaned_up = False
+        self._core_link = CoreReconnector(client, self._on_core_probe)   # re-probes the core while it is unreachable (R1)
         self.document = WorkspaceDocument(payload=WorkspacePayload(name="Conectando...", working_directory=os.path.expanduser("~")))
         load_vte()   # so is_terminal()/terminal_of() recognise VTE widgets before the first terminal exists
 
@@ -189,8 +192,22 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self._load_payload_into_canvas()
         cw.controller.dirty = True
 
-        # Real-time sync: bus events -> debounced snapshot -> REST (schemaVersion 2)
-        if not self.auth_failed and self.core_connected:
+        # Real-time sync: bus events -> debounced snapshot -> REST (schemaVersion 2). Offline at startup is not final:
+        # the probe keeps running and _on_core_probe turns the sync on as soon as the core answers.
+        if self.core_connected:
+            self._enable_sync()
+        elif not self.auth_failed:
+            self._core_link.start()
+
+        self.loading_label.set_visible(False)
+        self.loaded = True
+        bus.emit("workspace-loaded", self.document.payload)
+        return GLib.SOURCE_REMOVE
+
+    # ---- core connection (R1) -----------------------------------------------------------------------------------
+    def _enable_sync(self) -> None:
+        """Create the WorkspaceSync once (idempotent) and start the autosave timer."""
+        if self.sync is None:
             self.sync = WorkspaceSync(
                 self.client,
                 get_document=lambda: self.document,
@@ -201,12 +218,38 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 ),
             )
             self._bus_handlers.append((bus, bus.connect("status-changed", self._on_sync_status_changed)))
-            self._restart_autosave()
+        self._restart_autosave()
 
-        self.loading_label.set_visible(False)
-        self.loaded = True
-        bus.emit("workspace-loaded", self.document.payload)
-        return GLib.SOURCE_REMOVE
+    def _on_core_probe(self, status: str) -> None:
+        """Periodic probe result while the core is unreachable."""
+        if self._cleaned_up or self.auth_failed:
+            return
+        if status == "connected" and not self.core_connected:
+            self._core_link.stop()
+            self.core_connected = True
+            self._update_status_label(f"🟢 Porta {self.client.port}")
+            self.lbl_status.set_tooltip_text("Conectado ao core: sincronizando.")
+            self._configure_notes_backend()
+            self._enable_sync()
+            self.sync.flush()   # push what was edited while offline
+            self.floors.refresh()
+            self.floors.start_events()
+        elif status == "unauthorized":
+            self._core_link.stop()
+            self.auth_failed, self.core_connected = True, False
+            self._update_status_label("🔴 Token Inválido")
+            self.lbl_status.set_tooltip_text("Falha de autenticação: token inválido ou ausente.")
+
+    def _on_core_lost(self) -> None:
+        """A save failed because the core went away: back to Standalone (not 'Falha ao Salvar') and keep probing."""
+        if self._cleaned_up or not self.core_connected:
+            return
+        self.core_connected = False
+        self._update_status_label("⚪ Standalone")
+        self.lbl_status.set_tooltip_text("Core indisponível: as mudanças serão sincronizadas quando ele voltar.")
+        self.floors.stop_events()
+        self.floors.refresh()   # unavailable -> the floor button disables itself
+        self._core_link.start()
 
     def _restart_autosave(self) -> None:
         """Periodic autosave every `autosaveIntervalSeconds` on top of the debounced real-time sync: it persists anything still
@@ -221,7 +264,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if self.sync is None:
             self._autosave_id = 0
             return GLib.SOURCE_REMOVE
-        self.sync.autosave()
+        if self.core_connected:   # offline: the probe flushes on reconnect instead of failing every tick
+            self.sync.autosave()
         return GLib.SOURCE_CONTINUE
 
     def _setup_theme(self):
@@ -334,15 +378,28 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_sync_status_changed(self, _emitter, status: str, ok: bool = True, *args):
+        if str(status).startswith("git-"):
+            return   # R4: FileTree git actions share this bus signal; they never describe the workspace save
         if not getattr(self, "core_connected", False) or getattr(self, "auth_failed", False):
-            return
+            return   # 'Standalone' / 'Token Inválido' win over any save status
         if status in ("save-failed", "sync-failed") or not ok:
-            self.lbl_status.set_label("⚠️ Falha ao Salvar")
-            self.lbl_status.set_tooltip_text("O último salvamento para o servidor falhou.")
+            # Tell "the core refused this save" from "the core is gone" before painting the label.
+            self._core_link.probe(self._on_save_failed_probe)
         elif status in ("idle", "saved", "save-ok") or ok:
             if getattr(self, "core_connected", False) and not getattr(self, "auth_failed", False):
                 self.lbl_status.set_label(f"🟢 Porta {self.client.port}")
                 self.lbl_status.set_tooltip_text("Conectado e sincronizado.")
+
+    def _on_save_failed_probe(self, status: str) -> None:
+        if self._cleaned_up or not self.core_connected:
+            return
+        if status == "connected":
+            self.lbl_status.set_label("⚠️ Falha ao Salvar")
+            self.lbl_status.set_tooltip_text("O último salvamento para o servidor falhou.")
+        elif status == "unauthorized":
+            self._on_core_probe(status)
+        else:
+            self._on_core_lost()
 
     def _update_status_label(self, status_text: str):
         self.lbl_status.set_label(status_text)
@@ -791,6 +848,11 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self.sync.flush()
 
     def _cleanup(self) -> None:
+        """Runs on close-request AND destroy: only the first call does the work (R2)."""
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+        self._core_link.dispose()
         if self._autosave_id:
             GLib.source_remove(self._autosave_id)
             self._autosave_id = 0

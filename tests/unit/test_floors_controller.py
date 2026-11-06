@@ -188,3 +188,13 @@ def test_events_subscription_and_coalesced_reload(ctl):
     assert sum(1 for c in ctl.window.client.calls if c[0] == "get") == before + 1, "a burst reloads once"
     ctl.stop_events()
     assert ("events-closed",) in ctl.window.client.calls
+
+
+# ---- Sprint 6 L3 ---------------------------------------------------------------------------------------------------
+def test_delete_warning_says_unlanded_commits_are_discarded():
+    from ui.floors import delete_warning
+    w = delete_warning(FLOOR_A, {"ahead": 3})
+    assert "Apagar branch" in w and "DESCARTA 3 commits ainda não pousados" in w and FLOOR_A["branchName"] in w
+    assert "DESCARTA 1 commit ainda não pousado:" in delete_warning(FLOOR_A, {"ahead": 1})
+    assert "todos os commits que ainda não foram pousados" in delete_warning(FLOOR_A, None)
+    assert "Manter branch" in w and FLOOR_A["worktreePath"] in w

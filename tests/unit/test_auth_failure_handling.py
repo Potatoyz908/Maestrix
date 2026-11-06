@@ -89,8 +89,15 @@ def test_status_changed_signal_arities_and_ui_update(maestri_app):
         win = OpenMaestriWindow(maestri_app, client)
         assert win.wait_loaded()
 
-        # 1. Emit save-failed with ok=False
+        # 1. Emit save-failed with ok=False. Sprint 6 R1: the window first re-probes the core (async) to tell a refused
+        #    save from a vanished core; with the core still answering 200 the label becomes "Falha ao Salvar".
         bus.emit("status-changed", "save-failed", False)
+        import time
+        from gi.repository import GLib
+        end = time.monotonic() + 5
+        while "Falha ao Salvar" not in win.lbl_status.get_label() and time.monotonic() < end:
+            GLib.MainContext.default().iteration(False)
+            time.sleep(0.005)
         assert "Falha ao Salvar" in win.lbl_status.get_label()
 
         # 2. Emit git action with ok=False

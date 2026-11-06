@@ -529,7 +529,6 @@ def install_routines(window) -> RoutinesController:
     app = window.get_application()
     if app is not None:
         app.set_accels_for_action("win.routines", ["<Control><Shift>r"])
-    window.connect("close-request", lambda *_: controller.stop() or False)
 
     # ⏱ badge on the header of every terminal targeted by an active routine. Terminals can appear after the routines
     # (async workspace load, new node, workspace switch), so node lifecycle events re-apply it too.
@@ -542,7 +541,18 @@ def install_routines(window) -> RoutinesController:
     from maestri_core.signals.bus import bus
     hids = [bus.connect(sig, lambda *_: GLib.idle_add(badges) and None)
             for sig in ("workspace-loaded", "workspace-switched", "node-added")]
-    window.connect("close-request", lambda *_: [bus.disconnect(h) for h in hids if bus.handler_is_connected(h)] and False)
+
+    def teardown(*_args) -> bool:
+        # close-request is not emitted when the window is destroyed directly (app quit, tests): handle both, once (R3).
+        controller.stop()
+        for h in hids:
+            if bus.handler_is_connected(h):
+                bus.disconnect(h)
+        hids.clear()
+        return False
+
+    window.connect("close-request", teardown)
+    window.connect("destroy", teardown)
     if store is not None:
         controller.refresh()     # start the active routines without waiting for the window to open
     return controller

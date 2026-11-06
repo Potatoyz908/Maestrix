@@ -127,6 +127,18 @@ def blocking_reason(p: Optional[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
+def delete_warning(floor: Floor, status: Optional[Dict[str, Any]] = None) -> str:
+    """DeleteFloorDialog body (L3): what is always lost, and the explicit warning that "Apagar branch" discards the commits
+    that were never landed (with their count when the floor status is known)."""
+    branch = floor.get("branchName", "")
+    ahead = int((status or {}).get("ahead") or 0)
+    unlanded = (f"{ahead} commit{'s' if ahead != 1 else ''} ainda não pousado{'s' if ahead != 1 else ''}" if ahead
+                else "todos os commits que ainda não foram pousados (Land)")
+    return (f"O diretório {floor.get('worktreePath', '')} é sempre removido, inclusive mudanças sem commit.\n\n"
+            f"⚠ “Apagar branch” apaga também a branch {branch} e DESCARTA {unlanded}: eles não poderão ser recuperados "
+            f"por esta interface. Escolha “Manter branch” para voltar a esses commits depois.")
+
+
 def error_text(exc: BaseException) -> str:
     """The core's message (`error: ...` body) when there is one, else the exception text."""
     body = getattr(exc, "response_body", None)
@@ -545,6 +557,7 @@ class LandFloorDialog(Gtk.Window):
         self._branches: List[str] = []
         self._request = 0
         self._filling = False
+        self.land_error: Optional[str] = None   # last refused land: stays visible through the preview reload (L2)
 
         route = Gtk.Box(spacing=12, halign=Gtk.Align.CENTER, margin_top=16)
         route.append(Gtk.Label(label=floor.get("branchName", "?"), css_classes=["floor-branch"]))
@@ -603,6 +616,7 @@ class LandFloorDialog(Gtk.Window):
             return
         t = self.selected_target
         if t and (self.preview_data is None or t != self.preview_data.get("target")):
+            self.land_error = None   # a new target is a new question: the old refusal no longer applies
             self.load(t)
 
     def _select(self, branches: List[str], target: Optional[str]) -> None:
@@ -625,8 +639,8 @@ class LandFloorDialog(Gtk.Window):
         self.target.set_sensitive(True)
         self.spinner.set_visible(False)
         self.summary.set_label(describe_preview(p))
-        reason = blocking_reason(p)
-        self.reason.set_label(reason or "")
+        reason = "\n".join(r for r in (self.land_error, blocking_reason(p)) if r)
+        self.reason.set_label(reason)
         self.reason.set_visible(bool(reason))
         conflicts = p.get("conflicts") or []
         self.conflicts.set_label("\n".join(f"✗ {c}" for c in conflicts))
@@ -650,6 +664,7 @@ class LandFloorDialog(Gtk.Window):
         self.merge_btn.set_sensitive(False)
         self.target.set_sensitive(False)
         self.spinner.set_visible(True)
+        self.land_error = None
         self.controller.land(self.floor, target, self._landed, self._failed_land)
 
     def _landed(self, res: Dict[str, Any]) -> None:
@@ -660,9 +675,10 @@ class LandFloorDialog(Gtk.Window):
     def _failed_land(self, message: str) -> None:
         self.spinner.set_visible(False)
         self.target.set_sensitive(True)
-        self.load(self.selected_target)   # the repository changed under us, or the core refused: show the fresh state
-        self.reason.set_label(message)
+        self.land_error = f"Land falhou: {message}"
+        self.reason.set_label(self.land_error)
         self.reason.set_visible(True)
+        self.load(self.selected_target)   # fresh state; _previewed keeps land_error on top of it
 
 
 class DeleteFloorDialog:
@@ -675,8 +691,7 @@ class DeleteFloorDialog:
         # GtkAlertDialog has no per-button style: "destructive" is conveyed by the wording and by not being the default.
         self.alert = Gtk.AlertDialog(
             message=f"Apagar o floor “{floor.get('name', 'floor')}”?",
-            detail=(f"O diretório {floor.get('worktreePath', '')} é removido, inclusive mudanças sem commit. "
-                    f"Mantenha a branch {floor.get('branchName', '')} para voltar aos commits depois."),
+            detail=delete_warning(floor, controller.statuses.get(floor.get("id"))),
             buttons=list(self.BUTTONS), cancel_button=self.CANCEL, default_button=self.KEEP_BRANCH, modal=True)
 
     def present(self) -> None:
@@ -831,10 +846,13 @@ def install_floors(window) -> FloorsController:
         controller.start_events()
 
     def closed(*_args) -> bool:
-        bus.disconnect(hid)
+        # close-request is not emitted when the window is destroyed directly (app quit, tests): handle both, once (R3).
+        if bus.handler_is_connected(hid):
+            bus.disconnect(hid)
         controller.stop_events()
         return False
 
     hid = bus.connect("workspace-loaded", loaded)
     window.connect("close-request", closed)
+    window.connect("destroy", closed)
     return controller
