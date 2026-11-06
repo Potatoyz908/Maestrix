@@ -581,6 +581,7 @@ class NewFloorDialog(Gtk.Window):
         self.branches: List[str] = []
         self._branch_edited = False
         self._auto_branch = ""
+        self._autofilling = False   # True while WE set the branch text (GTK emits "changed" for the delete step too)
 
         grid = _form_grid()
         self.name_entry = Gtk.Entry(placeholder_text="e.g. Fix login bug", hexpand=True, activates_default=True)
@@ -651,11 +652,17 @@ class NewFloorDialog(Gtk.Window):
     def _on_name_changed(self, _e) -> None:
         if not self._branch_edited:
             self._auto_branch = default_branch(self.name_entry.get_text()) if self.name_entry.get_text().strip() else ""
-            self.branch_entry.set_text(self._auto_branch)   # not a user edit (see _on_branch_changed)
+            # set_text() makes GTK4 emit "changed" twice (once with "" after the delete, once with the new text). The
+            # empty intermediate state used to be read as a user edit, freezing the branch after two characters.
+            self._autofilling = True
+            try:
+                self.branch_entry.set_text(self._auto_branch)   # not a user edit (see _on_branch_changed)
+            finally:
+                self._autofilling = False
         self._validate()
 
     def _on_branch_changed(self, _e) -> None:
-        if self.branch_entry.get_text() != self._auto_branch:
+        if not self._autofilling and self.branch_entry.get_text() != self._auto_branch:
             self._branch_edited = True
         self._validate()
 
