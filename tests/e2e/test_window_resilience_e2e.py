@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT_DIR / "gtk4-ui" / "src"))
 sys.path.insert(0, str(ROOT_DIR))
 
 from maestri_core.client.api import MaestriAPIError, MaestriClient  # noqa: E402
+from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload  # noqa: E402
 from maestri_core.signals.bus import bus  # noqa: E402
 from ui.floors import LandFloorDialog  # noqa: E402
 from ui.window import OpenMaestriWindow  # noqa: E402
@@ -46,9 +47,10 @@ def pump_until(cond, timeout=5.0):
 class FlakyCore(MaestriClient):
     """A core whose reachability and save result the test flips; records saves."""
 
-    def __init__(self, status="offline"):
+    def __init__(self, status="offline", server_doc=None):
         super().__init__(port=1, auth_token="t")
         self.status = status
+        self.server_doc = server_doc
         self.save_ok = True
         self.saved = []
         self.land_fails = False
@@ -58,7 +60,7 @@ class FlakyCore(MaestriClient):
         return self.status
 
     def get_workspace(self, workspace_id=None):
-        return None   # the window falls back to its local document
+        return self.server_doc
 
     def save_workspace_dict(self, data, workspace_id=None):
         with self.lock:
@@ -124,9 +126,11 @@ def probe_now(w):
 @pytest.mark.linux
 @pytest.mark.requires_gtk
 class TestWindowResilience:
-    def test_offline_start_then_core_appears_enables_sync_and_pushes(self, make_win):
-        core = FlakyCore("offline")
+    def test_offline_start_then_core_appears_loads_server_workspace(self, make_win):
+        server_doc = WorkspaceDocument(payload=WorkspacePayload(id="SERVER-UUID-1234", name="Active Workspace"))
+        core = FlakyCore("offline", server_doc=server_doc)
         w = make_win(core)
+        demo_id = w.document.payload.id
         assert w.sync is None and not w.core_connected and "Standalone" in w.lbl_status.get_label()
         assert w._core_link.running, "offline at boot keeps probing (sync not disabled for good)"
         assert not w.floor_button.get_sensitive()
@@ -135,8 +139,26 @@ class TestWindowResilience:
         probe_now(w)
         assert pump_until(lambda: w.core_connected and w.sync is not None)
         assert "Porta" in w.lbl_status.get_label() and not w._core_link.running
-        assert pump_until(lambda: w.document.payload.id in core.saved), "reconnect flushes the offline document"
+        assert pump_until(lambda: w.document.payload.id == "SERVER-UUID-1234"), "server workspace adopted on reconnect"
+        assert demo_id not in core.saved, "offline demo workspace was not saved as orphan"
         assert pump_until(lambda: w.floor_button.get_sensitive() and len(w.floors.floors) == 1)
+
+    def test_offline_start_with_edits_then_reconnect_merges_without_orphan(self, make_win):
+        server_doc = WorkspaceDocument(payload=WorkspacePayload(id="SERVER-UUID-5678", name="Active Workspace"))
+        core = FlakyCore("offline", server_doc=server_doc)
+        w = make_win(core)
+        demo_id = w.document.payload.id
+        # Simulate local mutation while offline
+        bus.emit("node-moved", "test-node", 100.0, 200.0)
+        pump_until(lambda: False, 0.05)
+        assert w._offline_mutated
+
+        core.status = "connected"
+        probe_now(w)
+        assert pump_until(lambda: w.core_connected and w.sync is not None)
+        assert pump_until(lambda: w.document.payload.id == "SERVER-UUID-5678"), "adopts server id"
+        assert demo_id not in core.saved, "demo uuid is never saved as orphan"
+        assert pump_until(lambda: "SERVER-UUID-5678" in core.saved), "reconnect flushes changes under active server id"
 
     def test_save_failure_with_core_gone_keeps_standalone_label(self, make_win):
         core = FlakyCore("connected")

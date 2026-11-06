@@ -108,6 +108,11 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         # 4. Setup Shortcuts
         self._bus_handlers: list[tuple[object, int]] = []
+        self._is_offline_placeholder: bool = False
+        self._offline_mutated: bool = False
+        for sig in ("node-moved", "node-resized", "node-added", "node-updated", "node-removed",
+                    "connection-created", "connection-changed", "connection-removed"):
+            self._bus_handlers.append((bus, bus.connect(sig, self._on_canvas_mutated)))
         self._setup_shortcuts()
         self.floors = install_floors(self)       # floating Floors button (bottom-right) + New/Land/Delete dialogs
         self.routines = install_routines(self)   # File → Routines (Ctrl+Shift+R), scheduler on the main loop
@@ -147,6 +152,10 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             time.sleep(0.005)
         return self.loaded
 
+    def _on_canvas_mutated(self, *_args) -> None:
+        if not self.core_connected or getattr(self, "_is_offline_placeholder", False):
+            self._offline_mutated = True
+
     def _apply_initial_load(self, status: str, doc) -> bool:
         if self.loaded:
             return GLib.SOURCE_REMOVE
@@ -157,8 +166,10 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             # When authentication fails, do not create demo workspace or enable sync
             payload = WorkspacePayload(name="Não Conectado", working_directory=os.path.expanduser("~"))
             self.document = WorkspaceDocument(payload=payload)
+            self._is_offline_placeholder = True
         elif doc and doc.payload:
             self.document = doc
+            self._is_offline_placeholder = False
         else:
             payload = WorkspacePayload(name="Default", working_directory=os.path.expanduser("~"))
             # Add demo terminals if empty
@@ -176,6 +187,9 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             )
             payload.nodes = [term_a, term_b]
             self.document = WorkspaceDocument(payload=payload)
+            self._is_offline_placeholder = True
+
+        self._offline_mutated = False
 
         if self.auth_failed:
             self._update_status_label("🔴 Token Inválido")
@@ -230,6 +244,28 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self._update_status_label(f"🟢 Porta {self.client.port}")
             self.lbl_status.set_tooltip_text("Conectado ao core: sincronizando.")
             self._configure_notes_backend()
+
+            if getattr(self, "_is_offline_placeholder", False):
+                has_edits = getattr(self, "_offline_mutated", False) or (self.sync is not None and self.sync.dirty)
+                if not has_edits:
+                    def fetch_worker():
+                        try:
+                            real_doc = self.client.get_workspace()
+                        except Exception:
+                            real_doc = None
+                        GLib.idle_add(self._apply_reconnected_workspace, real_doc)
+                    threading.Thread(target=fetch_worker, name="maestri-reconnect-fetch", daemon=True).start()
+                    return
+                else:
+                    def merge_worker():
+                        try:
+                            server_doc = self.client.get_workspace()
+                        except Exception:
+                            server_doc = None
+                        GLib.idle_add(self._apply_reconnected_merge, server_doc)
+                    threading.Thread(target=merge_worker, name="maestri-reconnect-merge", daemon=True).start()
+                    return
+
             self._enable_sync()
             self.sync.flush()   # push what was edited while offline
             self.floors.refresh()
@@ -239,6 +275,36 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self.auth_failed, self.core_connected = True, False
             self._update_status_label("🔴 Token Inválido")
             self.lbl_status.set_tooltip_text("Falha de autenticação: token inválido ou ausente.")
+
+    def _apply_reconnected_workspace(self, doc) -> bool:
+        if self._cleaned_up:
+            return GLib.SOURCE_REMOVE
+        if doc and doc.payload:
+            self._apply_workspace_switched(doc)
+        self._is_offline_placeholder = False
+        self._offline_mutated = False
+        self._enable_sync()
+        self.floors.refresh()
+        self.floors.start_events()
+        return GLib.SOURCE_REMOVE
+
+    def _apply_reconnected_merge(self, server_doc) -> bool:
+        if self._cleaned_up:
+            return GLib.SOURCE_REMOVE
+        self._is_offline_placeholder = False
+        self._offline_mutated = False
+        if server_doc and server_doc.payload:
+            existing = {n.id.upper() for n in server_doc.payload.nodes}
+            for n in self.document.payload.nodes:
+                if n.id.upper() not in existing:
+                    server_doc.payload.nodes.append(n)
+            self.document = server_doc
+            self._configure_notes_backend()
+        self._enable_sync()
+        self.sync.flush()
+        self.floors.refresh()
+        self.floors.start_events()
+        return GLib.SOURCE_REMOVE
 
     def _on_core_lost(self) -> None:
         """A save failed because the core went away: back to Standalone (not 'Falha ao Salvar') and keep probing."""
