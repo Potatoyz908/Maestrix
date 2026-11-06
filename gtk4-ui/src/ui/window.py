@@ -229,6 +229,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                 content=TerminalContent(name="Terminal B", command="htop"),
                 z_index=2
             )
+            for node in (term_a, term_b):
+                node.id = node.content.id = node.content.terminal_id
             payload.nodes = [term_a, term_b]
             self.document = WorkspaceDocument(payload=payload)
             self._is_offline_placeholder = not self.core_connected
@@ -1880,25 +1882,24 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         n = len(self.document.payload.nodes) + 1
         max_z = max((x.z_index for x in self.document.payload.nodes), default=0)
 
-        if content is not None:
-            pass
-        elif node_type == "terminal":
-            content = TerminalContent(name=f"Terminal {n}", command="bash", working_directory=self.floors.terminal_cwd())
-        if node_type == "terminal":   # K1: node id == terminal id
+        if content is None:
+            if node_type == "terminal":
+                content = TerminalContent(name=f"Terminal {n}", command="bash", working_directory=self.floors.terminal_cwd())
+            elif node_type == "stickyNote":
+                taken = {x.content.file_name[:-3] if x.content.file_name.endswith(".md") else x.content.file_name
+                         for x in self.document.payload.nodes if x.node_type == "stickyNote"}
+                base = unique_name("Note", taken)
+                content = StickyNoteContent(name=base, file_name=f"{base}.md")
+            elif node_type == "portal":
+                content = PortalContent(name="Portal", current_url="https://google.com")
+            else:
+                content = FileTreeContent(name="Files", root_path=self.floors.terminal_cwd()
+                                          or self.document.payload.working_directory or os.path.expanduser("~"))
+        if node_type == "terminal":   # K1: node id == terminal id, including supplied content
             tid = str(content.terminal_id or uuid.uuid4()).upper()
             content.id = content.terminal_id = tid
             if content.agent_type in ("", "generic_shell"):
                 content.agent_type = agent_type_for_command(content.command)
-        elif node_type == "stickyNote":
-            taken = {x.content.file_name[:-3] if x.content.file_name.endswith(".md") else x.content.file_name
-                     for x in self.document.payload.nodes if x.node_type == "stickyNote"}
-            base = unique_name("Note", taken)
-            content = StickyNoteContent(name=base, file_name=f"{base}.md")
-        elif node_type == "portal":
-            content = PortalContent(name="Portal", current_url="https://google.com")
-        else:
-            content = FileTreeContent(name="Files", root_path=self.floors.terminal_cwd()
-                                      or self.document.payload.working_directory or os.path.expanduser("~"))
 
         new_node = CanvasNode(
             **({"id": content.terminal_id} if node_type == "terminal" else {}),

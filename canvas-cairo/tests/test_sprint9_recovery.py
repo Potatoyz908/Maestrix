@@ -1,0 +1,57 @@
+"""Regression tests for recovered Sprint 9 actions; no display, server or user files.
+
+Load individual window methods to exercise their model mutations without constructing
+GTK widgets. Full signal/clipboard/WebKit integration belongs to the Monitor run.
+"""
+import ast
+import os
+from pathlib import Path
+from types import SimpleNamespace as NS
+import unittest
+import uuid
+from unittest.mock import Mock
+
+from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent, agent_type_for_command
+from maestri_canvas.geometry import Point
+from maestri_canvas.note_model import unique_name
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def method(path, cls, name, namespace):
+    tree = ast.parse((ROOT / path).read_text())
+    klass = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls)
+    fn = next(n for n in klass.body if isinstance(n, ast.FunctionDef) and n.name == name)
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(path), 'exec'), namespace)
+    return namespace[name]
+
+
+class CreationRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.create = method('gtk4-ui/src/ui/window.py', 'OpenMaestriWindow', '_create_node',
+                             dict(globals(), WIDGET_KINDS={'terminal', 'stickyNote', 'portal', 'fileTree'}, bus=Mock()))
+        self.win = NS(loaded=True, document=NS(payload=NS(nodes=[], working_directory='/workspace')),
+                      canvas_widget=NS(get_width=lambda: 1000, get_height=lambda: 800),
+                      floors=NS(terminal_cwd=lambda: '/workspace'), _add_node_to_canvas=Mock())
+
+    def test_supplied_content_survives_all_creation_paths(self):
+        for kind, content in [('portal', PortalContent(current_url='https://example.org/path')),
+                              ('stickyNote', StickyNoteContent(name='Dropped', storage_mode={'custom': {'path': '/tmp/custom.md'}})),
+                              ('fileTree', FileTreeContent(root_path='/tmp/tree')),
+                              ('terminal', TerminalContent(command='codex'))]:
+            with self.subTest(kind=kind):
+                self.create(self.win, kind, at=Point(10, 20), content=content)
+                node = self.win.document.payload.nodes[-1]
+                self.assertIs(node.content, content)
+                if kind == 'terminal':
+                    self.assertEqual(node.id, content.terminal_id)
+                    self.assertEqual(node.id, content.id)
+                    self.assertEqual(content.agent_type, 'codex')
+
+    def test_default_note_names_and_tree_root(self):
+        self.create(self.win, 'stickyNote', at=Point(0, 0))
+        self.create(self.win, 'stickyNote', at=Point(0, 0))
+        a, b = self.win.document.payload.nodes
+        self.assertNotEqual(a.content.file_name, b.content.file_name)
+        self.create(self.win, 'fileTree', at=Point(0, 0))
+        self.assertEqual(self.win.document.payload.nodes[-1].content.root_path, '/workspace')
