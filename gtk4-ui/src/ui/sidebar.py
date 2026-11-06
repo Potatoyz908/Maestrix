@@ -90,7 +90,8 @@ class SidebarView(Gtk.Box):
     def __init__(self, client: MaestriClient) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.client = client
-        self.set_size_request(260, -1)
+        # Include the 12px outer margins in the 260px pane width so text and search are never clipped.
+        self.set_size_request(236, -1)
         self.add_css_class("sidebar-view")
         self.add_css_class("maestri-sidebar")
 

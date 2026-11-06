@@ -73,9 +73,11 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         # 3. Main Paned Layout (Sidebar + Canvas)
         self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        self._sidebar_open = True
+        self._sidebar_tick = 0
         self.paned.set_position(260)
         self.paned.set_resize_start_child(False)
-        self.paned.set_shrink_start_child(True)
+        self.paned.set_shrink_start_child(False)
         self.paned.set_resize_end_child(True)
         self.paned.set_shrink_end_child(False)
 
@@ -421,7 +423,6 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         headerbar windowcontrols,
         headerbar .titlebutton,
         headerbar button.titlebutton {
-            display: none;
             opacity: 0;
             min-width: 0;
             min-height: 0;
@@ -918,6 +919,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         header = Gtk.HeaderBar()
         header.set_show_title_buttons(False)
         self.set_titlebar(header)
+        header.set_decoration_layout("")
+        self._title_controls_timer = GLib.timeout_add(100, self._suppress_title_controls, header, None)
 
         # macOS Window Traffic Lights (Red, Yellow, Green)
         traffic_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1200,19 +1203,58 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                                 comments="Native GTK 4 port of Maestri for Linux.")
         about.present()
 
+    def _suppress_title_controls(self, header, _clock):
+        if self._cleaned_up:
+            return False
+        # GTK CSS has no display:none. Hide decoration widgets at the widget layer,
+        # including controls added after mapping by a desktop integration or GNOME extensions.
+        def visit(parent):
+            child = parent.get_first_child()
+            while child is not None:
+                following = child.get_next_sibling()
+                if isinstance(child, Gtk.WindowControls) or child.has_css_class("titlebutton"):
+                    child.set_visible(False)
+                    child.set_can_target(False)
+                else:
+                    visit(child)
+                child = following
+        visit(header)
+        return True
+
     def _on_toggle_sidebar(self, btn=None):
-        is_visible = self.sidebar.get_visible()
-        new_visible = not is_visible
-        self.sidebar.set_visible(new_visible)
+        self._sidebar_open = not getattr(self, "_sidebar_open", True)
+        if getattr(self, "_sidebar_tick", 0):
+            self.paned.remove_tick_callback(self._sidebar_tick)
+            self._sidebar_tick = 0
+        opening = self._sidebar_open
+        start = self.paned.get_position() if self.sidebar.get_visible() else 0
+        target = 260 if opening else 0
+        self.sidebar.set_visible(True)
         if hasattr(self, "btn_floating_sidebar"):
-            self.btn_floating_sidebar.set_visible(not new_visible)
+            self.btn_floating_sidebar.set_visible(not opening)
         if hasattr(self, "btn_sidebar"):
-            if new_visible:
-                self.btn_sidebar.remove_css_class("active")
-            else:
+            self.btn_sidebar.set_tooltip_text("Hide Sidebar" if opening else "Open Sidebar")
+            if opening:
                 self.btn_sidebar.add_css_class("active")
-        if new_visible:
-            self.paned.set_position(260)
+            else:
+                self.btn_sidebar.remove_css_class("active")
+        settings = self.get_settings()
+        animate = settings.get_property("gtk-enable-animations") if settings else False
+        started = GLib.get_monotonic_time()
+
+        def step(_widget, clock):
+            elapsed = (clock.get_frame_time() - started) / 180000 if animate else 1.0
+            progress = max(0.0, min(1.0, elapsed))
+            eased = 1 - (1 - progress) ** 3
+            self.paned.set_position(round(start + (target - start) * eased))
+            self.sidebar.set_opacity(eased if opening else 1 - eased)
+            if progress >= 1:
+                self.sidebar.set_visible(opening)
+                self.sidebar.set_opacity(1)
+                self._sidebar_tick = 0
+                return False
+            return True
+        self._sidebar_tick = self.paned.add_tick_callback(step)
 
     # ---- canvas <-> document -------------------------------------------------------------------
     def _viewport_from_payload(self) -> Viewport:

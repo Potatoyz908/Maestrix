@@ -343,23 +343,23 @@ class TestVisualParityMac:
         # Verify title buttons are disabled on HeaderBar to prevent ghost buttons from GNOME/system
         assert header.get_show_title_buttons() is False
 
-        # Verify paned configuration keeps sidebar width stable
+        # Verify paned configuration keeps sidebar width stable and prevents clipping
         assert window.paned.get_resize_start_child() is False
-        assert window.paned.get_shrink_start_child() is True
+        assert window.paned.get_shrink_start_child() is False
 
         # Verify sidebar toggle behavior and floating restore button
         assert window.sidebar.get_visible() is True
         assert window.btn_floating_sidebar.get_visible() is False
 
-        # Toggle hidden
+        # Toggle hidden (with animation)
         window.btn_sidebar.emit("clicked")
-        pump_events(0.05)
+        pump_events(0.25)
         assert window.sidebar.get_visible() is False
         assert window.btn_floating_sidebar.get_visible() is True
 
         # Click floating button to restore
         window.btn_floating_sidebar.emit("clicked")
-        pump_events(0.05)
+        pump_events(0.25)
         assert window.sidebar.get_visible() is True
         assert window.btn_floating_sidebar.get_visible() is False
 
