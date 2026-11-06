@@ -138,6 +138,58 @@ final class CollaborationTests: IsolatedDataDirTestCase {
         XCTAssertEqual(TerminalText.tidy("\u{1B}[31mred\u{1B}[0m  \r\n\n\n\nx\u{1B}]0;title\u{07}"), "red\n\nx")
     }
 
+    // MARK: - K7
+
+    func testNoteCreateReadScopeChainAndDelete() async throws {
+        let (port, token) = try await startServer()
+        defer { Task { @MainActor in InterAgentServer.shared.stop() } }
+        let ws = UUID(), author = UUID(), stranger = UUID()
+        var p = WorkspacePayload(id: ws, name: "Notes", workingDirectory: "/tmp")
+        p.nodes = [terminalNode(nodeId: author, terminalId: author, name: "Author", x: 9800),
+                   terminalNode(nodeId: stranger, terminalId: stranger, name: "Stranger", x: 9800)]
+        try save(p)
+        await MainActor.run { ConnectionManager.shared.reloadWorkspace(ws) }
+
+        let created = try await cli(port, token, ["note", "create", "alpha\nbeta\ngamma", "--name", "Spec", "--color", "yellow"], as: author)
+        XCTAssertEqual(created, "Created note \"Spec\"")
+        let doc = try PersistenceManager.shared.loadWorkspace(id: ws)
+        let spec = try XCTUnwrap(doc.payload.nodes.first { WorkspaceGraph.noteName(of: $0) == "Spec" })
+        XCTAssertTrue(doc.payload.noteConnections.contains { $0.terminalId == author && $0.noteNodeId == spec.id })
+        XCTAssertLessThan(spec.frame.maxX, 9800, "placed left of the caller")
+
+        let all = try await cli(port, token, ["note", "read", "Spec"], as: author)
+        XCTAssertEqual(all, "[3 lines total]\n1\talpha\n2\tbeta\n3\tgamma")
+        let range = try await cli(port, token, ["note", "read", "Spec", "2", "5"], as: author)
+        XCTAssertEqual(range, "[lines 2-3 of 3]\n2\tbeta\n3\tgamma")
+        let denied = try await cli(port, token, ["note", "read", "Spec"], as: stranger)
+        XCTAssertTrue(denied.hasPrefix("error:"), "not connected -> no access: \(denied)")
+
+        // chain: Spec <-> ChainedDoc
+        let chained = UUID()
+        var p2 = try PersistenceManager.shared.loadWorkspace(id: ws).payload
+        p2.nodes.append(noteNode(chained, name: "ChainedDoc"))
+        p2.noteToNoteConnections.append(NoteToNoteConnection(noteNodeIdA: spec.id, noteNodeIdB: chained))
+        try save(p2)
+        try NoteFileManager.shared.write(filePath: NoteFileManager.shared.managedPath(workspaceId: ws, noteName: "ChainedDoc"),
+                                         content: "chained content")
+        let list = try await cli(port, token, ["list"], as: author)
+        XCTAssertTrue(list.contains("  - name: \"Spec\"\n    - name: \"ChainedDoc\""), list)
+        let r1 = try await cli(port, token, ["note", "write", "ChainedDoc", "v2"], as: author)
+        XCTAssertEqual(r1, "OK")
+        let r2 = try await cli(port, token, ["note", "edit", "chained", "v2", "v3"], as: author)
+        XCTAssertEqual(r2, "OK")
+        let r3 = try await cli(port, token, ["note", "read", "ChainedDoc"], as: author)
+        XCTAssertEqual(r3, "[1 lines total]\n1\tv3")
+
+        let specPath = NoteFileManager.shared.managedPath(workspaceId: ws, noteName: "Spec")
+        let r4 = try await cli(port, token, ["note", "delete", "Spec"], as: author)
+        XCTAssertEqual(r4, "Deleted note \"Spec\"")
+        let after = try PersistenceManager.shared.loadWorkspace(id: ws).payload
+        XCTAssertFalse(after.nodes.contains { $0.id == spec.id })
+        XCTAssertFalse(after.noteConnections.contains { $0.noteNodeId == spec.id })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: specPath), "managed note file removed")
+    }
+
     // MARK: - HTTP helpers (blocking sockets, off the main actor)
 
     private func cli(_ port: UInt16, _ token: String, _ args: [String], as terminal: UUID) async throws -> String {

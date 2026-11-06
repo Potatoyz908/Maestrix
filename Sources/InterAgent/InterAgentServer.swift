@@ -1547,6 +1547,7 @@ public final class InterAgentServer {
                               "branchName": floor.branchName, "worktreePath": floor.worktreePath]
                 )
                 Self.publishWorkspaceSaved(wsId)
+                FloorHookRunner.runSetupIfAutomatic(entry: floorEntry, rootDirectory: workingDirectory, workspaceId: wsId)   // K12
 
                 let respObj = Self.floorJSON(floorEntry)
                 if let data = try? JSONSerialization.data(withJSONObject: respObj) {
@@ -1677,6 +1678,7 @@ public final class InterAgentServer {
             }
             let keepWorktree = Self.queryValue(pathParts, "removeWorktree") == "0"
             let deleteBranch = Self.queryValue(pathParts, "deleteBranch") == "1"
+            await FloorHookRunner.runTeardown(entry: entry, rootDirectory: Self.floorRepoDirectory(entry: entry, fallback: doc.payload.workingDirectory), workspaceId: wsId)   // K12
             if !keepWorktree {
                 let wd = Self.floorRepoDirectory(entry: entry, fallback: doc.payload.workingDirectory)
                 let floor = Self.floor(from: entry, workingDirectory: wd)
@@ -2188,10 +2190,15 @@ public final class InterAgentServer {
 
     static func decodeFloorHooks(_ dict: [String: Any], fallback: FloorHooks) -> FloorHooks {
         var hooks = fallback
-        if let s = dict["setup"] as? [String] { hooks.setup = s }
-        if let r = dict["run"] as? [String] { hooks.run = r }
-        if let t = dict["teardown"] as? [String] { hooks.teardown = t }
-        if let a = dict["autoRunSetup"] as? Bool { hooks.autoRunSetup = a }
+        // each phase: ["cmd", ...] or [{"command": "cmd", ...}, ...] (K12); "autoRun" is accepted for autoRunSetup
+        func commands(_ v: Any?) -> [String]? {
+            guard let list = v as? [Any] else { return nil }
+            return list.compactMap { ($0 as? String) ?? (($0 as? [String: Any])?["command"] as? String) }
+        }
+        if let s = commands(dict["setup"]) { hooks.setup = s }
+        if let r = commands(dict["run"]) { hooks.run = r }
+        if let t = commands(dict["teardown"]) { hooks.teardown = t }
+        if let a = (dict["autoRunSetup"] as? Bool) ?? (dict["autoRun"] as? Bool) { hooks.autoRunSetup = a }
         return hooks
     }
 
