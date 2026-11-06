@@ -128,6 +128,8 @@ class TerminalFeatures:
         focus.connect("enter", lambda _c: self.clear_bell())
         term.add_controller(focus)
 
+        self.dead = False   # the terminal was destroyed: late callbacks (debounced search-changed, timers) must not touch it
+        self._handlers.append(term.connect("destroy", lambda _t: self.cleanup()))
         self._handlers.append(term.connect("bell", lambda _t: self.ring_bell()))
         self._handlers.append(term.connect("contents-changed", lambda _t: self._output()))
 
@@ -217,6 +219,8 @@ class TerminalFeatures:
         return self._search_bar
 
     def close_search(self) -> None:
+        if self.dead:
+            return
         if self._search_bar is not None:
             self._search_bar.set_visible(False)
         try:
@@ -228,6 +232,8 @@ class TerminalFeatures:
 
     def find(self, text: str, backwards: bool = False, restart: bool = False) -> bool:
         """Highlight the next (or previous) occurrence of `text` (literal, case-insensitive). Returns whether one was found."""
+        if self.dead or not self.term.get_realized():
+            return False   # VTE aborts on search in an unrealized terminal (window closed while a search was debounced)
         Vte = _vte()
         if not text:
             self._set_status("")
@@ -242,6 +248,8 @@ class TerminalFeatures:
             self._search_text = text
             if restart:
                 self.term.unselect_all()
+        if not self.term.get_realized():
+            return False
         found = self.term.search_find_previous() if backwards else self.term.search_find_next()
         self._set_status("" if found else "Not found")
         return bool(found)
@@ -297,6 +305,7 @@ class TerminalFeatures:
                              css=("maestri-badge-exited",))
 
     def cleanup(self) -> None:
+        self.dead = True
         if self._idle_timer:
             GLib.source_remove(self._idle_timer)
             self._idle_timer = 0
