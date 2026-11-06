@@ -38,6 +38,7 @@ from .note_model import NoteMeta
 from .portal_model import PortalMeta
 from .note_storage import CoreNotesClient, CoreNoteStorage, LocalNoteStorage, MemoryNoteStorage
 from .sticky_note import StickyNoteView
+from .terminal_features import TerminalFeatures
 from .interaction import (WHEEL_NOTCH_PX, Background, CanvasController, ConnectRequested, DeleteRequested, DrawRequested,
                           DuplicateRequested, Event, FreehandDrawn, Mods, NodeContent, NodeEdge, NodeHeader, NodePin, NodeResized, NodesMoved,
                           SelectionChanged, Target, ToolChanged, ViewportChanged)
@@ -77,6 +78,8 @@ def load_vte():
     if _vte_tried:
         return _vte_module
     _vte_tried = True
+    from .gi_env import ensure_typelib_paths
+    ensure_typelib_paths()   # honours MAESTRI_TYPELIB_PATH too (isolated HOME in tests)
     dirs = [d for d in VTE_TYPELIB_DIRS if os.path.isdir(d)]
     if dirs:
         try:
@@ -282,6 +285,19 @@ class NodeFrame(Gtk.Overlay):
         attach = getattr(content, "frame_attached", None)
         if attach is not None:
             attach(self)   # lets a content widget style the card and retag its header widgets
+        # Terminal nodes (local VTE or core-backed VteTerminalView): Ctrl+Shift+C/V/A/F, find bar, links, bell, busy/idle.
+        term = terminal_of(content)
+        self.terminal_features = TerminalFeatures(term, self, on_activity=self._terminal_activity) if term is not None else None
+
+    def _terminal_activity(self, busy: bool) -> None:
+        canvas = self.get_ancestor(CanvasWidget)
+        if canvas is not None:
+            canvas.emit("terminal-activity", self.node_id, busy)
+
+    def set_number_badge(self, n: int | None) -> None:
+        """K9: the Ctrl+number shortcut badge shown in a terminal header while Ctrl is held (None hides it)."""
+        self.set_badge("number", None if n is None else str(n), tooltip="" if n is None else f"Ctrl+{n}",
+                       css=("maestri-number-badge",))
 
     def start_inline_rename(self) -> None:
         header = self.title.get_parent()
@@ -417,6 +433,14 @@ CSS = b"""
 .maestri-node-badge { font-size: 12px; padding: 0 5px; border-radius: 8px; background: alpha(currentColor, .10); }
 .maestri-node-badge.routine-paused, .maestri-node-badge-icon.routine-paused { opacity: .45; }
 .maestri-node-badge-icon { margin-left: 2px; }
+.maestri-node-badge-icon.maestri-term-status { -gtk-icon-size: 8px; }
+.maestri-node-badge-icon.maestri-term-status.busy { color: #23d18b; }
+.maestri-node-badge-icon.maestri-term-status.idle { color: alpha(currentColor, .35); }
+.maestri-node-badge-icon.maestri-badge-attention { color: #ff9f0a; animation: maestri-badge-pulse 0.8s ease-in-out infinite alternate; }
+.maestri-node-badge.maestri-badge-exited { color: #ff453a; background: alpha(#ff453a, .12); }
+.maestri-node-badge.maestri-number-badge { font-weight: 700; background: #0a84ff; color: white; min-width: 12px; }
+.maestri-term-search { background: @window_bg_color; border: 1px solid alpha(currentColor, .2); border-radius: 8px; padding: 2px 4px;
+                       box-shadow: 0 2px 8px alpha(black, .25); }
 .maestri-node-badge-icon.routine-running { color: #23d18b; animation: maestri-badge-pulse 1s ease-in-out infinite alternate; }
 .maestri-git-dirty-dot { min-width: 6px; min-height: 6px; border-radius: 50%; background-color: #f59e0b; }
 .maestri-node-badge.routine-running { color: #23d18b; animation: maestri-badge-pulse 1s ease-in-out infinite alternate; }
@@ -453,6 +477,7 @@ class CanvasWidget(Gtk.Overlay):
         "tool-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "viewport-changed": (GObject.SignalFlags.RUN_FIRST, None, (float, float, float)),
         "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
+        "terminal-activity": (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),                         # id, busy (False = idle)
         "file-activated": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                             # fileTree id, path
         "file-tree-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                       # fileTree id, {rootPath, viewMode}
         "ask-requested": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                              # fileTree id, question + quoted diff
@@ -551,7 +576,7 @@ class CanvasWidget(Gtk.Overlay):
             term_cmd = command
             if term_cmd is None and isinstance(item.content, dict):
                 term_cmd = item.content.get("command")
-            content = create_terminal(cwd=cwd, env=env, command=term_cmd, on_exit=lambda st: self.emit("terminal-exited", nid, st))
+            content = create_terminal(cwd=cwd, env=env, command=term_cmd, on_exit=lambda st: self._local_terminal_exited(nid, st))
             if content is None:
                 content = Gtk.Label(label="Vte 3.91 (GTK 4) not available")
         elif item.kind == "fileTree" and content is None:
@@ -612,6 +637,8 @@ class CanvasWidget(Gtk.Overlay):
             self.active_terminal_id = None
         frame = self.frames.pop(k, None)
         if frame is not None:
+            if frame.terminal_features is not None:
+                frame.terminal_features.cleanup()
             if is_terminal(frame.content):
                 terminate_terminal(frame.content)   # local shell: SIGHUP
             else:
@@ -629,6 +656,27 @@ class CanvasWidget(Gtk.Overlay):
         self._last_applied.pop(k, None)
         self.controller.dirty = True
         self._sync_portal_sessions()
+
+    # ---- terminal state (Sprint 9: exit indicator, prefs) -------------------------------------------------------------
+    def _local_terminal_exited(self, node_id: str, status: int) -> None:
+        code = os.waitstatus_to_exitcode(status) if status >= 0 else status
+        self.set_terminal_exited(node_id, code)
+        self.emit("terminal-exited", node_id, status)
+
+    def set_terminal_exited(self, node_id: str, code: int | None) -> None:
+        """Show (or clear with None) the "process exited" header indicator; the window calls it on the core's terminalExited."""
+        frame = self.frames.get(norm(node_id))
+        if frame is not None and frame.terminal_features is not None:
+            frame.terminal_features.set_exited(code)
+
+    def apply_terminal_prefs(self, scrollback_memory_limit: bool = False) -> None:
+        """Preferences consumers: scrollback length of every terminal (macOS uses 10000 lines; "limit memory" keeps 2000)."""
+        lines = 2000 if scrollback_memory_limit else 10000
+        self.terminal_scrollback_lines = lines
+        for f in self.frames.values():
+            term = terminal_of(f.content)
+            if term is not None:
+                term.set_scrollback_lines(lines)
 
     def update_node_frame(self, node_id: str, frame: Rect) -> None:
         self.scene.set_frame(node_id, frame)

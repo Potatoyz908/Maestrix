@@ -174,6 +174,13 @@ GLYPHS.update({
                          '13.25"/>',
 })
 
+# ---- Sprint 9 (Arquiteto): terminal bell / search, file tree collapse-all
+GLYPHS.update({
+    "bell": '<path d="M4 11.25 V7.25 A4 4 0 0 1 12 7.25 V11.25 L13.25 12.5 H2.75 Z"/><path d="M6.5 14.25 H9.5"/>',
+    "search": '<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 L14 14"/>',
+    "collapse-all": '<path d="M4.5 2.5 L8 6 L11.5 2.5"/><path d="M4.5 13.5 L8 10 L11.5 13.5"/><path d="M2.5 8 H13.5"/>',
+})
+
 TEMPLATE = ('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
             '<g fill="none" stroke="#2e3436" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">{body}</g></svg>')
 
