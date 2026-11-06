@@ -43,6 +43,8 @@ from .ask_agent import install_ask_agent
 from .routines_window import install_routines
 from .floors import install_floors
 from .core_link import CoreReconnector
+from .live_events import LiveEvents
+from .window_actions import WindowActionsMixin
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
 from .terminal_dialog import EditTerminalDialog, NewTerminalDialog, PRESETS
@@ -51,7 +53,7 @@ from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
 from .iconography import StatusIndicator, gicon, icon_label, icon_name, install_css as install_icon_css
 
 
-class OpenMaestriWindow(Gtk.ApplicationWindow):
+class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, client: MaestriClient):
         super().__init__(application=app, title="Open Maestri (Native GTK 4)")
         self.client = client
@@ -103,6 +105,10 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.canvas_widget.connect("file-tree-changed", self._on_file_tree_changed)
         self.canvas_widget.connect("files-dropped", self._on_files_dropped)
         self.canvas_widget.connect("node-title-changed", self._on_node_title_changed)
+        self._connect_k9_signals()                 # node-lock-changed / node-z-changed -> isLocked / zIndex (K9)
+        self.live_events = LiveEvents(self)        # K2: server-created nodes/connections on the open canvas
+        self._events_stream = None
+        self.portal_bridge = None                  # K3 executor (canvas-cairo portal_bridge.PortalBridge), when installed
         self._setup_context_menu()
         self.drawing = DrawingTools(self)   # text / shape / freehand tools + P-tool frames (ui/drawing.py)
 
@@ -272,6 +278,36 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             )
             self._bus_handlers.append((bus, bus.connect("status-changed", self._on_sync_status_changed)))
         self._restart_autosave()
+        self._start_event_stream()
+
+    # ---- K2 / K3: /ws/events -------------------------------------------------------------------------------------
+    def _start_event_stream(self) -> None:
+        """One subscription to /ws/events for all workspaces (reconnects by itself): canvas events of the open document,
+        terminal counts of the others, portal commands (K3). Not given the bus: the window applies events without echo."""
+        if self._events_stream is not None or self._cleaned_up:
+            return
+        try:
+            from maestri_canvas.portal_bridge import PortalBridge   # Arquiteto (K3); optional until it lands
+            self.portal_bridge = PortalBridge(self.canvas_widget, self.client)
+        except Exception:   # noqa: BLE001 - ImportError or an older bridge signature
+            self.portal_bridge = None
+        try:
+            self._events_stream = self.client.connect_events(on_event=self._on_ws_event, workspace_id=None)
+        except Exception as exc:   # noqa: BLE001 - live updates are best effort; reloads still show everything
+            print(f"[window] /ws/events unavailable: {exc!r}")
+            self._events_stream = None
+
+    def _on_ws_event(self, etype, payload=None) -> bool:
+        """`_on_ws_event(event_dict)` from the stream, or `_on_ws_event("nodeAdded", {...})`. Main loop only."""
+        if isinstance(etype, dict):
+            payload, etype = etype, etype.get("type", "")
+        if self._cleaned_up or not isinstance(payload, dict):
+            return False
+        if etype == "portalCommand":
+            if self.portal_bridge is not None:
+                self.portal_bridge.handle_event(payload)
+            return False
+        return self.live_events.handle(str(etype), payload)
 
     def _on_core_probe(self, status: str) -> None:
         """Periodic probe result while the core is unreachable."""
@@ -1000,6 +1036,14 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         btn_settings.connect("clicked", lambda _b: self.show_preferences())
         header.pack_end(btn_settings)
 
+        # Open in Editor (macOS View > Open in Editor, ⇧⌘E): the workspace folder in the preferred IDE
+        btn_editor = Gtk.Button(icon_name=icon_name("code"))
+        btn_editor.set_tooltip_text("Open in Editor (Ctrl+Shift+E)")
+        btn_editor.add_css_class("maestri-header-btn")
+        btn_editor.connect("clicked", lambda _b: self.open_in_editor())
+        header.pack_end(btn_editor)
+        self.btn_open_editor = btn_editor
+
         # Backend Connection status indicator
         self.lbl_status = StatusIndicator("pending", "Conectando...")   # CSS dot in the semantic colour + text (no emoji)
         self.lbl_status.set_margin_end(8)
@@ -1048,6 +1092,9 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def _build_menu_model(self) -> Gio.Menu:
+        """The macOS menu bar (Sources/OpenMaestriApp.swift + Localizable.xcstrings English strings), Cmd mapped to Ctrl:
+        File: New Workspace (Ctrl+Shift+N) / new nodes / Routines… (Ctrl+Alt+R); View: Zoom In/Out/Reset Zoom, Open in Editor
+        (Ctrl+Shift+E), Snap; Window: Next/Previous Workspace (Ctrl+Down/Up), Next/Previous Terminal (Ctrl+Tab)."""
         def section(items):
             m = Gio.Menu()
             for label, action in items:
@@ -1056,27 +1103,57 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         menubar = Gio.Menu()
         file_menu = Gio.Menu()
+        file_menu.append_section(None, section([("New Workspace", "win.new-workspace"), ("New Group…", "win.new-group")]))
         file_menu.append_section(None, section([
-            ("New Terminal", "win.new-terminal"), ("New Note", "win.new-note"),
+            ("New Terminal…", "win.new-terminal"), ("New Note", "win.new-note"),
             ("New Portal", "win.new-portal"), ("New File Tree", "win.new-file-tree"),
         ]))
-        routines_menu = section([("Manage Routines…", "win.routines"), ("New Routine…", "win.new-routine")])
-        routines_section = Gio.Menu()
-        routines_section.append_submenu("Routines", routines_menu)
-        file_menu.append_section(None, routines_section)
+        file_menu.append_section(None, section([("Routines…", "win.routines")]))
         file_menu.append_section(None, section([("Save", "win.save")]))
-        file_menu.append_section(None, section([("Preferences…", "win.preferences"), ("Quit", "win.quit")]))
+        file_menu.append_section(None, section([("Settings…", "win.preferences"), ("Quit Open Maestri", "win.quit")]))
         menubar.append_submenu("_File", file_menu)
 
+        edit_menu = Gio.Menu()
+        edit_menu.append_section(None, section([("Copy Element", "win.copy-element"), ("Paste", "win.paste-element")]))
+        menubar.append_submenu("_Edit", edit_menu)
+
         view_menu = Gio.Menu()
-        view_menu.append_section(None, section([("Toggle Sidebar", "win.toggle-sidebar"), ("Reset Zoom", "win.reset-zoom")]))
+        view_menu.append_section(None, section([("Toggle Sidebar", "win.toggle-sidebar")]))
+        view_menu.append_section(None, section([("Zoom In", "win.zoom-in"), ("Zoom Out", "win.zoom-out"),
+                                                ("Reset Zoom", "win.reset-zoom")]))
         view_menu.append_section(None, section([("Snap to Alignment Guides", "win.snapping")]))   # check item (stateful action)
+        view_menu.append_section(None, section([("Open in Editor", "win.open-in-editor")]))
         menubar.append_submenu("_View", view_menu)
+
+        window_menu = Gio.Menu()
+        window_menu.append_section(None, section([("Next Workspace", "win.next-workspace"),
+                                                  ("Previous Workspace", "win.prev-workspace")]))
+        window_menu.append_section(None, section([("Next Terminal", "win.next-terminal"),
+                                                  ("Previous Terminal", "win.prev-terminal")]))
+        menubar.append_submenu("_Window", window_menu)
 
         help_menu = Gio.Menu()
         help_menu.append_section(None, section([("About Open Maestri", "win.about")]))
         menubar.append_submenu("_Help", help_menu)
         return menubar
+
+    def _install_menubar(self) -> None:
+        """The menu model used to be built and never shown (audit 1.3): install it on the application."""
+        app = self.get_application()
+        if app is None:
+            return
+        try:
+            app.set_menubar(self._build_menu_model())
+            self.set_show_menubar(True)
+        except Exception as exc:   # noqa: BLE001 - headless/unregistered app: the actions and accels still work
+            print(f"[window] menubar not installed: {exc!r}")
+
+    def _zoom_step(self, direction: int) -> None:
+        cw = self.canvas_widget
+        cw.viewport.zoom_step(Point((cw.get_width() or 1200) / 2.0, (cw.get_height() or 800) / 2.0), direction)
+        cw.controller.dirty = True
+        cw.queue_draw()
+        bus.emit("viewport-changed", cw.viewport.origin.x, cw.viewport.origin.y, cw.viewport.zoom)
 
     def _setup_shortcuts(self):
         """Menu actions + accelerators: Ctrl+N new terminal, Ctrl+S save, Ctrl+0 reset zoom, Ctrl+Q quit,
@@ -1098,8 +1175,19 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             "quit": lambda: self.close(),
             "toggle-sidebar": lambda: self._on_toggle_sidebar(None),
             "reset-zoom": lambda: self.reset_zoom(),
+            "zoom-in": lambda: self._zoom_step(+1),
+            "zoom-out": lambda: self._zoom_step(-1),
             "about": lambda: self._show_about(),
+            "open-in-editor": lambda: self.open_in_editor(),
+            "next-workspace": lambda: self.next_workspace(),
+            "prev-workspace": lambda: self.prev_workspace(),
+            "next-terminal": lambda: self.step_terminal(+1),
+            "prev-terminal": lambda: self.step_terminal(-1),
+            "copy-element": lambda: self.copy_selected_nodes(),
+            "paste-element": lambda: self.paste_nodes(),
         }
+        for n in range(1, 10):   # Ctrl+1..9: jump to the n-th terminal (creation order), K9
+            handlers[f"jump-terminal-{n}"] = (lambda k=n: self.jump_to_terminal(k))
         self._actions = handlers
         for name, fn in handlers.items():
             action = Gio.SimpleAction.new(name, None)
@@ -1119,8 +1207,14 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 ("win.new-terminal", "<Control>n"), ("win.save", "<Control>s"), ("win.reset-zoom", "<Control>0"),
                 ("win.quit", "<Control>q"), ("win.preferences", "<Control>comma"), ("win.toggle-sidebar", "<Control>b"),
                 ("win.snapping", "<Control>semicolon"),
+                ("win.new-workspace", "<Control><Shift>n"), ("win.open-in-editor", "<Control><Shift>e"),
+                ("win.next-workspace", "<Control>Down"), ("win.prev-workspace", "<Control>Up"),
+                ("win.zoom-in", "<Control>equal"), ("win.zoom-out", "<Control>minus"),
             ):
                 app.set_accels_for_action(action, [accel])
+            for n in range(1, 10):
+                app.set_accels_for_action(f"win.jump-terminal-{n}", [f"<Control>{n}"])
+        self._install_menubar()
 
     def _set_snapping(self, on: bool) -> None:
         """Toggle the canvas alignment guides and remember the choice."""
@@ -1230,6 +1324,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
     def _insert_node(self, node: CanvasNode, focus: bool = False, flush: bool = True) -> CanvasNode:
         """Add a node created by the UI to the document + canvas and persist it."""
+        if getattr(self, "_no_workspace", False):
+            return node   # the last workspace was deleted: nothing to add it to
         self.document.payload.nodes.append(node)
         self._add_node_to_canvas(node, focus=focus)
         self.canvas_widget.controller.dirty = True
@@ -1323,7 +1419,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
     def _add_node_to_canvas(self, node: CanvasNode, focus: bool = False) -> None:
         f = node.frame
         drawn = node.content if isinstance(node.content, dict) else None   # text/shape/freehand keep their raw `_0` payload
-        item = NodeItem(node.id, Rect(f.x, f.y, f.width, f.height), node.z_index, node.node_type, node.title, content=drawn)
+        item = NodeItem(node.id, Rect(f.x, f.y, f.width, f.height), node.z_index, node.node_type, node.title,
+                        locked=bool(node.is_locked), content=drawn)   # K9: isLocked / zIndex come back on load
         kwargs = {}
         if node.node_type == "stickyNote":
             kwargs["note"] = node.content.to_dict()
@@ -1543,6 +1640,14 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
     def _on_canvas_delete_requested(self, _canvas, ids):
         for nid in tuple(ids):
             node = self._find_node(nid)
+            if node is not None and node.is_locked:
+                continue   # locked nodes cannot be deleted (Unlock first), like macOS
+            conn_ids = [c.id for c in self.document.payload.all_connections()
+                        if nid.upper() in (c.a_id.upper(), c.b_id.upper())]
+            if conn_ids and self.core_connected:   # revoke them in the core too (K6/K2), not only in the saved document
+                ws = self.document.payload.id
+                for cid in conn_ids:
+                    threading.Thread(target=self._delete_core_connection, args=(cid, ws), daemon=True).start()
             if node is not None:
                 self.document.payload.nodes.remove(node)
                 self.document.payload.last_modified_at = current_iso8601()
@@ -1761,7 +1866,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         Ignored until the initial workspace is loaded (the placeholder document would be replaced)."""
         if node_type not in WIDGET_KINDS:
             raise ValueError(f"invalid node type: {node_type!r}")
-        if not self.loaded:
+        if not self.loaded or getattr(self, "_no_workspace", False):
             return
         cw = self.canvas_widget
         w = cw.get_width() or 1200
@@ -1792,7 +1897,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         elif node_type == "portal":
             content = PortalContent(name="Portal", current_url="https://google.com")
         else:
-            content = FileTreeContent(name="Files", root_path=os.path.expanduser("~"))
+            content = FileTreeContent(name="Files", root_path=self.floors.terminal_cwd()
+                                      or self.document.payload.working_directory or os.path.expanduser("~"))
 
         new_node = CanvasNode(
             **({"id": content.terminal_id} if node_type == "terminal" else {}),
@@ -1825,6 +1931,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 pass
             self._sidebar_tick = 0
         self._core_link.dispose()
+        if self._events_stream is not None:
+            try:
+                self._events_stream.close()
+            except Exception:   # noqa: BLE001
+                pass
+            self._events_stream = None
         if self._autosave_id:
             GLib.source_remove(self._autosave_id)
             self._autosave_id = 0
@@ -1902,5 +2014,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self._configure_notes_backend()   # notes_dir must follow the new workspace id
             self._load_payload_into_canvas()
             cw.controller.dirty = True
+            self._no_workspace = False
+            if self.sync is None and self.core_connected and not self.auth_failed:
+                self._enable_sync()   # after close_workspace() (last workspace deleted) the next one syncs again
             bus.emit("workspace-loaded", doc.payload)
         return GLib.SOURCE_REMOVE

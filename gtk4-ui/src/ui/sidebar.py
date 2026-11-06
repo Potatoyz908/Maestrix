@@ -723,6 +723,11 @@ class SidebarView(Gtk.Box):
                 target = sorted(others, key=lambda w: (not w.is_pinned, w.name.lower()))[0]
                 bus.emit("workspace-switched", target.id)
             else:
+                if is_active:   # the last workspace: the window drops the document (no autosave) and shows the empty state
+                    window = self.get_root()
+                    if window is not None and hasattr(window, "close_workspace"):
+                        window.close_workspace()
+                    self._active_payload, self._active_workspace_id = None, None
                 self._delete_now(entry)
 
         DeleteWorkspaceDialog(self.get_root(), entry.name, handle_delete).present()

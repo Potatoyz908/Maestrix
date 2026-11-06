@@ -268,14 +268,10 @@ class WorkspaceStore:
 
     # ---- sidebar layout ------------------------------------------------------------------------------------------------------
     def load_layout(self) -> SidebarLayout:
+        """The core's layout; the file on disk when the core is unreachable."""
         try:
-            data = self.client.get_sidebar_layout()   # SidebarLayout or a raw dict, depending on the client version
-            if isinstance(data, SidebarLayout):
-                if data.groups or data.top_level_items or not os.path.isfile(self.layout_path):
-                    return data
-            elif isinstance(data, dict) and data:
-                return SidebarLayout.from_dict(data)
-        except Exception:   # noqa: BLE001 - offline / unauthorized: the file on disk
+            return self.client.get_sidebar_layout()
+        except Exception:   # noqa: BLE001 - offline / unauthorized / old core
             pass
         data = _read_json(self.layout_path)
         return SidebarLayout.from_dict(data) if isinstance(data, dict) else SidebarLayout()
@@ -285,16 +281,12 @@ class WorkspaceStore:
             _write_json(self.layout_path, layout.to_dict())
 
     def save_layout(self, layout: SidebarLayout) -> bool:
-        data = layout.to_dict()
+        """The core writes sidebar-layout.json; offline we write the same file."""
         try:
-            if self.client.save_sidebar_layout(data):   # the core validates and writes sidebar-layout.json
+            if self.client.save_sidebar_layout(layout):
                 return True
-        except Exception:   # noqa: BLE001 - offline, or an older client that wants a SidebarLayout object
-            try:
-                if self.client.save_sidebar_layout(layout):
-                    return True
-            except Exception:   # noqa: BLE001
-                pass
+        except Exception:   # noqa: BLE001 - offline / refused: same file, same format
+            pass
         self._write_layout(layout)
         return True
 

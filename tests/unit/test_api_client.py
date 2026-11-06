@@ -249,8 +249,8 @@ def test_sidebar_layout_operations(client):
     mock_resp.json.return_value = layout
 
     with patch.object(client.session, "get", return_value=mock_resp):
-        res = client.get_sidebar_layout()
-        assert res["schemaVersion"] == 2
+        res = client.get_sidebar_layout()   # one typed definition (the dict duplicate was removed, Sprint 9 item 14)
+        assert res.schema_version == 2 and res.top_level_items == ["WS-1"]
 
     with patch.object(client.session, "put", return_value=mock_resp):
         assert client.save_sidebar_layout(layout) is True

@@ -839,31 +839,28 @@ class MaestriClient:
             return False
 
     def get_sidebar_layout(self) -> SidebarLayout:
-        """Loads sidebar layout (schemaVersion 2) from the server."""
-        try:
-            resp = self.session.get(
-                f"{self.base_url}/api/sidebar-layout",
-                headers=self._headers(),
-                timeout=self.timeout,
-            )
-            data = self._handle_response(resp).json()
-            return SidebarLayout.from_dict(data)
-        except Exception:
-            return SidebarLayout()
+        """sidebar-layout.json (schemaVersion 2) from the core. Raises when the core is unreachable or refuses, so callers
+        can tell "offline" (read the file on disk) from "no groups yet" (an empty layout)."""
+        resp = self.session.get(
+            f"{self.base_url}/api/sidebar-layout",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        data = self._handle_response(resp).json()
+        return SidebarLayout.from_dict(data if isinstance(data, dict) else {})
 
-    def save_sidebar_layout(self, layout: SidebarLayout) -> bool:
-        """Saves sidebar layout to the server."""
-        try:
-            resp = self.session.put(
-                f"{self.base_url}/api/sidebar-layout",
-                json=layout.to_dict(),
-                headers=self._headers({"Content-Type": "application/json"}),
-                timeout=self.timeout,
-            )
-            self._handle_response(resp)
-            return True
-        except Exception:
-            return False
+    def save_sidebar_layout(self, layout: Union[SidebarLayout, Dict[str, Any]]) -> bool:
+        """PUT sidebar-layout.json (the core validates schema and UUIDs). Accepts a SidebarLayout or its dict; raises when
+        the core is unreachable or refuses."""
+        body = layout.to_dict() if isinstance(layout, SidebarLayout) else dict(layout)
+        resp = self.session.put(
+            f"{self.base_url}/api/sidebar-layout",
+            json=body,
+            headers=self._headers({"Content-Type": "application/json"}),
+            timeout=self.timeout,
+        )
+        self._handle_response(resp)
+        return True
 
     def get_workspace(self, workspace_id: Optional[str] = None) -> Optional[WorkspaceDocument]:
         """Fetches a full WorkspaceDocument. Returns None if offline or if the
@@ -1139,6 +1136,62 @@ class MaestriClient:
         )
         data = self._handle_response(resp).json()
         return [Connection.from_dict(item) for item in data]
+
+    def list_connections(self, workspace_id: Optional[str] = None) -> List[Connection]:
+        """Connections of a workspace (the active one by default)."""
+        url = f"{self.base_url}/api/connections"
+        if workspace_id:
+            url += f"?workspace={urllib.parse.quote(workspace_id)}"
+        resp = self.session.get(url, headers=self._headers(), timeout=self.timeout)
+        data = self._handle_response(resp).json()
+        return [Connection.from_dict(item) for item in data] if isinstance(data, list) else []
+
+    # ------------------------------------------------------------------------
+    # Partituras (/api/partituras) - contract K11
+    # ------------------------------------------------------------------------
+
+    def list_partituras(self) -> List[Dict[str, Any]]:
+        """Saved layouts [{id, name, nodes, connections, ...}]; [] when the core has none or no such route."""
+        resp = self.session.get(f"{self.base_url}/api/partituras", headers=self._headers(), timeout=self.timeout)
+        if resp.status_code == 404:
+            return []
+        data = self._handle_response(resp).json()
+        if isinstance(data, dict):
+            data = data.get("partituras", [])
+        return [p for p in data if isinstance(p, dict)] if isinstance(data, list) else []
+
+    def create_partitura(self, name: str, nodes: List[Dict[str, Any]], connections: List[Dict[str, Any]],
+                         roles: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """POST /api/partituras {name, nodes, connections, roles}: nodes in schema v2, frames relative to the bounding box."""
+        body: Dict[str, Any] = {"name": name, "nodes": nodes, "connections": connections}
+        if roles:
+            body["roles"] = roles
+        resp = self.session.post(f"{self.base_url}/api/partituras", json=body,
+                                 headers=self._headers({"Content-Type": "application/json"}), timeout=self.timeout)
+        data = self._handle_response(resp).json()
+        return data if isinstance(data, dict) else {}
+
+    def apply_partitura(self, partitura_id: str, workspace_id: Optional[str] = None,
+                        at: Optional[List[float]] = None) -> Dict[str, Any]:
+        """POST /api/partituras/:id/apply?workspace=: the core creates the nodes/connections (published as K2 events)."""
+        url = f"{self.base_url}/api/partituras/{urllib.parse.quote(partitura_id)}/apply"
+        if workspace_id:
+            url += f"?workspace={urllib.parse.quote(workspace_id)}"
+        body = {"at": list(at)} if at is not None else {}
+        resp = self.session.post(url, json=body, headers=self._headers({"Content-Type": "application/json"}),
+                                 timeout=self.timeout)
+        data = self._handle_response(resp)
+        try:
+            out = data.json()
+        except ValueError:
+            return {}
+        return out if isinstance(out, dict) else {}
+
+    def delete_partitura(self, partitura_id: str) -> bool:
+        resp = self.session.delete(f"{self.base_url}/api/partituras/{urllib.parse.quote(partitura_id)}",
+                                   headers=self._headers(), timeout=self.timeout)
+        self._handle_response(resp)
+        return True
 
     def create_connection(self, a_id: str, b_id: str, kind: str = "terminal", workspace_id: Optional[str] = None) -> Connection:
         """Connects two canvas nodes with 21 interpolated ropePoints."""
@@ -1442,30 +1495,6 @@ class MaestriClient:
             timeout=self.timeout,
         )
         return self._handle_response(resp).json()
-
-    # ------------------------------------------------------------------------
-    # Sidebar Layout (/api/sidebar-layout)
-    # ------------------------------------------------------------------------
-
-    def get_sidebar_layout(self) -> Dict[str, Any]:
-        """Loads sidebar-layout.json schemaVersion: 2."""
-        resp = self.session.get(
-            f"{self.base_url}/api/sidebar-layout",
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        return self._handle_response(resp).json()
-
-    def save_sidebar_layout(self, layout: Dict[str, Any]) -> bool:
-        """Saves sidebar-layout.json after server schema and UUID validation."""
-        resp = self.session.put(
-            f"{self.base_url}/api/sidebar-layout",
-            json=layout,
-            headers=self._headers({"Content-Type": "application/json"}),
-            timeout=self.timeout,
-        )
-        self._handle_response(resp)
-        return True
 
     # ------------------------------------------------------------------------
     # Canvas Nodes (/api/nodes)
