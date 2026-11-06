@@ -8,6 +8,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gtk, Gdk, GLib, Gio
 
+import json
 import os
 import sys
 import threading
