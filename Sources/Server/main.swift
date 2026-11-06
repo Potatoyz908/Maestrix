@@ -16,6 +16,8 @@ func runServer() {
     SkillInjector.shared.installSkillsIfNeeded()
     // K6: connections persisted in every workspace.json are live again (ask/list/check/note) right after a restart
     ConnectionManager.shared.restoreAllWorkspaces()
+    // K3 (+ Nexus timers): portal bridge to the GTK window, scrollback autosave
+    NexusServices.start()
 
     do {
         try InterAgentServer.shared.start()

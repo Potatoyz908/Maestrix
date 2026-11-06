@@ -645,6 +645,8 @@ public final class InterAgentServer {
         if method == "OPTIONS" {
             return Self.buildHTTPResponse(status: 204, body: "")
         }
+        // Nexus routes (portal results, terminal restart/unload, floor hooks, partituras, routine run-now)
+        if let r = await NexusRoutes.handle(method: method, cleanPath: cleanPath, pathParts: pathParts, headerMap: headerMap, body: body, origin: allowedOrigin) { return r }
 
         // 1. POST /cli (omaestri CLI)
         if method == "POST" && cleanPath == "/cli" {
