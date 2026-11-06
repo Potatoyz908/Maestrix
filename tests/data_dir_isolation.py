@@ -96,8 +96,36 @@ def _namespace_proven(home: Path) -> bool:
             and not (REAL_DATA_DIR / probe).exists())
 
 
-def start_isolated_server(home: Path, timeout_s: float = 25.0) -> dict:
-    """Start the core with its data in <home>/.open-maestri; returns {"proc", "port", "token", "home", "data_dir"}.
+class IsolatedServer(dict):
+    """What start_isolated_server returns. Works both ways the tests use it:
+
+        srv = start_isolated_server(tmp)          # dict:   srv["port"], srv["token"], stop_server(srv["proc"])
+        with start_isolated_server(tmp) as srv:   # object: srv.port, srv.token, srv.base_url; stopped on exit
+    """
+
+    def __getattr__(self, name: str):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self['port']}"
+
+    def stop(self) -> None:
+        stop_server(self)
+
+    def __enter__(self) -> "IsolatedServer":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        stop_server(self)   # idempotent: fine when the test already stopped it
+
+
+def start_isolated_server(home: Path, timeout_s: float = 25.0) -> IsolatedServer:
+    """Start the core with its data in <home>/.open-maestri; returns an IsolatedServer (a dict with the keys
+    "proc", "port", "token", "home", "data_dir", also readable as attributes, plus base_url and `with` support).
     Skips the calling test when the binary is missing or isolation cannot be guaranteed."""
     binary = server_binary()
     if binary is None:
@@ -132,13 +160,18 @@ def start_isolated_server(home: Path, timeout_s: float = 25.0) -> dict:
             raise RuntimeError(f"core wrote its auth.token outside {data}")
         # Keep draining the log so a chatty core never blocks on a full pipe.
         threading.Thread(target=lambda: [None for _ in proc.stdout], name="core-log-drain", daemon=True).start()
-        return {"proc": proc, "port": port, "token": token_file.read_text().strip(), "home": home, "data_dir": data}
+        return IsolatedServer(proc=proc, port=port, token=token_file.read_text().strip(), home=home, data_dir=data)
     except BaseException:
         stop_server(proc)
         raise
 
 
-def stop_server(proc: subprocess.Popen) -> None:
+def stop_server(proc) -> None:
+    """Stop the core: accepts the Popen or the IsolatedServer. Idempotent (an already stopped process is left alone)."""
+    if isinstance(proc, dict):
+        proc = proc.get("proc")
+    if proc is None or proc.poll() is not None:
+        return
     proc.terminate()
     try:
         proc.wait(5)
