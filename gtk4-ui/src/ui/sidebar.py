@@ -342,24 +342,25 @@ class SidebarView(Gtk.Box):
         menu_vbox.set_margin_end(6)
 
         # 1. Edit Workspace…
-        btn_edit = self._make_menu_item("✏️  Edit Workspace…", lambda: self._on_edit_workspace(entry, popover))
+        btn_edit = self._make_menu_item("document-edit-symbolic", "Edit Workspace…", lambda: self._on_edit_workspace(entry, popover))
         menu_vbox.append(btn_edit)
 
         # 2. Duplicate Workspace
-        btn_dup = self._make_menu_item("📋  Duplicate Workspace", lambda: self._on_duplicate_workspace(entry, popover))
+        btn_dup = self._make_menu_item("edit-copy-symbolic", "Duplicate Workspace", lambda: self._on_duplicate_workspace(entry, popover))
         menu_vbox.append(btn_dup)
 
         menu_vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
         # 3. Open in File Manager (Finder equivalent)
-        btn_finder = self._make_menu_item("📂  Open in File Manager", lambda: self._on_open_in_file_manager(entry, popover))
+        btn_finder = self._make_menu_item("folder-symbolic", "Open in File Manager", lambda: self._on_open_in_file_manager(entry, popover))
         menu_vbox.append(btn_finder)
 
         menu_vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
         # 4. Pin / Unpin Workspace
-        pin_label = "📌  Unpin Workspace" if entry.is_pinned else "📌  Pin Workspace"
-        btn_pin = self._make_menu_item(pin_label, lambda: self._on_toggle_pin(entry, popover))
+        pin_icon = "view-pin-symbolic" if entry.is_pinned else "view-pin-symbolic"
+        pin_label = "Unpin Workspace" if entry.is_pinned else "Pin Workspace"
+        btn_pin = self._make_menu_item("view-pin-symbolic", pin_label, lambda: self._on_toggle_pin(entry, popover))
         menu_vbox.append(btn_pin)
 
         menu_vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
@@ -367,25 +368,27 @@ class SidebarView(Gtk.Box):
         # 5. Groups (Move to Group / Remove from Group)
         if group_id:
             btn_remove_grp = self._make_menu_item(
-                "📁  Remove from Group",
+                "folder-symbolic",
+                "Remove from Group",
                 lambda: self._on_remove_from_group(entry, group_id, popover)
             )
             menu_vbox.append(btn_remove_grp)
         elif self._sidebar_layout.groups:
             for g in self._sidebar_layout.groups:
                 btn_g = self._make_menu_item(
-                    f"📁  Move to: {g.name}",
+                    "folder-symbolic",
+                    f"Move to: {g.name}",
                     lambda grp_id=g.id: self._on_move_to_group(entry, grp_id, popover)
                 )
                 menu_vbox.append(btn_g)
 
-        btn_new_grp = self._make_menu_item("➕  New Group with Workspace…", lambda: self._on_new_group_with_workspace(entry, popover))
+        btn_new_grp = self._make_menu_item("list-add-symbolic", "New Group with Workspace…", lambda: self._on_new_group_with_workspace(entry, popover))
         menu_vbox.append(btn_new_grp)
 
         menu_vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
         # 6. Delete Workspace (Destructive)
-        btn_delete = self._make_menu_item("🗑  Delete Workspace…", lambda: self._on_delete_workspace(entry, popover), is_danger=True)
+        btn_delete = self._make_menu_item("user-trash-symbolic", "Delete Workspace…", lambda: self._on_delete_workspace(entry, popover), is_danger=True)
         menu_vbox.append(btn_delete)
 
         popover.set_child(menu_vbox)
@@ -409,23 +412,34 @@ class SidebarView(Gtk.Box):
         menu_vbox.set_margin_start(6)
         menu_vbox.set_margin_end(6)
 
-        btn_rename = self._make_menu_item("✏️  Rename Group…", lambda: self._on_rename_group(group, popover))
+        btn_rename = self._make_menu_item("document-edit-symbolic", "Rename Group…", lambda: self._on_rename_group(group, popover))
         menu_vbox.append(btn_rename)
 
         menu_vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
-        btn_del = self._make_menu_item("🗑  Delete Group", lambda: self._on_delete_group(group, popover), is_danger=True)
+        btn_del = self._make_menu_item("user-trash-symbolic", "Delete Group", lambda: self._on_delete_group(group, popover), is_danger=True)
         menu_vbox.append(btn_del)
 
         popover.set_child(menu_vbox)
         popover.popup()
 
-    def _make_menu_item(self, label: str, callback: Callable[[], None], is_danger: bool = False) -> Gtk.Button:
-        btn = Gtk.Button(label=label)
+    def _make_menu_item(self, icon_name: str, label_text: str, callback: Callable[[], None], is_danger: bool = False) -> Gtk.Button:
+        btn = Gtk.Button()
         btn.add_css_class("maestri-menu-item-btn")
         if is_danger:
             btn.add_css_class("danger")
         btn.set_has_frame(False)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        img = Gtk.Image.new_from_icon_name(icon_name)
+        img.set_icon_size(Gtk.IconSize.NORMAL)
+        box.append(img)
+
+        lbl = Gtk.Label(label=label_text, xalign=0.0)
+        lbl.set_hexpand(True)
+        box.append(lbl)
+
+        btn.set_child(box)
         btn.connect("clicked", lambda _b: callback())
         return btn
 

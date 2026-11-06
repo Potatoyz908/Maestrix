@@ -717,8 +717,8 @@ class FloorButton(Gtk.MenuButton):
     TOAST_MS = 4000
 
     def __init__(self, window, controller: FloorsController) -> None:
-        super().__init__(halign=Gtk.Align.END, valign=Gtk.Align.END, margin_end=16, margin_bottom=16,
-                         css_classes=["floor-button"], direction=Gtk.ArrowType.UP)
+        super().__init__(halign=Gtk.Align.END, valign=Gtk.Align.END, margin_end=244, margin_bottom=16,
+                         css_classes=["floor-button", "maestri-bottom-pill"], direction=Gtk.ArrowType.UP)
         _install_css()
         self.window, self.controller = window, controller
         self._toast_timer = 0

@@ -85,6 +85,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.canvas_widget.connect("node-resized", self._on_canvas_frame_changed)
         self.canvas_widget.connect("viewport-changed", lambda _c, x, y, z: bus.emit("viewport-changed", x, y, z))
         self.canvas_widget.connect("delete-requested", self._on_canvas_delete_requested)
+        self.canvas_widget.connect("duplicate-requested", self._on_canvas_duplicate_requested)
         self.canvas_widget.connect("connect-requested", self._on_canvas_connect_requested)
         self.canvas_widget.connect("note-meta-changed", self._on_note_meta_changed)
         self.canvas_widget.connect("portal-meta-changed", self._on_portal_meta_changed)
@@ -378,6 +379,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         return GLib.SOURCE_CONTINUE
 
     def _setup_theme(self):
+        display = Gdk.Display.get_default()
+        if display:
+            theme = Gtk.IconTheme.get_for_display(display)
+            icons_dir = os.path.join(os.path.dirname(__file__), "icons")
+            if os.path.isdir(icons_dir):
+                theme.add_search_path(icons_dir)
         css_provider = Gtk.CssProvider()
         css = """
         window {
@@ -566,33 +573,73 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         .maestri-zoom-label {
             font-size: 13px;
             font-weight: 600;
-            color: #555558;
+            color: #f2f2f5;
             padding: 0 6px;
         }
-        .maestri-context-popover {
-            background-color: #ffffff;
-            border: 1px solid rgba(0, 0, 0, 0.12);
-            border-radius: 10px;
-            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.15);
+        .maestri-bottom-pill {
+            background-color: rgba(30, 30, 32, 0.88);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 18px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+            padding: 2px 8px;
+            color: #f2f2f5;
+        }
+        .floor-button {
+            background-color: rgba(30, 30, 32, 0.88);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 18px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+            padding: 4px 12px;
+            color: #f2f2f5;
+        }
+        .floor-button:hover, .maestri-bottom-pill:hover {
+            background-color: rgba(45, 45, 48, 0.95);
+        }
+        .maestri-context-popover, popover.maestri-context-popover > contents {
+            background-color: rgba(36, 36, 40, 0.96);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 12px;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+            padding: 4px;
+            color: #f2f2f5;
         }
         .maestri-menu-item-btn {
             background: transparent;
             border: none;
             border-radius: 6px;
-            padding: 6px 12px;
+            padding: 6px 10px;
             font-size: 13px;
-            color: #1d1d1f;
+            font-weight: 450;
+            color: #e5e5ea;
         }
         .maestri-menu-item-btn:hover {
-            background-color: #007AFF;
+            background-color: #0A84FF;
             color: #ffffff;
         }
         .maestri-menu-item-btn.danger {
-            color: #FF3B30;
+            color: #FF453A;
         }
         .maestri-menu-item-btn.danger:hover {
-            background-color: #FF3B30;
+            background-color: #FF453A;
             color: #ffffff;
+        }
+        .maestri-menu-icon {
+            opacity: 0.85;
+        }
+        .maestri-menu-chevron {
+            font-size: 14px;
+            opacity: 0.6;
+            margin-left: 8px;
+        }
+        .maestri-menu-check {
+            font-size: 13px;
+            color: #0A84FF;
+            font-weight: bold;
+            margin-right: 2px;
+        }
+        .maestri-node-blurred {
+            filter: blur(5px);
+            opacity: 0.7;
         }
         .maestri-modal-window {
             background-color: #ffffff;
@@ -1214,15 +1261,30 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
     def _on_canvas_right_click(self, gesture, _n_press, x, y):
         cw = self.canvas_widget
-        # Only the empty background: nodes keep their own right-click (text view menus, etc).
-        if not isinstance(cw.target_at(x, y), Background):
-            return
+        target = cw.target_at(x, y)
         gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         self._ctx_point = cw.viewport.to_canvas(Point(x, y))
         rect = Gdk.Rectangle()
         rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
-        self._ctx_popover.set_pointing_to(rect)
-        self._ctx_popover.popup()
+
+        from .context_menus import CanvasContextMenu, NodeContextMenu
+
+        if isinstance(target, Background):
+            pop = CanvasContextMenu(self, self._ctx_point)
+            pop.set_parent(cw)
+            pop.set_pointing_to(rect)
+            pop.connect("closed", lambda p: GLib.idle_add(lambda: (p.unparent(), False)[1]))
+            pop.popup()
+            self._ctx_popover = pop
+        else:
+            node_id = getattr(target, "node_id", None) or getattr(target, "id", None)
+            if node_id:
+                pop = NodeContextMenu(self, str(node_id))
+                pop.set_parent(cw)
+                pop.set_pointing_to(rect)
+                pop.connect("closed", lambda p: GLib.idle_add(lambda: (p.unparent(), False)[1]))
+                pop.popup()
+                self._node_ctx_popover = pop
 
     def _load_payload_into_canvas(self) -> None:
         for node in self.document.payload.nodes:
@@ -1265,6 +1327,36 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             if core_tid:   # deleting the node ends its shell, like closing a local terminal
                 threading.Thread(target=self._delete_core_terminal, args=(core_tid,), daemon=True).start()
 
+    def _on_canvas_duplicate_requested(self, _canvas, mapping: dict):
+        import copy
+        import uuid
+        for src_id, new_frame in mapping.items():
+            src_node = self._find_node(src_id)
+            if src_node is None:
+                continue
+            new_id = str(uuid.uuid4()).upper()
+            content = copy.deepcopy(src_node.content)
+            if hasattr(content, "id"):
+                content.id = str(uuid.uuid4()).upper()
+            if hasattr(content, "terminal_id"):
+                content.terminal_id = str(uuid.uuid4()).upper()
+            if hasattr(content, "name"):
+                content.name = f"{content.name} Copy"
+            new_node = CanvasNode(
+                id=new_id,
+                frame=NodeFrame(x=new_frame.x, y=new_frame.y, width=new_frame.w, height=new_frame.h),
+                node_type=src_node.node_type,
+                content=content,
+                z_index=len(self.document.payload.nodes) + 1,
+            )
+            self.document.payload.nodes.append(new_node)
+            self._add_node_to_canvas(new_node)
+            bus.emit("node-added", new_node)
+        self.canvas_widget.controller.dirty = True
+        self.canvas_widget.queue_draw()
+        if self.sync is not None:
+            self.sync.flush()
+
     def _delete_core_terminal(self, tid: str) -> None:
         try:
             self.client.delete_terminal(tid)
@@ -1296,11 +1388,11 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 conn = self.client.create_connection(a, b, kind=kind, workspace_id=ws_id)
             except Exception:
                 conn = None
-            GLib.idle_add(self._apply_connection_created, cid, conn, target_list, a, b, ws_id)
+            GLib.idle_add(self._apply_connection_created, cid, conn, target_list, a, b, ws_id, kind)
 
         threading.Thread(target=create_worker, daemon=True).start()
 
-    def _apply_connection_created(self, temp_cid: str, conn, target_list, a: str = "", b: str = "", ws_id: str = ""):
+    def _apply_connection_created(self, temp_cid: str, conn, target_list, a: str = "", b: str = "", ws_id: str = "", kind: str = "terminal"):
         cw = self.canvas_widget
         if ws_id and self.document.payload.id != ws_id:
             # Workspace switched while connection was being created; discard
@@ -1316,7 +1408,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             import uuid
             from maestri_core.models.connection import Connection
             local_id = str(uuid.uuid4()).upper()
-            local_conn = Connection(id=local_id, a=a, b=b, kind=kind, side_a=side_a, side_b=side_b)
+            local_conn = Connection(id=local_id, a_id=a, b_id=b, kind=kind)
             if not cw.replace_connection_id(temp_cid, local_conn.id):
                 return GLib.SOURCE_REMOVE
             target_list.append(local_conn)
@@ -1387,12 +1479,14 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         dlg.present()
         return dlg
 
-    def edit_selected_node(self) -> None:
-        """Edits the currently selected node (rename, settings, etc.)."""
-        sel = list(self.canvas_widget.scene.selection)
-        if not sel:
-            return
-        node_id = sel[0]
+    def edit_selected_node(self, target_node_id: str | None = None) -> None:
+        """Edits the node (rename, settings, etc.). Uses target_node_id if given, else selection."""
+        node_id = target_node_id
+        if not node_id:
+            sel = list(self.canvas_widget.scene.selection)
+            if not sel:
+                return
+            node_id = sel[0]
         node = self._find_node(node_id)
         if node is None:
             return

@@ -204,62 +204,118 @@ class CanvasTopToolbar(Gtk.Box):
         dialog.show()
 
 
+class AgentActivityRingsWidget(Gtk.DrawingArea):
+    """Draws the 3 macOS agent activity rings matching uploaded_media_0:
+    - Ring 1 (coral/orange): notched active loop with central core.
+    - Ring 2 (teal/green): circular ring with bright active segment.
+    - Ring 3 (royal blue): concentric circular arc spiral.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_content_width(74)
+        self.set_content_height(26)
+        self.set_draw_func(self._draw_func)
+
+    def _draw_func(self, area, cr, width, height) -> None:
+        cy = height / 2.0
+
+        # Ring 1: Coral / Orange (#E07A5F)
+        cr.save()
+        cr.set_line_width(2.2)
+        cr.set_source_rgba(0.88, 0.48, 0.37, 0.35)
+        cr.arc(15, cy, 7.5, 0, 2 * math.pi)
+        cr.stroke()
+        cr.set_source_rgb(0.92, 0.52, 0.40)
+        cr.arc(15, cy, 7.5, -0.75 * math.pi, 0.85 * math.pi)
+        cr.stroke()
+        cr.arc(15, cy, 1.8, 0, 2 * math.pi)
+        cr.fill()
+        cr.restore()
+
+        # Ring 2: Emerald / Teal (#2A9D8F)
+        cr.save()
+        cr.set_line_width(2.2)
+        cr.set_source_rgba(0.16, 0.61, 0.56, 0.35)
+        cr.arc(37, cy, 7.5, 0, 2 * math.pi)
+        cr.stroke()
+        cr.set_source_rgb(0.25, 0.88, 0.68)
+        cr.arc(37, cy, 7.5, -0.6 * math.pi, 0.15 * math.pi)
+        cr.stroke()
+        cr.restore()
+
+        # Ring 3: Royal Blue (#3A86FF)
+        cr.save()
+        cr.set_line_width(2.0)
+        cr.set_source_rgba(0.23, 0.53, 1.0, 0.35)
+        cr.arc(59, cy, 7.5, 0, 2 * math.pi)
+        cr.stroke()
+        cr.set_source_rgb(0.28, 0.58, 1.0)
+        cr.arc(59, cy, 7.5, -0.8 * math.pi, 0.45 * math.pi)
+        cr.stroke()
+        cr.arc(59, cy, 4.2, -0.2 * math.pi, 1.25 * math.pi)
+        cr.stroke()
+        cr.restore()
+
+
 class CanvasBottomRightControls(Gtk.Box):
-    """Floating bottom-right controls matching macOS Maestri (Floors, Minimap, Zoom)."""
+    """Floating bottom-right controls matching macOS Maestri (Floors, Agent Rings, Minimap, Zoom).
+    Separated into 4 distinct dark-glass capsules (pills) side-by-side (uploaded_media_0).
+    """
 
     def __init__(self, window) -> None:
-        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.window = window
         self.cw = window.canvas_widget
         self.set_halign(Gtk.Align.END)
         self.set_valign(Gtk.Align.END)
-        self.set_margin_end(20)
-        self.set_margin_bottom(20)
+        self.set_margin_end(16)
+        self.set_margin_bottom(16)
 
-        pill = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        pill.add_css_class("maestri-floating-pill")
-        pill.add_css_class("maestri-zoom-controls")
-
-        # 1. Floor Button (reuses window.floors.button or attaches its popover)
+        # Retained compatibility button for floors (delegates to window.floor_button)
         self.btn_floors = Gtk.Button(label="🥞")
-        self.btn_floors.add_css_class("maestri-island-btn")
-        self.btn_floors.set_tooltip_text("Floors & Worktrees")
         self.btn_floors.connect("clicked", self._on_floors_clicked)
-        pill.append(self.btn_floors)
 
-        # 2. Minimap Toggle Button
-        self.btn_minimap = Gtk.Button(label="🗺️")
+        # Pill 2: Agent Activity Rings (Claude Code, Codex, Gemini CLI)
+        self.pill_agents = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self.pill_agents.add_css_class("maestri-bottom-pill")
+        self.pill_agents.set_tooltip_text("Active Canvas Agents (Claude Code, Codex, Gemini CLI)")
+        self.rings_widget = AgentActivityRingsWidget()
+        self.pill_agents.append(self.rings_widget)
+        self.append(self.pill_agents)
+
+        # Pill 3: Minimap Toggle Button Capsule
+        self.pill_minimap = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.pill_minimap.add_css_class("maestri-bottom-pill")
+        self.btn_minimap = Gtk.Button(label="🗺")
         self.btn_minimap.add_css_class("maestri-island-btn")
-        self.btn_minimap.set_tooltip_text("Toggle Mini Map")
+        self.btn_minimap.set_tooltip_text("Toggle Mini Map / Reset View")
         self.btn_minimap.connect("clicked", self._on_minimap_clicked)
-        pill.append(self.btn_minimap)
+        self.pill_minimap.append(self.btn_minimap)
+        self.append(self.pill_minimap)
 
-        # Separator
-        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        sep.set_margin_start(2)
-        sep.set_margin_end(2)
-        pill.append(sep)
+        # Pill 4: Zoom Controls Capsule [ —  XX%  + ]
+        self.pill_zoom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self.pill_zoom.add_css_class("maestri-bottom-pill")
+        self.pill_zoom.add_css_class("maestri-zoom-controls")
 
-        # 3. Zoom Out
         btn_zoom_out = Gtk.Button(label="−")
         btn_zoom_out.add_css_class("maestri-island-btn")
         btn_zoom_out.set_tooltip_text("Zoom Out (Ctrl+-)")
         btn_zoom_out.connect("clicked", lambda _b: self._zoom_step(0.8))
-        pill.append(btn_zoom_out)
+        self.pill_zoom.append(btn_zoom_out)
 
-        # 4. Zoom Percentage Label
         self.zoom_lbl = Gtk.Label(label="100%")
         self.zoom_lbl.add_css_class("maestri-zoom-label")
-        pill.append(self.zoom_lbl)
+        self.pill_zoom.append(self.zoom_lbl)
 
-        # 5. Zoom In
         btn_zoom_in = Gtk.Button(label="+")
         btn_zoom_in.add_css_class("maestri-island-btn")
         btn_zoom_in.set_tooltip_text("Zoom In (Ctrl++)")
         btn_zoom_in.connect("clicked", lambda _b: self._zoom_step(1.25))
-        pill.append(btn_zoom_in)
+        self.pill_zoom.append(btn_zoom_in)
 
-        self.append(pill)
+        self.append(self.pill_zoom)
 
         # Track viewport zoom changes
         self.cw.connect("viewport-changed", self._on_viewport_changed)

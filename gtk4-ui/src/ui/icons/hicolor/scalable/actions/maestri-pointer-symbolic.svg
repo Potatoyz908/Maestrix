@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="16"
+   height="16"
+   viewBox="0 0 16 16"
+   version="1.1"
+  
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  
+  <g
+     fill="none"
+     stroke="#2e3436"
+     stroke-width="1.4"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+    >
+    <path
+       style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:#2e3436;stroke:none;stroke-linecap:butt;stroke-linejoin:miter;enable-background:accumulate;stop-color:#000000;stop-opacity:1;opacity:1"
+       d="M 3.1972656,1.6191406 A 0.70006999,0.70006999 0 0 0 2.8007813,2.25 v 10.5 a 0.70006999,0.70006999 0 0 0 1.1816406,0.507813 l 2.1992187,-2.085938 1.4863281,3.128906 a 0.70006999,0.70006999 0 0 0 0.9160157,0.339844 l 1.8007816,-0.800781 a 0.70006999,0.70006999 0 0 0 0.347656,-0.939453 L 9.3300781,9.9433594 12.037109,9.7988281 A 0.70006999,0.70006999 0 0 0 12.439453,8.5546875 L 3.9394531,1.7050781 A 0.70006999,0.70006999 0 0 0 3.1972656,1.6191406 Z m 1.0019531,2.09375 5.9394533,4.7851563 -1.9257814,0.1035156 A 0.70006999,0.70006999 0 0 0 7.6171875,9.5996094 L 9.1601563,12.851563 8.6386719,13.083984 7.0332031,9.6992188 A 0.70006999,0.70006999 0 0 0 5.9179687,9.4921875 l -1.71875,1.6289065 z"
+       />
+  </g>
+</svg>

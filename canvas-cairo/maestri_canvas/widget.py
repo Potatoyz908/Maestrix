@@ -274,37 +274,45 @@ class NodeFrame(Gtk.Overlay):
         if attach is not None:
             attach(self)   # lets a content widget style the card and retag its header widgets
 
+    def start_inline_rename(self) -> None:
+        header = self.title.get_parent()
+        if header is None or not isinstance(header, Gtk.Box):
+            return
+        entry = Gtk.Entry(text=self.title.get_label())
+        entry.set_hexpand(True)
+        entry.add_css_class("maestri-title-entry")
+        setattr(entry, _ROLE, ("content", self.node_id))
+
+        try:
+            header.remove(self.title)
+            header.prepend(entry)
+            entry.grab_focus()
+        except Exception:
+            return
+
+        def finish_rename(_w):
+            new_val = entry.get_text().strip()
+            if new_val:
+                self.title.set_label(new_val)
+                canvas = self.get_ancestor(CanvasWidget)
+                if canvas is not None:
+                    node_item = canvas.scene.get(self.node_id)
+                    if node_item:
+                        node_item.title = new_val
+                    canvas.controller.dirty = True
+                    canvas.emit("node-title-changed", self.node_id, new_val)
+            if entry.get_parent() == header:
+                header.remove(entry)
+                header.prepend(self.title)
+
+        entry.connect("activate", finish_rename)
+        focus_c = Gtk.EventControllerFocus()
+        focus_c.connect("leave", lambda _c: finish_rename(entry))
+        entry.add_controller(focus_c)
+
     def _on_title_clicked(self, item: NodeItem, header: Gtk.Box, n_press: int) -> None:
         if n_press == 2:
-            entry = Gtk.Entry(text=self.title.get_label())
-            entry.set_hexpand(True)
-            entry.add_css_class("maestri-title-entry")
-            setattr(entry, _ROLE, ("content", item.id))
-
-            try:
-                header.remove(self.title)
-                header.prepend(entry)
-                entry.grab_focus()
-            except Exception:
-                return
-
-            def finish_rename(_w):
-                new_val = entry.get_text().strip()
-                if new_val:
-                    self.title.set_label(new_val)
-                    item.title = new_val
-                    canvas = self.get_ancestor(CanvasWidget)
-                    if canvas is not None:
-                        canvas.controller.dirty = True
-                        canvas.emit("node-title-changed", item.id, new_val)
-                if entry.get_parent() == header:
-                    header.remove(entry)
-                    header.prepend(self.title)
-
-            entry.connect("activate", finish_rename)
-            focus_c = Gtk.EventControllerFocus()
-            focus_c.connect("leave", lambda _c: finish_rename(entry))
-            entry.add_controller(focus_c)
+            self.start_inline_rename()
 
     def set_badge(self, key: str, text: str | None, tooltip: str = "", css: tuple[str, ...] = ()) -> None:
         """Show `text` as the header badge `key`; None removes it. `css` replaces the badge's extra style classes."""

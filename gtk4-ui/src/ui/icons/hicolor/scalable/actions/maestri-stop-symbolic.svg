@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="16"
+   height="16"
+   viewBox="0 0 16 16"
+   version="1.1"
+  
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  
+  <g
+     fill="none"
+     stroke="#2e3436"
+     stroke-width="1.4"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+    >
+    <path
+       style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:#2e3436;stroke:none;stroke-linecap:butt;stroke-linejoin:miter;enable-background:accumulate;stop-color:#000000;stop-opacity:1;opacity:1"
+       d="M 5,2.8007813 C 3.7933081,2.8007813 2.8007812,3.7933081 2.8007813,5 v 6 c 0,1.206692 0.9925268,2.199219 2.1992187,2.199219 h 6 c 1.206692,0 2.199219,-0.992527 2.199219,-2.199219 V 5 C 13.199219,3.7933081 12.206692,2.8007812 11,2.8007813 Z m 0,1.3984374 h 6 c 0.455308,0 0.800781,0.3454732 0.800781,0.8007813 v 6 c 0,0.455308 -0.345473,0.800781 -0.800781,0.800781 H 5 C 4.5446919,11.800781 4.1992187,11.455308 4.1992187,11 V 5 C 4.1992187,4.5446919 4.5446919,4.1992187 5,4.1992187 Z"
+       />
+  </g>
+</svg>
