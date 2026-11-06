@@ -3,6 +3,9 @@ import Foundation
 import OSLog
 #endif
 
+/// `omaestri list`: the caller's connected agents (with role), portals (name + URL) and notes, including the
+/// note↔note chain indented under its parent. Everything is read from the caller's workspace.json + runtime
+/// connections; it never touches the portal service (absent on Linux without a GUI bridge).
 final class ListHandler {
     static let shared = ListHandler()
     private let logger = Logger.make(category: "ListHandler")
@@ -10,79 +13,44 @@ final class ListHandler {
 
     @MainActor
     func handleAsync(args: [String], terminalId: UUID?) async -> String {
-        guard let tid = terminalId else { return "error: missing terminal ID" }
+        guard let caller = terminalId else { return "error: missing terminal ID" }
         let cm = ConnectionManager.shared
-        let tm = PlatformHooks.terminals
+        let me = cm.canonical(caller)
+        let graph = AgentDirectory.graph(of: me)
 
         var sections: [String] = []
-
-        // "You:" 段：当前终端自身名称
-        if let selfSession = tm.terminals[tid] {
-            let selfName = selfSession.agentName ?? selfSession.displayName ?? (selfSession.command.isEmpty ? "Shell" : selfSession.command)
-            sections.append("You:\n  - name: \"\(selfName)\"")
+        let self_ = AgentDirectory.agent(me, graph: graph)
+        if self_.name != "unknown" {
+            sections.append("You:\n  - name: \"\(self_.name)\"" + (self_.role.map { " - role: \($0)" } ?? ""))
         }
 
-        // 按类型分组连接（对标 Maestri 输出格式）
-        var agents:  [String] = []
-        var notes:   [String] = []
+        let agents = AgentDirectory.connectedAgents(of: me).map { a in
+            "  - name: \"\(a.name)\"" + (a.role.map { " - role: \($0)" } ?? "")
+        }
         var portals: [String] = []
-
-        for conn in cm.connections(for: tid) {
-            let otherId = conn.nodeIdA == tid ? conn.nodeIdB : conn.nodeIdA
-            switch conn.type {
-            case .terminalToTerminal:
-                if let session = tm.terminals[otherId] {
-                    let name = session.agentName ?? session.displayName ?? (session.command.isEmpty ? "Shell" : session.command)
-                    agents.append("  - name: \"\(name)\"")
-                } else {
-                    agents.append("  - name: \"unknown\"")
-                }
-            case .terminalToNote:
-                let noteName = resolveNoteName(nodeId: otherId)
-                notes.append("  - name: \"\(noteName)\"")
-            case .terminalToPortal:
-                let (portalName, portalURL) = resolvePortalInfo(nodeId: otherId)
-                if let url = portalURL {
-                    portals.append("  - name: \"\(portalName)\" - url: \(url)")
-                } else {
-                    portals.append("  - name: \"\(portalName)\"")
-                }
-            default:
-                break
+        for c in cm.connections(for: me) where c.type == .terminalToPortal {
+            let pid = c.nodeIdA == me ? c.nodeIdB : c.nodeIdA
+            if case .portal(let p)? = graph?.node(pid)?.content {
+                let name = p.name.isEmpty ? "Portal" : p.name
+                portals.append("  - name: \"\(name)\"" + (p.currentURL.isEmpty ? "" : " - url: \(p.currentURL)"))
+            } else {
+                portals.append("  - name: \"Portal\"")
             }
+        }
+        let notes = (graph?.notes(reachableFrom: me) ?? []).map { n in
+            String(repeating: "  ", count: n.depth + 1) + "- name: \"\(n.name)\"" + (n.node.isLocked ? " - locked: true" : "")
         }
 
         if agents.isEmpty && notes.isEmpty && portals.isEmpty {
             return sections.isEmpty ? "No connections." : sections.joined(separator: "\n\n") + "\n\nNo connections."
         }
-
-        if !agents.isEmpty {
-            sections.append("Connected agents:\n" + agents.joined(separator: "\n"))
-        }
+        if !agents.isEmpty { sections.append("Connected agents:\n" + agents.joined(separator: "\n")) }
         if !portals.isEmpty {
             sections.append("Connected portals (use `omaestri portal snapshot`):\n" + portals.joined(separator: "\n"))
         }
         if !notes.isEmpty {
             sections.append("Connected notes (use `omaestri note read/write/edit`):\n" + notes.joined(separator: "\n"))
         }
-
         return sections.joined(separator: "\n\n")
     }
-
-    // MARK: - 名称解析
-
-    @MainActor
-    private func resolveNoteName(nodeId: UUID) -> String {
-        NoteRegistry.shared.name(forNodeId: nodeId) ?? "Note"
-    }
-
-    @MainActor
-    private func resolvePortalInfo(nodeId: UUID) -> (name: String, url: String?) {
-        if let info = PlatformHooks.portals.portalInfo(for: nodeId) {
-            let name = info.title ?? "Portal"
-            return (name.isEmpty ? "Portal" : name, info.url)
-        }
-        return ("Portal", nil)
-    }
-
 }
