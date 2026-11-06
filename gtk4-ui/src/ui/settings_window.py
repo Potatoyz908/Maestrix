@@ -1,5 +1,5 @@
 """
-SettingsWindow: preferences dialog (General / Terminal / Shortcuts).
+SettingsWindow: preferences dialog (General / Terminal / Agents / Shortcuts - macOS SettingsWindow.swift order).
 Edits are applied and persisted immediately (preferences.json), then `on_changed(prefs)` is called.
 """
 
@@ -18,14 +18,45 @@ LANGUAGE_LABELS = {"en": "English", "zh-Hans": "简体中文"}
 BACKGROUND_LABELS = {"dotGrid": "Dot grid", "solid": "Solid", "transparent": "Transparent"}
 IDE_LABELS = {"cursor": "Cursor", "vscode": "VS Code", "xcode": "Xcode"}
 
-# (label, accelerator) — display only; the real bindings live in OpenMaestriWindow.
+# (group, [(name, keys)]) - display only, macOS ShortcutsSettingsView.swift groups/texts, Linux keys. Only bindings that exist:
+# window.py _setup_shortcuts, interaction.py key(), terminal_features.py (Ctrl+Shift+C/V/A/F).
 SHORTCUTS = (
-    ("New terminal", "Ctrl+N"),
-    ("Save workspace", "Ctrl+S"),
-    ("Preferences", "Ctrl+,"),
-    ("Reset zoom", "Ctrl+0"),
-    ("Toggle sidebar", "Ctrl+B"),
-    ("Quit", "Ctrl+Q"),
+    ("Workspace Navigation", (
+        ("Next Workspace", "Ctrl+↓"),
+        ("Previous Workspace", "Ctrl+↑"),
+        ("New Workspace", "Ctrl+Shift+N"),
+    )),
+    ("Element Navigation", (
+        ("Center Selected Node", "\\"),
+        ("Start Connection", "L"),
+        ("Delete Selected Node", "Ctrl+W / Delete"),
+        ("Jump to Terminal (Ctrl+number)", "Ctrl+1-9"),
+    )),
+    ("Canvas", (
+        ("Select", "V"),
+        ("Terminal", "T"),
+        ("Browser", "P"),
+        ("Zoom In", "Ctrl+="),
+        ("Zoom Out", "Ctrl+-"),
+        ("Reset Zoom", "Ctrl+0"),
+        ("Zoom Scroll Modifier", "Ctrl"),
+        ("Snap to Alignment Guides", "Ctrl+;"),
+        ("Copy / Paste Element", "Ctrl+C / Ctrl+V"),
+    )),
+    ("Terminal", (
+        ("Copy", "Ctrl+Shift+C"),
+        ("Paste", "Ctrl+Shift+V"),
+        ("Select All", "Ctrl+Shift+A"),
+        ("Find", "Ctrl+Shift+F"),
+    )),
+    ("App", (
+        ("New Terminal", "Ctrl+N"),
+        ("Save", "Ctrl+S"),
+        ("Open in Editor", "Ctrl+Shift+E"),
+        ("Toggle Sidebar", "Ctrl+B"),
+        ("Open Settings", "Ctrl+,"),
+        ("Quit", "Ctrl+Q"),
+    )),
 )
 
 
@@ -40,10 +71,15 @@ class SettingsWindow(Gtk.Window):
         self._on_changed = on_changed
         self._loading = True
 
+        self.set_default_size(560, 520)   # SettingsWindow.swift frame
         notebook = Gtk.Notebook()
-        notebook.append_page(self._build_general(), Gtk.Label(label="General"))
-        notebook.append_page(self._build_terminal(), Gtk.Label(label="Terminal"))
-        notebook.append_page(self._build_shortcuts(), Gtk.Label(label="Shortcuts"))
+        self.notebook = notebook
+        self.pages: dict[str, Gtk.Widget] = {}
+        for key, title, build in (("general", "General", self._build_general), ("terminal", "Terminal", self._build_terminal),
+                                  ("agents", "Agents", self._build_agents), ("shortcuts", "Shortcuts", self._build_shortcuts)):
+            page = build()
+            self.pages[key] = page
+            notebook.append_page(page, Gtk.Label(label=title))
         self.set_child(notebook)
         self._loading = False
 
@@ -123,11 +159,34 @@ class SettingsWindow(Gtk.Window):
         self._row(g, 4, "Use Alt as Meta key", meta)
         return g
 
+    def show_tab(self, key: str) -> None:
+        page = self.pages.get(key)
+        if page is not None:
+            self.notebook.set_current_page(self.notebook.page_num(page))
+
     def _build_shortcuts(self) -> Gtk.Widget:
         g = self._page()
-        for i, (name, accel) in enumerate(SHORTCUTS):
-            self._row(g, i, name, Gtk.Label(label=accel, css_classes=["dim-label"]))
-        return g
+        row = 0
+        for group, items in SHORTCUTS:
+            head = Gtk.Label(label=group, xalign=0, margin_top=8 if row else 0)
+            head.add_css_class("heading")
+            g.attach(head, 0, row, 2, 1)
+            row += 1
+            for name, accel in items:
+                self._row(g, row, name, Gtk.Label(label=accel, css_classes=["dim-label", "monospace"]))
+                row += 1
+        sc = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+        sc.set_child(g)
+        return sc
+
+    def _build_agents(self) -> Gtk.Widget:
+        from .agents_settings import AgentsPage
+        self.agents_page = AgentsPage(self.prefs, self._commit_extra)
+        return self.agents_page
+
+    def _commit_extra(self) -> None:
+        """Agents page changed prefs._extra (rolePresets / agentPresets): persist + notify like any other setting."""
+        self._commit()
 
     def _set(self, attr: str, value) -> None:
         if getattr(self.prefs, attr) == value:
