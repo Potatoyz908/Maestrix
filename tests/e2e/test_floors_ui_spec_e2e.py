@@ -4,6 +4,7 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,7 +26,8 @@ sys.path.insert(0, str(ROOT_DIR))
 from maestri_canvas.demo import screenshot  # noqa: E402
 from maestri_core.client.api import MaestriAPIError, MaestriClient  # noqa: E402
 from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload  # noqa: E402
-from ui.floors import DeleteFloorDialog, FloorButton, LandFloorDialog, NewFloorDialog  # noqa: E402
+from ui.floors import (DeleteFloorDialog, FloorButton, HooksConfigDialog, LandFloorDialog,  # noqa: E402
+                       NewFloorDialog, RenameFloorDialog)
 from ui.window import OpenMaestriWindow  # noqa: E402
 
 FLOOR_ID = "AAAAAAAA-0000-0000-0000-000000000001"
@@ -110,6 +112,22 @@ class FakeFloorsCore(MaestriClient):
             self.floors = [f for f in self.floors if f["id"] != floor_id]
         return True
 
+    def patch_floor(self, floor_id, name=None, hooks=None, workspace_id=None):
+        self._log("patch", floor_id, name, hooks)
+        with self.lock:
+            for f in self.floors:
+                if f["id"] == floor_id:
+                    if name is not None:
+                        f["name"] = name
+                    if hooks is not None:
+                        f["hooks"] = dict(hooks)
+                    return dict(f)
+        raise MaestriAPIError("HTTP 404", status_code=404, response_body="error: floor not found")
+
+    def run_floor_hooks(self, floor_id, phase="run", hook_id=None, workspace_id=None):
+        self._log("run_hooks", floor_id, phase, hook_id)
+        return {"status": "ok", "phase": phase, "hookId": hook_id}
+
     def land_preview(self, floor_id, target=None, workspace_id=None):
         self._log("preview", target)
         target = target or "main"
@@ -142,9 +160,12 @@ class FakeFloorsCore(MaestriClient):
         return {"status": "ok", "commit": "0123456789abcdef", "target": target}
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def app():
-    a = Gtk.Application(application_id="org.openmaestri.e2e.floors", flags=Gio.ApplicationFlags.NON_UNIQUE)
+    a = Gtk.Application(
+        application_id=f"org.openmaestri.e2e.floors.t{uuid.uuid4().hex[:8]}",
+        flags=Gio.ApplicationFlags.NON_UNIQUE,
+    )
     a.register(None)
     yield a
 
@@ -162,6 +183,11 @@ def win(app, tmp_path, monkeypatch):
     assert w.wait_loaded()
     assert pump_until(lambda: len(w.floors.floors) == 1 and FLOOR_ID in w.floors.statuses)
     yield w, core
+    try:
+        if getattr(w, "floor_button", None):
+            w.floor_button._cleanup()
+    except Exception:
+        pass
     w.close()
     pump_until(lambda: False, 0.05)
 
@@ -229,6 +255,7 @@ class TestFloorsUI:
         dlg.submit()
         assert pump_until(lambda: len(w.floors.floors) == 2)
         assert ("create", "Fix Signup Flow", "floor/signup", "dev", False) in core.calls
+        assert pump_until(lambda: not dlg.get_visible())
 
     def test_new_floor_existing_branch_mode(self, win):
         w, core = win
@@ -242,6 +269,7 @@ class TestFloorsUI:
         dlg.submit()
         assert pump_until(lambda: any(c[0] == "create" for c in core.calls))
         assert ("create", "Review", "feature/review", None, True) in core.calls
+        assert pump_until(lambda: not dlg.get_visible())
 
     def test_land_dialog_preview_reasons_and_merge(self, win):
         w, core = win
@@ -294,6 +322,7 @@ class TestFloorsUI:
         dlg.submit()
         assert pump_until(lambda: ("land", FLOOR_ID, "dev") in core.calls)
         assert pump_until(lambda: w.floor_button.status.get_label() == "Floor landed onto dev")
+        assert pump_until(lambda: not dlg.get_visible())
 
     def test_delete_dialog_three_buttons_keep_vs_delete_branch_and_back_to_ground(self, win):
         w, core = win
@@ -332,9 +361,66 @@ class TestFloorsUI:
         w.floors.switch_to(floor2["id"])
         assert w.floors.active_floor_id == floor2["id"] and w.floor_button.get_label() == floor2["name"]
         dlg2 = w.floor_button.open_delete(floor2)
+        assert dlg2.warning_icon.get_icon_name() == "maestri-warning-symbolic"
+        assert "⚠" not in (dlg2.alert.get_detail() or "")
         dlg2.choose(DeleteFloorDialog.DELETE_BRANCH)
         assert pump_until(lambda: w.floors.floors == [])
         assert ("delete", floor2["id"], True) in core.calls
         assert w.floor_button.status.get_label() == f"Floor “{floor2['name']}” and its branch deleted"
         assert w.floors.active_floor_id is None and w.floor_button.get_label() == "Ground"
         assert w.document.payload.floors == []
+
+    def test_changed_files_rename_and_hooks_config_and_quick_run(self, win):
+        w, core = win
+        btn = w.floor_button
+        rows = _rows(btn)
+        floor_row = rows[1]
+
+        # 1. Changed files list (F9) rendered from /api/floors/:id/status `files`
+        assert floor_row.files_box is not None and floor_row.files_box.get_visible()
+        assert floor_row.changed_files == [("M", "a")]
+        assert floor_row.file_labels == ["M a"]
+
+        # 2. Rename floor via row context menu -> RenameFloorDialog -> PATCH /api/floors/:id (F13)
+        assert hasattr(floor_row, "rename_item")
+        rdlg = btn.open_rename(w.floors.floors[0])
+        assert isinstance(rdlg, RenameFloorDialog)
+        assert rdlg.name_entry.get_text() == "Fix login"
+        rdlg.name_entry.set_text("Auth Hotfix")
+        rdlg.submit()
+        assert pump_until(lambda: w.floors.floors[0]["name"] == "Auth Hotfix")
+        assert ("patch", FLOOR_ID, "Auth Hotfix", None) in core.calls
+        assert _rows(btn)[1].title_label.get_label() == "Auth Hotfix"
+
+        # 3. Configure Hooks… (Setup/Run/Teardown, multiple commands, Auto-run, Play per hook, Run All, Save) (F14, F16, K12)
+        hdlg = btn.open_hooks(w.floors.floors[0])
+        assert isinstance(hdlg, HooksConfigDialog)
+        e_setup = hdlg.add_command("setup", "npm ci")
+        e_run1 = hdlg.add_command("run", "npm test")
+        e_run2 = hdlg.add_command("run", "npm run lint")
+        e_td = hdlg.add_command("teardown", "rm -rf .cache")
+        hdlg.auto_run_check.set_active(True)
+        assert e_setup.get_text() == "npm ci" and e_run1.get_text() == "npm test" and e_run2.get_text() == "npm run lint" and e_td.get_text() == "rm -rf .cache"
+
+        # Play single hook command inside dialog
+        hdlg.command_rows["run"][1].play_btn.emit("clicked")
+        assert pump_until(lambda: ("run_hooks", FLOOR_ID, "run", 1) in core.calls)
+
+        # Save hooks -> PATCH /api/floors/:id
+        expected_hooks = {
+            "setup": ["npm ci"],
+            "run": ["npm test", "npm run lint"],
+            "teardown": ["rm -rf .cache"],
+            "autoRunSetup": True,
+        }
+        hdlg.submit()
+        assert pump_until(lambda: ("patch", FLOOR_ID, None, expected_hooks) in core.calls)
+        assert pump_until(lambda: btn.quick_hooks_button.get_visible() and len(btn.quick_item_rows) == 4)
+
+        # 4. Quick access bolt icon (⚡): Play individual hook and Run All -> POST /api/floors/:id/hooks/run
+        btn.quick_item_rows[0].play_btn.emit("clicked")
+        assert pump_until(lambda: ("run_hooks", FLOOR_ID, "setup", 0) in core.calls)
+
+        core.calls.clear()
+        btn.quick_run_all_btn.emit("clicked")
+        assert pump_until(lambda: ("run_hooks", FLOOR_ID, "setup", None) in core.calls and ("run_hooks", FLOOR_ID, "run", None) in core.calls and ("run_hooks", FLOOR_ID, "teardown", None) in core.calls)

@@ -54,7 +54,7 @@ from ui.floors import (  # noqa: E402
 )
 from ui.window import OpenMaestriWindow  # noqa: E402
 
-from tests.data_dir_isolation import start_isolated_server  # noqa: E402
+from tests.data_dir_isolation import start_isolated_server, stop_server  # noqa: E402
 
 
 def pump_gtk(ms: int = 120) -> None:
@@ -81,8 +81,9 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("OPEN_MAESTRI_DATA_DIR", str(data_dir))
     ws_workdir = tmp_path / "sentinela-workdir"
     ws_workdir.mkdir(parents=True, exist_ok=True)
-    with start_isolated_server(data_dir) as srv:
-        client = MaestriClient(base_url=srv.base_url, token=srv.token)
+    srv = start_isolated_server(data_dir)
+    try:
+        client = MaestriClient(host="127.0.0.1", port=srv["port"], auth_token=srv["token"])
         doc = client.get_workspace()
         assert doc is not None and doc.payload is not None
         doc.payload.working_directory = str(ws_workdir)
@@ -90,7 +91,7 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         client.save_workspace(doc)
 
         app = Gtk.Application(
-            application_id=f"com.openmaestri.sentinela.s9.{uuid.uuid4().hex[:8]}",
+            application_id=f"com.openmaestri.sentinela.t{uuid.uuid4().hex}",
             flags=Gio.ApplicationFlags.NON_UNIQUE,
         )
         app.register(None)
@@ -103,6 +104,8 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         finally:
             win.close()
             pump_gtk(80)
+    finally:
+        stop_server(srv["proc"])
 
 
 # ============================================================================

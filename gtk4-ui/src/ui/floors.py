@@ -53,6 +53,16 @@ CSS = """
 .floor-ok { color: #23d18b; }
 .floor-conflict { color: #f14c4c; font-family: monospace; }
 .floor-plane { opacity: 0.85; }
+.floor-files-box { margin-top: 2px; }
+.floor-file-row { padding: 1px 4px; border-radius: 4px; }
+.floor-file-status { font-family: monospace; font-size: 10px; font-weight: 600; min-width: 14px; color: #e5c07b; }
+.floor-file-path { font-family: monospace; font-size: 11px; opacity: 0.8; }
+.floor-hook-entry { font-family: monospace; }
+.floor-hook-btn { min-width: 24px; min-height: 24px; padding: 0; border-radius: 6px; opacity: 0.8; }
+.floor-hook-btn:hover { opacity: 1; background-color: alpha(#3b82f6, 0.18); }
+.floor-hook-section-title { font-weight: 600; font-size: 13px; }
+.floor-hook-section-sub { font-size: 11px; opacity: 0.65; }
+.floor-hooks-button { padding: 2px 6px; border-radius: 6px; }
 """
 _css_installed = False
 
@@ -96,6 +106,42 @@ def badge_text(status: Optional[Dict[str, Any]]) -> str:
         return ""
     ins, dels = int(status.get("insertions") or 0), int(status.get("deletions") or 0)
     return f"+{ins} −{dels}" if ins or dels else ""
+
+
+def format_changed_files(status: Optional[Dict[str, Any]]) -> List[tuple[str, str]]:
+    """Normalized (status_code, path) pairs from `/api/floors/:id/status` `files`."""
+    if not status:
+        return []
+    out: List[tuple[str, str]] = []
+    for item in status.get("files") or []:
+        if isinstance(item, dict):
+            code = str(item.get("status") or "M").strip() or "M"
+            path = str(item.get("path") or "").strip()
+        else:
+            parts = str(item).strip().split(None, 1)
+            code, path = (parts[0], parts[1]) if len(parts) == 2 and len(parts[0]) <= 2 else ("M", str(item).strip())
+        if path:
+            out.append((code, path))
+    return out
+
+
+def normalize_hooks(hooks: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Canonical FloorHooks dict: {setup: [str], run: [str], teardown: [str], autoRunSetup: bool}."""
+    h = hooks if isinstance(hooks, dict) else {}
+    return {
+        "setup": [str(c) for c in (h.get("setup") or [])],
+        "run": [str(c) for c in (h.get("run") or [])],
+        "teardown": [str(c) for c in (h.get("teardown") or [])],
+        "autoRunSetup": bool(h.get("autoRunSetup", False)),
+    }
+
+
+def has_configured_hooks(floor: Optional[Floor]) -> bool:
+    """True when any phase (setup, run, teardown) of `floor` has at least one non-empty command."""
+    if not floor:
+        return False
+    h = normalize_hooks(floor.get("hooks"))
+    return any(cmd.strip() for phase in ("setup", "run", "teardown") for cmd in h[phase])
 
 
 def describe_preview(p: Dict[str, Any]) -> str:
@@ -385,6 +431,116 @@ class FloorsController:
 
         self.run(lambda: self.client.land_floor(floor["id"], target, workspace_id=ws), ok, lambda exc: failed(error_text(exc)))
 
+    def rename(self, floor: Floor, name: str,
+               done: Optional[Callable[[Floor], None]] = None,
+               failed: Optional[Callable[[str], None]] = None) -> None:
+        ws = self.workspace_id
+        new_name = name.strip()
+
+        def ok(updated: Floor) -> None:
+            res = dict(updated) if isinstance(updated, dict) else {**floor, "name": new_name}
+            floor["name"] = res.get("name", new_name)
+            self._status(f"Floor renamed to “{floor['name']}”", True)
+            self.refresh()
+            if done:
+                done(res)
+
+        def err(exc: BaseException) -> None:
+            msg = error_text(exc)
+            self._status(f"Failed to rename: {msg}", False)
+            if failed:
+                failed(msg)
+
+        self.run(lambda: self.client.patch_floor(floor["id"], name=new_name, workspace_id=ws), ok, err)
+
+    def update_hooks(self, floor: Floor, hooks: Dict[str, Any],
+                     done: Optional[Callable[[Floor], None]] = None,
+                     failed: Optional[Callable[[str], None]] = None) -> None:
+        ws = self.workspace_id
+        norm = normalize_hooks(hooks)
+
+        def ok(updated: Floor) -> None:
+            res = dict(updated) if isinstance(updated, dict) else {**floor, "hooks": norm}
+            floor["hooks"] = normalize_hooks(res.get("hooks") or norm)
+            self._status(f"Hooks saved for “{floor.get('name')}”", True)
+            self.refresh()
+            if done:
+                done(res)
+
+        def err(exc: BaseException) -> None:
+            msg = error_text(exc)
+            self._status(f"Failed to save hooks: {msg}", False)
+            if failed:
+                failed(msg)
+
+        self.run(lambda: self.client.patch_floor(floor["id"], hooks=norm, workspace_id=ws), ok, err)
+
+    def _call_run_hooks(self, floor_id: str, phase: str, hook_id: Optional[Any], ws: str) -> Any:
+        if hasattr(self.client, "run_floor_hooks"):
+            return self.client.run_floor_hooks(floor_id, phase=phase, hook_id=hook_id, workspace_id=ws)
+        import urllib.parse
+        url = f"{self.client.base_url}/api/floors/{floor_id}/hooks/run"
+        if ws:
+            url += f"?workspace={urllib.parse.quote(ws)}"
+        payload: Dict[str, Any] = {"phase": phase}
+        if hook_id is not None:
+            payload["hookId"] = hook_id
+        resp = self.client.session.post(
+            url,
+            json=payload,
+            headers=self.client._headers({"Content-Type": "application/json"}),
+            timeout=max(getattr(self.client, "timeout", 10.0), 60.0),
+        )
+        return self.client._handle_response(resp).json()
+
+    def run_hooks(self, floor: Floor, phase: str = "run", hook_id: Optional[Any] = None,
+                  done: Optional[Callable[[Any], None]] = None,
+                  failed: Optional[Callable[[str], None]] = None) -> None:
+        ws = self.workspace_id
+
+        def ok(res: Any) -> None:
+            self._status(f"Ran {phase} hooks for “{floor.get('name')}”", True)
+            if done:
+                done(res)
+
+        def err(exc: BaseException) -> None:
+            msg = error_text(exc)
+            self._status(f"Failed to run hooks: {msg}", False)
+            if failed:
+                failed(msg)
+
+        self.run(lambda: self._call_run_hooks(floor["id"], phase, hook_id, ws), ok, err)
+
+    def run_all_hooks(self, floor: Floor,
+                      done: Optional[Callable[[Any], None]] = None,
+                      failed: Optional[Callable[[str], None]] = None) -> None:
+        """Run all configured hooks for `floor` (defaults to 'run' phase when only 'run' or no phase is configured)."""
+        h = normalize_hooks(floor.get("hooks"))
+        phases = [p for p in ("setup", "run", "teardown") if any(c.strip() for c in h[p])]
+        if not phases or phases == ["run"]:
+            self.run_hooks(floor, phase="run", hook_id=None, done=done, failed=failed)
+            return
+        ws = self.workspace_id
+
+        def run_seq():
+            out = []
+            for p in phases:
+                out.append(self._call_run_hooks(floor["id"], p, None, ws))
+            return out
+
+        def ok(res: Any) -> None:
+            self._status(f"Ran all hooks for “{floor.get('name')}”", True)
+            if done:
+                done(res)
+
+        def err(exc: BaseException) -> None:
+            msg = error_text(exc)
+            self._status(f"Failed to run hooks: {msg}", False)
+            if failed:
+                failed(msg)
+
+        self.run(run_seq, ok, err)
+
     def list_branches(self, callback: Callable[[List[str]], None]) -> None:
         """Local branches of Ground's repository (read-only git, async; [] outside a repo)."""
         root = self.root
@@ -551,6 +707,12 @@ class NewFloorDialog(Gtk.Window):
             self.set_transient_for(None)
         except Exception:
             pass
+        if hasattr(self, "spinner"):
+            try:
+                self.spinner.stop()
+                self.spinner.set_visible(False)
+            except Exception:
+                pass
         super().close()
 
     def _failed(self, message: str) -> None:
@@ -713,6 +875,12 @@ class LandFloorDialog(Gtk.Window):
             self.set_transient_for(None)
         except Exception:
             pass
+        if hasattr(self, "spinner"):
+            try:
+                self.spinner.stop()
+                self.spinner.set_visible(False)
+            except Exception:
+                pass
         super().close()
 
     def _failed_land(self, message: str) -> None:
@@ -797,6 +965,302 @@ class DeleteFloorDialog(Gtk.Window):
             self.set_transient_for(None)
         except Exception:
             pass
+        if hasattr(self, "spinner"):
+            try:
+                self.spinner.stop()
+                self.spinner.set_visible(False)
+            except Exception:
+                pass
+        super().close()
+
+
+class RenameFloorDialog(Gtk.Window):
+    """F13 — modal "Rename Floor": updates floor name via PATCH /api/floors/:id."""
+
+    def __init__(self, parent: Gtk.Window, controller: FloorsController, floor: Floor,
+                 on_renamed: Optional[Callable[[Floor], None]] = None) -> None:
+        super().__init__(title="Rename Floor", transient_for=parent, modal=True, resizable=False)
+        self.set_default_size(400, -1)
+        self.controller, self.floor, self.on_renamed = controller, floor, on_renamed
+
+        grid = _form_grid()
+        self.name_entry = Gtk.Entry(text=str(floor.get("name", "")), placeholder_text="Floor Name",
+                                    hexpand=True, activates_default=True)
+        self.error_label = _label("", wrap=True, css_classes=["floor-error"])
+        self.error_label.set_visible(False)
+        grid.attach(_label("Floor Name"), 0, 0, 1, 1)
+        grid.attach(self.name_entry, 1, 0, 1, 1)
+        grid.attach(self.error_label, 0, 1, 2, 1)
+
+        self.spinner = Gtk.Spinner(visible=False)
+        self.cancel_btn = Gtk.Button(label="Cancel")
+        self.save_btn = Gtk.Button(label="Rename", css_classes=["suggested-action"])
+        self.rename_btn = self.save_btn
+        self.cancel_btn.connect("clicked", lambda _b: self.close())
+        self.save_btn.connect("clicked", lambda _b: self.submit())
+
+        buttons = Gtk.Box(spacing=8, halign=Gtk.Align.END, margin_bottom=12, margin_end=16)
+        for w in (self.spinner, self.cancel_btn, self.save_btn):
+            buttons.append(w)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.append(grid)
+        box.append(buttons)
+        self.set_child(box)
+        self.set_default_widget(self.save_btn)
+        _escape_closes(self)
+        self.name_entry.connect("changed", lambda _e: self._validate())
+        self._validate()
+
+    def validation_error(self) -> Optional[str]:
+        return None if self.name_entry.get_text().strip() else "Enter a floor name"
+
+    def _validate(self) -> None:
+        err = self.validation_error()
+        busy = self.spinner.get_visible()
+        self.save_btn.set_sensitive(err is None and not busy)
+        if not err:
+            self.error_label.set_visible(False)
+
+    def _show_error(self, text: Optional[str]) -> None:
+        self.error_label.set_label(text or "")
+        self.error_label.set_visible(bool(text))
+
+    def submit(self) -> None:
+        err = self.validation_error()
+        if err is not None or self.spinner.get_visible():
+            self._show_error(err)
+            return
+        self.spinner.set_visible(True)
+        self.spinner.start()
+        self.save_btn.set_sensitive(False)
+        self.controller.rename(self.floor, self.name_entry.get_text().strip(), self._renamed, self._failed)
+
+    def _renamed(self, updated: Floor) -> None:
+        self.spinner.stop()
+        if self.on_renamed:
+            self.on_renamed(updated)
+        self.close()
+
+    def _failed(self, message: str) -> None:
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+        self._validate()
+        self._show_error(message)
+
+    def close(self) -> None:
+        try:
+            self.set_visible(False)
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        if hasattr(self, "spinner"):
+            try:
+                self.spinner.stop()
+                self.spinner.set_visible(False)
+            except Exception:
+                pass
+        super().close()
+
+
+class HooksConfigDialog(Gtk.Window):
+    """F14 / F16 / K12 — modal "Hooks — <floorName>" (ported from HooksConfigSheet in FloorOverviewView.swift):
+    Setup / Run / Teardown phases, multiple shell commands per phase, Auto-run Setup Hooks toggle,
+    per-command Play button and Run All -> POST /api/floors/:id/hooks/run, Save -> PATCH /api/floors/:id."""
+    PHASES = (
+        ("setup", "Setup", "Executed after Floor is created", "maestri-play-symbolic"),
+        ("run", "Run", "Executed on manual trigger", "maestri-bolt-symbolic"),
+        ("teardown", "Teardown", "Executed before Landing/deleting Floor", "maestri-stop-symbolic"),
+    )
+
+    def __init__(self, parent: Gtk.Window, controller: FloorsController, floor: Floor,
+                 on_saved: Optional[Callable[[Floor], None]] = None) -> None:
+        super().__init__(title=f"Hooks — {floor.get('name', 'floor')}", transient_for=parent, modal=True)
+        self.set_default_size(500, 520)
+        self.controller, self.floor, self.on_saved = controller, floor, on_saved
+        initial = normalize_hooks(floor.get("hooks"))
+
+        self.command_rows: Dict[str, List[Gtk.Box]] = {"setup": [], "run": [], "teardown": []}
+        self.phase_boxes: Dict[str, Gtk.Box] = {}
+        self.empty_labels: Dict[str, Gtk.Label] = {}
+        self.add_buttons: Dict[str, Gtk.Button] = {}
+        self.phase_run_buttons: Dict[str, Gtk.Button] = {}
+        self.auto_run_check = Gtk.CheckButton(label="Auto-run Setup Hooks", active=bool(initial["autoRunSetup"]))
+
+        sections = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14,
+                           margin_top=14, margin_bottom=14, margin_start=16, margin_end=16)
+        for idx, (phase, title, subtitle, icon_name) in enumerate(self.PHASES):
+            if idx > 0:
+                sections.append(Gtk.Separator())
+            sec = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            header = Gtk.Box(spacing=8, valign=Gtk.Align.CENTER)
+            icon = Gtk.Image.new_from_icon_name(icon_name)
+            icon.set_pixel_size(16)
+            icon.add_css_class("floor-row-icon")
+            header.append(icon)
+            titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, hexpand=True)
+            titles.append(_label(title, css_classes=["floor-hook-section-title"]))
+            titles.append(_label(subtitle, css_classes=["floor-hook-section-sub"]))
+            header.append(titles)
+
+            phase_play = Gtk.Button(child=Gtk.Image.new_from_icon_name("maestri-play-symbolic"), has_frame=False,
+                                    tooltip_text=f"Run {title} hooks", css_classes=["flat", "floor-hook-btn"])
+            phase_play.connect("clicked", lambda _b, p=phase: self.run_phase(p))
+            self.phase_run_buttons[phase] = phase_play
+            header.append(phase_play)
+
+            add_box = Gtk.Box(spacing=4, valign=Gtk.Align.CENTER)
+            add_box.append(Gtk.Image.new_from_icon_name("maestri-plus-symbolic"))
+            add_box.append(Gtk.Label(label="Add command"))
+            add_btn = Gtk.Button(child=add_box, has_frame=False, tooltip_text=f"Add {title} command",
+                                 css_classes=["flat", "floor-action"])
+            add_btn.get_label = lambda: "+ Add command"
+            add_btn.connect("clicked", lambda _b, p=phase: self.add_command(p, ""))
+            self.add_buttons[phase] = add_btn
+            header.append(add_btn)
+            sec.append(header)
+
+            cmd_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.phase_boxes[phase] = cmd_box
+            empty_lbl = _label("No Command", css_classes=["floor-hook-section-sub"])
+            self.empty_labels[phase] = empty_lbl
+            sec.append(cmd_box)
+            sec.append(empty_lbl)
+
+            if phase == "setup":
+                sec.append(self.auto_run_check)
+
+            sections.append(sec)
+            for cmd in initial[phase]:
+                self.add_command(phase, cmd)
+            self._sync_empty_state(phase)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroller.set_child(sections)
+
+        self.error_label = _label("", wrap=True, css_classes=["floor-error"], margin_start=16, margin_end=16)
+        self.error_label.set_visible(False)
+
+        self.spinner = Gtk.Spinner(visible=False)
+        run_all_box = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        run_all_box.append(Gtk.Image.new_from_icon_name("maestri-bolt-symbolic"))
+        run_all_box.append(Gtk.Label(label="Run All"))
+        self.run_all_btn = Gtk.Button(child=run_all_box, css_classes=["floor-action"])
+        self.run_all_btn.get_label = lambda: "Run All"
+        self.run_all_btn.connect("clicked", lambda _b: self.run_all())
+
+        self.cancel_btn = Gtk.Button(label="Cancel")
+        self.save_btn = Gtk.Button(label="Save", css_classes=["suggested-action"])
+        self.cancel_btn.connect("clicked", lambda _b: self.close())
+        self.save_btn.connect("clicked", lambda _b: self.submit())
+
+        footer = Gtk.Box(spacing=8, margin_bottom=12, margin_start=16, margin_end=16, margin_top=8)
+        footer.append(self.run_all_btn)
+        spacer = Gtk.Box(hexpand=True)
+        footer.append(spacer)
+        footer.append(self.spinner)
+        footer.append(self.cancel_btn)
+        footer.append(self.save_btn)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        root.append(scroller)
+        root.append(self.error_label)
+        root.append(footer)
+        self.set_child(root)
+        self.set_default_widget(self.save_btn)
+        _escape_closes(self)
+
+    def _sync_empty_state(self, phase: str) -> None:
+        self.empty_labels[phase].set_visible(len(self.command_rows[phase]) == 0)
+
+    def add_command(self, phase: str, text: str = "") -> Gtk.Entry:
+        row = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        entry = Gtk.Entry(text=text, placeholder_text="shell command…", hexpand=True, css_classes=["floor-hook-entry"])
+        play_btn = Gtk.Button(child=Gtk.Image.new_from_icon_name("maestri-play-symbolic"), has_frame=False,
+                              tooltip_text="Run command", css_classes=["flat", "floor-hook-btn"])
+        remove_btn = Gtk.Button(child=Gtk.Image.new_from_icon_name("maestri-minus-symbolic"), has_frame=False,
+                                tooltip_text="Remove command", css_classes=["flat", "floor-row-delete"])
+        row.entry = entry
+        row.play_btn = play_btn
+        row.remove_btn = remove_btn
+        play_btn.connect("clicked", lambda _b, p=phase, r=row: self.run_single(p, r))
+        remove_btn.connect("clicked", lambda _b, p=phase, r=row: self.remove_command(p, r))
+        row.append(entry)
+        row.append(play_btn)
+        row.append(remove_btn)
+        self.command_rows[phase].append(row)
+        self.phase_boxes[phase].append(row)
+        self._sync_empty_state(phase)
+        return entry
+
+    def remove_command(self, phase: str, row: Gtk.Box) -> None:
+        if row in self.command_rows[phase]:
+            self.command_rows[phase].remove(row)
+            self.phase_boxes[phase].remove(row)
+            self._sync_empty_state(phase)
+
+    def collect_hooks(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"autoRunSetup": bool(self.auto_run_check.get_active())}
+        for phase in ("setup", "run", "teardown"):
+            out[phase] = [r.entry.get_text().strip() for r in self.command_rows[phase] if r.entry.get_text().strip()]
+        return out
+
+    def run_single(self, phase: str, row_or_idx: Any) -> None:
+        if isinstance(row_or_idx, int):
+            idx = row_or_idx
+        else:
+            rows = self.command_rows.get(phase, [])
+            idx = rows.index(row_or_idx) if row_or_idx in rows else 0
+        self.floor["hooks"] = self.collect_hooks()
+        self.controller.run_hooks(self.floor, phase=phase, hook_id=idx, failed=self._show_error)
+
+    def run_phase(self, phase: str) -> None:
+        self.floor["hooks"] = self.collect_hooks()
+        self.controller.run_hooks(self.floor, phase=phase, hook_id=None, failed=self._show_error)
+
+    def run_all(self) -> None:
+        self.floor["hooks"] = self.collect_hooks()
+        self.controller.run_all_hooks(self.floor, failed=self._show_error)
+
+    def _show_error(self, message: Optional[str]) -> None:
+        self.error_label.set_label(message or "")
+        self.error_label.set_visible(bool(message))
+
+    def submit(self) -> None:
+        if self.spinner.get_visible():
+            return
+        self.spinner.set_visible(True)
+        self.spinner.start()
+        self.save_btn.set_sensitive(False)
+        self._show_error(None)
+        self.controller.update_hooks(self.floor, self.collect_hooks(), self._saved, self._failed)
+
+    def _saved(self, updated: Floor) -> None:
+        self.spinner.stop()
+        if self.on_saved:
+            self.on_saved(updated)
+        self.close()
+
+    def _failed(self, message: str) -> None:
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+        self.save_btn.set_sensitive(True)
+        self._show_error(message)
+
+    def close(self) -> None:
+        try:
+            self.set_visible(False)
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        if hasattr(self, "spinner"):
+            try:
+                self.spinner.stop()
+                self.spinner.set_visible(False)
+            except Exception:
+                pass
         super().close()
 
 
@@ -809,8 +1273,10 @@ def _icon_exists(name: str) -> bool:
 # floating button
 # ---------------------------------------------------------------------------------------------------------------------
 class FloorButton(Gtk.MenuButton):
-    """Floor capsule of the bottom-right controls: floor icon + "<floor ativo | Ground>". The popover (opening upwards) lists
-    Ground and the floors, then "Novo floor…" and "Land…" (reference 09-floors.md). Outline SVG icons only, no emoji."""
+    """Floor capsule of the bottom-right controls: floor icon + "<active floor | Ground>". The popover (opening upwards) lists
+    Ground and the floors, then "New Floor…", "Configure Hooks…" and "Land…" (reference 09-floors.md).
+    Right-clicking a floor row opens Rename / Configure Hooks / Land / Delete; right-clicking the FloorButton opens
+    Configure Hooks / Rename Floor. Outline SVG icons only, no emoji."""
     TOAST_MS = 4000
     LABEL_CHARS = 24
 
@@ -827,12 +1293,16 @@ class FloorButton(Gtk.MenuButton):
 
         self.new_btn = self._action_button("maestri-floor-new-symbolic", "New Floor…")
         self.new_btn.connect("clicked", lambda _b: self.open_new())
+        self.hooks_btn = self._action_button("maestri-bolt-symbolic", "Configure Hooks…")
+        self.hooks_btn.set_tooltip_text("Configure Setup, Run and Teardown hooks for this floor")
+        self.hooks_btn.connect("clicked", lambda _b: self._target_floor_for_hooks() and self.open_hooks(self._target_floor_for_hooks()))
         self.land_btn = self._action_button("maestri-floor-land-symbolic", "Land…")
         self.land_btn.set_tooltip_text("Land commits from the active floor back into the Ground repository")
         self.land_btn.connect("clicked", lambda _b: self.controller.active_floor and self.open_land(self.controller.active_floor))
 
         actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, margin_start=4, margin_end=4)
         actions.append(self.new_btn)
+        actions.append(self.hooks_btn)
         actions.append(self.land_btn)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=6, margin_bottom=6,
@@ -847,7 +1317,53 @@ class FloorButton(Gtk.MenuButton):
         box.append(actions)
         self.popover = Gtk.Popover(child=box, position=Gtk.PositionType.TOP)
         self.set_popover(self.popover)
-        self.popover.connect("show", lambda _p: controller.refresh())
+        self.popover.connect("show", lambda _p: (controller.refresh(), self.status.set_visible(bool(self.status.get_label()))))
+
+        # Right-click context popover on the FloorButton itself ("Configure Hooks…" / "Rename Floor…")
+        ctx_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=4, margin_bottom=4,
+                          margin_start=4, margin_end=4, css_classes=["floor-popover"])
+        self.context_hooks_btn = self._action_button("maestri-bolt-symbolic", "Configure Hooks…")
+        self.context_hooks_btn.connect("clicked", lambda _b: self._on_context_hooks())
+        self.context_rename_btn = self._action_button("maestri-pencil-symbolic", "Rename Floor…")
+        self.context_rename_btn.connect("clicked", lambda _b: self._on_context_rename())
+        ctx_box.append(self.context_hooks_btn)
+        ctx_box.append(self.context_rename_btn)
+        self.context_popover = Gtk.Popover(child=ctx_box, position=Gtk.PositionType.TOP)
+        self.context_popover.set_parent(self)
+
+        rclick = Gtk.GestureClick(button=3)
+        rclick.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        rclick.connect("pressed", self._on_button_right_click)
+        self.add_controller(rclick)
+
+        # Quick-access bolt button (⚡) next to FloorButton: grouped hooks + per-hook Play + Run All (F16 / K12)
+        self.quick_hooks_button = Gtk.MenuButton(
+            css_classes=["floor-hooks-button", "flat"],
+            direction=Gtk.ArrowType.UP,
+            valign=Gtk.Align.CENTER,
+            tooltip_text="Configure Hooks",
+        )
+        bolt_img = Gtk.Image.new_from_icon_name("maestri-bolt-symbolic")
+        bolt_img.set_pixel_size(15)
+        self.quick_hooks_button.set_child(bolt_img)
+        self.quick_hooks_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_start=6, margin_end=6)
+        self.quick_run_all_btn = self._action_button("maestri-play-symbolic", "Run All")
+        self.quick_run_all_btn.connect("clicked", lambda _b: self._on_quick_run_all())
+        self.quick_configure_btn = self._action_button("maestri-bolt-symbolic", "Configure Hooks…")
+        self.quick_configure_btn.connect("clicked", lambda _b: self._on_quick_configure())
+
+        qbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=6, margin_bottom=6,
+                       css_classes=["floor-popover"])
+        qbox.append(Gtk.Label(label="HOOKS", xalign=0, css_classes=["floor-popover-title"]))
+        qbox.append(self.quick_hooks_list)
+        qbox.append(Gtk.Separator(margin_start=8, margin_end=8))
+        qactions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, margin_start=4, margin_end=4)
+        qactions.append(self.quick_run_all_btn)
+        qactions.append(self.quick_configure_btn)
+        qbox.append(qactions)
+        self.quick_hooks_popover = Gtk.Popover(child=qbox, position=Gtk.PositionType.TOP)
+        self.quick_hooks_button.set_popover(self.quick_hooks_popover)
+        self.quick_item_rows: List[Gtk.Box] = []
 
         # Capsule content: floor icon + active floor name (ellipsized so the capsules never overlap)
         self.btn_icon = Gtk.Image.new_from_icon_name("maestri-floor-symbolic")
@@ -864,6 +1380,46 @@ class FloorButton(Gtk.MenuButton):
         controller.on_status = self.show_status
         self.rebuild()
 
+    def _target_floor_for_hooks(self) -> Optional[Floor]:
+        c = self.controller
+        if c.active_floor is not None:
+            return c.active_floor
+        for f in c.floors:
+            if has_configured_hooks(f):
+                return f
+        return c.floors[0] if c.floors else None
+
+    def _on_button_right_click(self, gesture: Gtk.GestureClick, _n_press: int, _x: float, _y: float) -> None:
+        target = self._target_floor_for_hooks()
+        self.context_hooks_btn.set_sensitive(target is not None)
+        self.context_rename_btn.set_sensitive(target is not None)
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        self.context_popover.popup()
+
+    def _on_context_hooks(self) -> None:
+        self.context_popover.popdown()
+        target = self._target_floor_for_hooks()
+        if target is not None:
+            self.open_hooks(target)
+
+    def _on_context_rename(self) -> None:
+        self.context_popover.popdown()
+        target = self._target_floor_for_hooks()
+        if target is not None:
+            self.open_rename(target)
+
+    def _on_quick_run_all(self) -> None:
+        self.quick_hooks_popover.popdown()
+        target = self._target_floor_for_hooks()
+        if target is not None:
+            self.controller.run_all_hooks(target)
+
+    def _on_quick_configure(self) -> None:
+        self.quick_hooks_popover.popdown()
+        target = self._target_floor_for_hooks()
+        if target is not None:
+            self.open_hooks(target)
+
     @staticmethod
     def _action_button(icon: str, text: str) -> Gtk.Button:
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -875,7 +1431,52 @@ class FloorButton(Gtk.MenuButton):
         btn.get_label = lambda: text
         return btn
 
+    def _rebuild_quick_hooks(self) -> None:
+        child = self.quick_hooks_list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.quick_hooks_list.remove(child)
+            child = nxt
+        self.quick_item_rows = []
+        target = self._target_floor_for_hooks()
+        any_hooks = has_configured_hooks(target)
+        self.quick_hooks_button.set_sensitive(self.controller.available and target is not None)
+        self.quick_hooks_button.set_visible(bool(any_hooks or (self.controller.active_floor is not None)))
+        self.quick_run_all_btn.set_sensitive(target is not None)
+        self.quick_configure_btn.set_sensitive(target is not None)
+        if not target:
+            self.quick_hooks_list.append(_label("No floor available", css_classes=["floor-hook-section-sub"]))
+            return
+        hooks = normalize_hooks(target.get("hooks"))
+        for phase, title, _sub, _icon in HooksConfigDialog.PHASES:
+            cmds = [c for c in hooks[phase] if c.strip()]
+            if not cmds:
+                continue
+            self.quick_hooks_list.append(_label(title.upper(), css_classes=["floor-popover-title"]))
+            for idx, cmd in enumerate(cmds):
+                item = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER, css_classes=["floor-file-row"])
+                lbl = Gtk.Label(label=cmd, xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END,
+                                max_width_chars=28, css_classes=["floor-branch"])
+                play = Gtk.Button(child=Gtk.Image.new_from_icon_name("maestri-play-symbolic"), has_frame=False,
+                                  tooltip_text=f"Run {cmd}", css_classes=["flat", "floor-hook-btn"])
+                item.phase = phase
+                item.index = idx
+                item.command = cmd
+                item.play_btn = play
+                play.connect("clicked", lambda _b, f=target, p=phase, i=idx: (
+                    self.quick_hooks_popover.popdown(),
+                    self.controller.run_hooks(f, phase=p, hook_id=i),
+                ))
+                item.append(lbl)
+                item.append(play)
+                self.quick_hooks_list.append(item)
+                self.quick_item_rows.append(item)
+        if not self.quick_item_rows:
+            self.quick_hooks_list.append(_label("No hooks configured", css_classes=["floor-hook-section-sub"]))
+
     def rebuild(self) -> None:
+        if self.get_root() is None:
+            return
         c = self.controller
         active = c.active_floor
         name = active.get('name') if active else 'Ground'
@@ -888,14 +1489,50 @@ class FloorButton(Gtk.MenuButton):
         else:
             self.set_tooltip_text("Floors: isolated git worktrees for this workspace")
         self.land_btn.set_sensitive(active is not None)   # Land only from a floor, never from Ground (T2.3)
+        self.hooks_btn.set_sensitive(self._target_floor_for_hooks() is not None)
         child = self.list_box.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
+            ctx_pop = getattr(child, "context_popover", None)
+            if ctx_pop is not None and ctx_pop.get_parent() is not None:
+                try:
+                    ctx_pop.popdown()
+                    ctx_pop.unparent()
+                except Exception:
+                    pass
+            child.context_popover = None
             self.list_box.remove(child)
             child = nxt
         self.list_box.append(self._row(None))
         for f in c.floors:
             self.list_box.append(self._row(f))
+        self._rebuild_quick_hooks()
+
+    def _cleanup(self) -> None:
+        self.controller.on_changed = None
+        self.controller.on_status = None
+        if self._toast_timer:
+            GLib.source_remove(self._toast_timer)
+            self._toast_timer = 0
+        child = self.list_box.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            ctx_pop = getattr(child, "context_popover", None)
+            if ctx_pop is not None and ctx_pop.get_parent() is not None:
+                try:
+                    ctx_pop.popdown()
+                    ctx_pop.unparent()
+                except Exception:
+                    pass
+            child.context_popover = None
+            child = nxt
+        if getattr(self, "context_popover", None) is not None:
+            try:
+                self.context_popover.popdown()
+                self.context_popover.unparent()
+            except Exception:
+                pass
+            self.context_popover = None
 
     def _row(self, floor: Optional[Floor]) -> Gtk.ListBoxRow:
         c = self.controller
@@ -912,9 +1549,11 @@ class FloorButton(Gtk.MenuButton):
         texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
         title = floor.get("name", "floor") if floor else "Ground"
         subtitle = floor.get("branchName", "") if floor else c.root
-        texts.append(Gtk.Label(label=title, xalign=0, ellipsize=Pango.EllipsizeMode.END, width_chars=16, max_width_chars=30))
-        texts.append(Gtk.Label(label=subtitle, xalign=0, ellipsize=Pango.EllipsizeMode.MIDDLE, width_chars=16, max_width_chars=34,
-                               css_classes=["floor-branch"]))
+        row.title_label = Gtk.Label(label=title, xalign=0, ellipsize=Pango.EllipsizeMode.END, width_chars=16, max_width_chars=30)
+        row.subtitle_label = Gtk.Label(label=subtitle, xalign=0, ellipsize=Pango.EllipsizeMode.MIDDLE, width_chars=16, max_width_chars=34,
+                                       css_classes=["floor-branch"])
+        texts.append(row.title_label)
+        texts.append(row.subtitle_label)
         h.append(texts)
         if floor is not None:
             st = c.statuses.get(floor.get("id"))
@@ -929,11 +1568,83 @@ class FloorButton(Gtk.MenuButton):
         check.set_opacity(1.0 if is_active else 0.0)   # keeps the column width stable
         h.append(check)
         if floor is not None:
+            hooks_btn = Gtk.Button(child=Gtk.Image.new_from_icon_name("maestri-bolt-symbolic"), has_frame=False,
+                                   tooltip_text="Configure Hooks", css_classes=["flat", "floor-hook-btn"], valign=Gtk.Align.CENTER)
+            hooks_btn.connect("clicked", lambda _b, f=floor: self.open_hooks(f))
+            row.hooks_btn = hooks_btn
+            h.append(hooks_btn)
             delete = Gtk.Button(child=Gtk.Image.new_from_icon_name("maestri-close-symbolic"), has_frame=False,
                                 tooltip_text="Delete floor…", css_classes=["flat", "floor-row-delete"], valign=Gtk.Align.CENTER)
             delete.connect("clicked", lambda _b, f=floor: self.open_delete(f))
+            row.delete_btn = delete
             h.append(delete)
-        row.set_child(h)
+
+            # Changed files list from /api/floors/:id/status `files` (F9)
+            files = format_changed_files(c.statuses.get(floor.get("id")))
+            row.changed_files = files
+            row.file_labels: List[str] = []
+            files_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_start=24, margin_top=4,
+                                visible=bool(files), css_classes=["floor-files-box"])
+            for code, path in files[:8]:
+                f_row = Gtk.Box(spacing=6, css_classes=["floor-file-row"])
+                f_row.append(Gtk.Label(label=code, xalign=0, css_classes=["floor-file-status"]))
+                f_row.append(Gtk.Label(label=path, xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.MIDDLE,
+                                       max_width_chars=32, css_classes=["floor-file-path"]))
+                files_box.append(f_row)
+                row.file_labels.append(f"{code} {path}")
+            if len(files) > 8:
+                more = f"+{len(files) - 8} more…"
+                files_box.append(Gtk.Label(label=more, xalign=0, css_classes=["floor-branch"]))
+                row.file_labels.append(more)
+            row.files_box = files_box
+
+            # Row right-click context menu: Rename, Configure Hooks, Land, Delete (F13 / F14)
+            menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=4, margin_bottom=4,
+                               margin_start=4, margin_end=4, css_classes=["floor-popover"])
+            row.rename_item = self._action_button("maestri-pencil-symbolic", "Rename…")
+            row.hooks_item = self._action_button("maestri-bolt-symbolic", "Configure Hooks…")
+            row.land_item = self._action_button("maestri-floor-land-symbolic", "Land…")
+            row.delete_item = self._action_button("maestri-trash-symbolic", "Delete…")
+            class _RowPopover:
+                def __init__(self, child):
+                    self.child = child
+                def popup(self):
+                    pass
+                def popdown(self):
+                    pass
+                def get_parent(self):
+                    return None
+                def unparent(self):
+                    pass
+
+            row.context_popover = _RowPopover(menu_box)
+            row.rename_item.connect("clicked", lambda _b, r=row, f=floor: (r.context_popover.popdown(), self.open_rename(f)))
+            row.hooks_item.connect("clicked", lambda _b, r=row, f=floor: (r.context_popover.popdown(), self.open_hooks(f)))
+            row.land_item.connect("clicked", lambda _b, r=row, f=floor: (r.context_popover.popdown(), self.open_land(f)))
+            row.delete_item.connect("clicked", lambda _b, r=row, f=floor: (r.context_popover.popdown(), self.open_delete(f)))
+            for item_btn in (row.rename_item, row.hooks_item, row.land_item, row.delete_item):
+                menu_box.append(item_btn)
+
+            def _show_row_context(g, _n, _x, _y, r=row):
+                g.set_state(Gtk.EventSequenceState.CLAIMED)
+                if r.context_popover.get_parent() is None:
+                    r.context_popover.set_parent(r)
+                r.context_popover.popup()
+
+            rclick = Gtk.GestureClick(button=3)
+            rclick.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            rclick.connect("pressed", _show_row_context)
+            row.add_controller(rclick)
+
+            outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            outer.append(h)
+            outer.append(files_box)
+            row.set_child(outer)
+        else:
+            row.changed_files = []
+            row.file_labels = []
+            row.files_box = None
+            row.set_child(h)
         return row
 
     def _row_activated(self, row: Gtk.ListBoxRow) -> None:
@@ -944,7 +1655,8 @@ class FloorButton(Gtk.MenuButton):
         """Toast: shown in the popover and as the button's tooltip, cleared after TOAST_MS."""
         self.status.set_label(text)
         self.status.set_css_classes(["floor-ok" if ok else "floor-error"])
-        self.status.set_visible(True)
+        if self.popover.get_visible():
+            self.status.set_visible(True)
         if self._toast_timer:
             GLib.source_remove(self._toast_timer)
 
@@ -959,6 +1671,20 @@ class FloorButton(Gtk.MenuButton):
     def open_new(self) -> NewFloorDialog:
         self.popover.popdown()
         dlg = NewFloorDialog(self.window, self.controller)
+        dlg.present()
+        return dlg
+
+    def open_rename(self, floor: Optional[Floor] = None) -> RenameFloorDialog:
+        self.popover.popdown()
+        target = floor or self._target_floor_for_hooks() or {}
+        dlg = RenameFloorDialog(self.window, self.controller, target)
+        dlg.present()
+        return dlg
+
+    def open_hooks(self, floor: Optional[Floor] = None) -> HooksConfigDialog:
+        self.popover.popdown()
+        target = floor or self._target_floor_for_hooks() or {}
+        dlg = HooksConfigDialog(self.window, self.controller, target)
         dlg.present()
         return dlg
 
@@ -980,10 +1706,13 @@ def install_floors(window) -> FloorsController:
     workspace load (initial load and switch) and the /ws/events subscription; both stop when the window closes."""
     controller = FloorsController(window)
     window.floor_button = FloorButton(window, controller)
+    window.floor_hooks_button = window.floor_button.quick_hooks_button
     if hasattr(window, "bottom_controls") and hasattr(window.bottom_controls, "pill_floor"):
         window.bottom_controls.pill_floor.append(window.floor_button)
+        window.bottom_controls.pill_floor.append(window.floor_hooks_button)
         window.bottom_controls.btn_floors = window.floor_button
     elif hasattr(window, "bottom_controls"):
+        window.bottom_controls.prepend(window.floor_hooks_button)
         window.bottom_controls.prepend(window.floor_button)
         window.bottom_controls.btn_floors = window.floor_button
     else:
@@ -1003,6 +1732,8 @@ def install_floors(window) -> FloorsController:
         if bus.handler_is_connected(hid):
             bus.disconnect(hid)
         controller.stop_events()
+        if hasattr(window, "floor_button") and hasattr(window.floor_button, "_cleanup"):
+            window.floor_button._cleanup()
         return False
 
     hid = bus.connect("workspace-loaded", loaded)

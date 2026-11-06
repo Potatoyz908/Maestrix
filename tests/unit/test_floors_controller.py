@@ -17,7 +17,8 @@ from gi.repository import GLib  # noqa: E402
 from maestri_core.client.api import MaestriAPIError  # noqa: E402
 from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload  # noqa: E402
 from ui.floors import (FloorsController, badge_text, blocking_reason, branch_error, default_branch,  # noqa: E402
-                       describe_preview, error_text, floor_env, slugify)
+                       describe_preview, error_text, floor_env, format_changed_files, has_configured_hooks,
+                       normalize_hooks, slugify)
 
 
 def pump_until(cond, timeout=3.0):
@@ -111,6 +112,21 @@ class FakeClient:
         self.floors = [f for f in self.floors if f["id"] != fid]
         return True
 
+    def patch_floor(self, fid, name=None, hooks=None, workspace_id=None):
+        self.calls.append(("patch", fid, name, hooks, workspace_id))
+        for f in self.floors:
+            if f["id"] == fid:
+                if name is not None:
+                    f["name"] = name
+                if hooks is not None:
+                    f["hooks"] = dict(hooks)
+                return dict(f)
+        raise MaestriAPIError("not found", status_code=404)
+
+    def run_floor_hooks(self, fid, phase="run", hook_id=None, workspace_id=None):
+        self.calls.append(("run_hooks", fid, phase, hook_id, workspace_id))
+        return {"status": "ok", "phase": phase, "hookId": hook_id}
+
     def connect_events(self, on_event=None, workspace_id=None):
         self.calls.append(("events", workspace_id))
         return SimpleNamespace(close=lambda: self.calls.append(("events-closed",)))
@@ -198,3 +214,44 @@ def test_delete_warning_says_unlanded_commits_are_discarded():
     assert "DISCARDS 1 unlanded commit:" in delete_warning(FLOOR_A, {"ahead": 1})
     assert "all commits that have not been landed yet" in delete_warning(FLOOR_A, None)
     assert "Keep branch" in w and FLOOR_A["worktreePath"] in w
+    assert "⚠" not in w
+
+
+# ---- Sprint 9 F9 / F13 / F14 / F16 / K12 ---------------------------------------------------------------------------
+def test_format_changed_files_and_hooks_helpers():
+    assert format_changed_files(None) == [] and format_changed_files({}) == []
+    st = {"files": [{"path": "src/a.py", "status": "M"}, {"path": "b.txt", "status": "A"}, "D old.py"]}
+    assert format_changed_files(st) == [("M", "src/a.py"), ("A", "b.txt"), ("D", "old.py")]
+
+    norm = normalize_hooks({"setup": ["npm ci"], "autoRunSetup": True})
+    assert norm == {"setup": ["npm ci"], "run": [], "teardown": [], "autoRunSetup": True}
+    assert has_configured_hooks({"hooks": norm})
+    assert not has_configured_hooks({"hooks": {"setup": ["  "], "run": [], "teardown": []}})
+
+
+def test_rename_update_hooks_and_run_hooks(ctl):
+    ctl.refresh()
+    assert pump_until(lambda: len(ctl.floors) == 2)
+    f = ctl.floors[0]
+
+    renamed = []
+    ctl.rename(f, "Renamed Fix", done=renamed.append)
+    assert pump_until(lambda: len(renamed) == 1 and ctl.floors[0]["name"] == "Renamed Fix")
+    assert ("patch", FLOOR_A["id"], "Renamed Fix", None, ctl.workspace_id) in ctl.window.client.calls
+
+    hooks = {"setup": ["npm install"], "run": ["npm test", "npm run lint"], "teardown": ["rm -rf .cache"], "autoRunSetup": True}
+    saved = []
+    ctl.update_hooks(f, hooks, done=saved.append)
+    assert pump_until(lambda: len(saved) == 1 and has_configured_hooks(ctl.floors[0]))
+    assert ("patch", FLOOR_A["id"], None, hooks, ctl.workspace_id) in ctl.window.client.calls
+
+    ran = []
+    ctl.run_hooks(f, phase="run", hook_id=1, done=ran.append)
+    assert pump_until(lambda: len(ran) == 1)
+    assert ("run_hooks", FLOOR_A["id"], "run", 1, ctl.workspace_id) in ctl.window.client.calls
+
+    ran_all = []
+    ctl.run_all_hooks(ctl.floors[0], done=ran_all.append)
+    assert pump_until(lambda: len(ran_all) == 1)
+    for phase in ("setup", "run", "teardown"):
+        assert ("run_hooks", FLOOR_A["id"], phase, None, ctl.workspace_id) in ctl.window.client.calls
