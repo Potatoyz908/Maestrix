@@ -20,6 +20,7 @@ This index is the repository map for humans and coding agents. Read these files 
 
 - [docs/worktree-workflow.md](./worktree-workflow.md) — parallel worktree lifecycle for development
 - [docs/linux-gtk-sprint4-spec.md](./linux-gtk-sprint4-spec.md) — Linux GTK4 Sprint 4 spec: Floors, Routines, Remote SSH + window.py/widget.py review
+- [docs/linux-gtk-sprint5-spec.md](./linux-gtk-sprint5-spec.md) — Linux GTK4 Sprint 5 executable spec: Floors dialogs, context toolbars, snapping guides (macOS parity)
 - [docs/packaging.md](./packaging.md) — local app packaging, build script, signing, and notarization path
 
 ## CLI & Integration
