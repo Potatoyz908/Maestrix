@@ -1590,10 +1590,6 @@ public final class InterAgentServer {
                     let preview = try FloorManager.shared.landPreview(floor: floor, target: Self.queryValue(pathParts, "target"), workingDirectory: wd)
                     var respObj = preview.json
                     respObj["floorId"] = entry.id.uuidString
-                    EventBroadcaster.shared.publish(
-                        type: "floorLandPreview", workspaceId: wsId,
-                        payload: respObj
-                    )
                     let data = (try? JSONSerialization.data(withJSONObject: respObj)) ?? Data("{}".utf8)
                     return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
                 }
@@ -1608,6 +1604,8 @@ public final class InterAgentServer {
                 )
                 let data = (try? JSONSerialization.data(withJSONObject: ["status": "ok", "commit": commit, "target": target])) ?? Data("{}".utf8)
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            } catch MaestriError.invalidTargetBranch(let msg) {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid target branch - \(msg)", allowedOrigin: allowedOrigin)
             } catch {
                 return Self.buildHTTPResponse(status: 409, body: "error: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
             }
@@ -1616,14 +1614,16 @@ public final class InterAgentServer {
         // GET /api/floors/:id/status -> {base, dirty, files:[{path,status}], ahead, behind, insertions, deletions}
         if method == "GET" && cleanPath.hasPrefix("/api/floors/") && cleanPath.hasSuffix("/status") {
             let rawId = String(cleanPath.dropFirst("/api/floors/".count).dropLast("/status".count))
+            guard let floorId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid floor ID", allowedOrigin: allowedOrigin)
+            }
             let pm = PersistenceManager.shared
-            guard let floorId = UUID(uuidString: rawId),
-                  let wsId = Self.resolveWorkspaceId(pathParts: pathParts, pm: pm),
+            guard let wsId = Self.resolveWorkspaceId(pathParts: pathParts, pm: pm),
                   let doc = try? pm.loadWorkspace(id: wsId),
                   let entry = doc.payload.floors.first(where: { $0.id == floorId }) else {
                 return Self.buildHTTPResponse(status: 404, body: "error: floor not found", allowedOrigin: allowedOrigin)
             }
-            let wd = doc.payload.workingDirectory
+            let wd = Self.floorRepoDirectory(entry: entry, fallback: doc.payload.workingDirectory)
             do {
                 let st = try FloorManager.shared.status(floor: Self.floor(from: entry, workingDirectory: wd), workingDirectory: wd)
                 let data = (try? JSONSerialization.data(withJSONObject: st.json)) ?? Data("{}".utf8)

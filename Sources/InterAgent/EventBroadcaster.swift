@@ -108,7 +108,7 @@ final class EventsWebSocketSession: @unchecked Sendable {
 /// type ∈ workspaceSaved | nodeAdded | nodeRemoved |
 ///        terminalCreated | terminalExited | terminalResized | terminalRemoved |
 ///        connectionCreated | connectionChanged | connectionRemoved |
-///        floorCreated | floorChanged | floorRemoved | floorLandPreview | floorLanded |
+///        floorCreated | floorChanged | floorRemoved | floorLanded |
 ///        routineChanged | routineStarted | routineStep | routineFinished | routineFailed
 /// 连接事件 payload: connectionId, kind(terminalToTerminal|terminalToNote|terminalToPortal|
 /// portalToPortal|noteToNote|crossFloor), a, b (与 workspace.json 中 A/B 顺序一致)

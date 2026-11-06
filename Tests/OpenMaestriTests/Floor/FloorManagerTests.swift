@@ -170,6 +170,18 @@ final class FloorManagerTests: XCTestCase {
         XCTAssertTrue(r.stat.contains("1 file changed"), r.stat)
         XCTAssertEqual(r.insertions, 1)
         XCTAssertEqual(r.deletions, 0)
+
+        // M2: if target branch is checked out in ANY secondary worktree (another floor), landing must also be refused
+        let floor2 = try fm.createFloor(name: "rel-wt", branchName: "release", workingDirectory: testDir, existingBranch: true)
+        let rCheckedOut = try fm.landPreview(floor: floor, target: "release", workingDirectory: testDir)
+        XCTAssertTrue(rCheckedOut.targetCheckedOut && !rCheckedOut.canLand, "Branch checked out in secondary worktree must be refused")
+        XCTAssertThrowsError(try fm.land(floor: floor, targetBranch: "release", workingDirectory: testDir))
+        try fm.removeFloor(floor2, workingDirectory: testDir, deleteBranch: false)
+
+        // L1/L5: invalid or non-existent target branch throws .invalidTargetBranch
+        XCTAssertThrowsError(try fm.landPreview(floor: floor, target: "--help", workingDirectory: testDir))
+        XCTAssertThrowsError(try fm.landPreview(floor: floor, target: "non-existent-branch", workingDirectory: testDir))
+
         try fm.land(floor: floor, targetBranch: "release", workingDirectory: testDir)
         XCTAssertEqual(try git(["rev-parse", "release"]), try git(["rev-parse", "floor/ff"]), "fast-forward")
         XCTAssertEqual(try git(["rev-parse", "HEAD"]), groundHead, "Ground's HEAD did not move")

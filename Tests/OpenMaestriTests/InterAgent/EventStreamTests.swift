@@ -191,16 +191,28 @@ final class EventStreamTests: XCTestCase {
                 "GET /api/floors?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
             XCTAssertTrue(floorsResp.contains(floorId), "Floor must survive POST /api/workspace without floors: \(floorsResp)")
 
-            // GET /api/floors/:id/land-preview -> returns merge-tree diff/stat and broadcasts floorLandPreview
+            // M3: GET /api/floors/:id/status resolves repo via floorRepoDirectory
+            let statusResp = try Self.exchange(port: port, request:
+                "GET /api/floors/\(floorId)/status?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(statusResp.contains("200 OK"), statusResp)
+
+            // M4: GET /api/floors/:id/land-preview returns merge-tree diff/stat WITHOUT side-effect WS broadcast
             let previewResp = try Self.exchange(port: port, request:
                 "GET /api/floors/\(floorId)/land-preview?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
             XCTAssertTrue(previewResp.contains("200 OK"), previewResp)
             XCTAssertTrue(previewResp.contains("\"diff\":"), previewResp)
             XCTAssertTrue(previewResp.contains("\"treeOid\":"), previewResp)
-            let fPreview = try Self.readEvent(ws, type: "floorLandPreview")
-            XCTAssertEqual(fPreview["floorId"] as? String, floorId)
-            XCTAssertEqual(fPreview["floorBranch"] as? String, "floor/sprint-4-ui")
-            XCTAssertNotNil(fPreview["diff"] as? String)
+
+            // L1: invalid target branch returns 400 Bad Request; unknown floor returns 404 Not Found
+            let badTargetResp = try Self.exchange(port: port, request:
+                "GET /api/floors/\(floorId)/land-preview?workspace=\(wsId)&target=--bad HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(badTargetResp.hasPrefix("HTTP/1.1 400"), badTargetResp)
+            let missingBranchResp = try Self.exchange(port: port, request:
+                "GET /api/floors/\(floorId)/land-preview?workspace=\(wsId)&target=no-such-branch HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(missingBranchResp.hasPrefix("HTTP/1.1 400"), missingBranchResp)
+            let notFoundFloorResp = try Self.exchange(port: port, request:
+                "GET /api/floors/\(UUID().uuidString)/land-preview?workspace=\(wsId) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+            XCTAssertTrue(notFoundFloorResp.hasPrefix("HTTP/1.1 404"), notFoundFloorResp)
 
             // Delete floor -> floorRemoved event
             let delFloor = try Self.exchange(port: port, request:
