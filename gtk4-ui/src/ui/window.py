@@ -11,6 +11,7 @@ from gi.repository import Gtk, Gdk, GLib, Gio
 import os
 import sys
 import threading
+import uuid
 from pathlib import Path
 
 # Add paths
@@ -19,10 +20,12 @@ sys.path.insert(0, str(ROOT_DIR / "canvas-cairo"))  # provides the canonical `ma
 sys.path.insert(0, str(ROOT_DIR))
 
 from maestri_core.models.workspace import SidebarGroup, WorkspaceDocument, WorkspacePayload
-from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent, current_iso8601
+from maestri_core.models.node import (CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent,
+                                      agent_type_for_command, current_iso8601)
 from maestri_core.client.api import MaestriClient, AuthenticationError
 from maestri_core.preferences import PreferencesStore
 from maestri_core.signals.bus import bus
+from maestri_core.terminal_fields import apply_fields, role_name, terminal_fields_from_dialog
 from maestri_core.sync import WorkspaceSync
 from maestri_canvas.connection_rules import plan_connection, purge_node
 from maestri_canvas.file_ops import preview_frames, preview_spec
@@ -1190,17 +1193,50 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         cwd = getattr(c, "working_directory", "") or self.document.payload.working_directory or os.path.expanduser("~")
         command = getattr(c, "command", "") or "bash"
         workspace_id = self.document.payload.id
+        agent_type = getattr(c, "agent_type", "") or agent_type_for_command(command)
+        floor_id = self._floor_id_for(cwd)
 
         def worker():
             try:
-                self.client.ensure_terminal(tid, command=command, working_directory=cwd,
-                                            workspace_id=workspace_id, display_name=getattr(c, "name", None))
+                self.client.ensure_terminal(tid, command=command, working_directory=cwd, workspace_id=workspace_id,
+                                            display_name=getattr(c, "name", None), agent_type=agent_type, floor_id=floor_id,
+                                            role_name=role_name(c))
             except Exception:
                 pass   # the socket still tries (and reconnects with backoff) - the core may come back
             GLib.idle_add(lambda: (None if view.disposed else transport.connect(), GLib.SOURCE_REMOVE)[1])
 
         threading.Thread(target=worker, name=f"maestri-pty-{tid[:8]}", daemon=True).start()
         return view
+
+    def _floor_id_for(self, cwd: str):
+        """Id of the floor whose worktree contains `cwd` (K12 floorId), None on Ground."""
+        floors = getattr(getattr(self, "floors", None), "floors", None) or []
+        real = os.path.realpath(cwd or "")
+        for f in floors:
+            root = os.path.realpath(str(f.get("worktreePath") or "")) if f.get("worktreePath") else ""
+            if root and (real == root or real.startswith(root.rstrip(os.sep) + os.sep)):
+                return f.get("id")
+        return None
+
+    def new_terminal_node(self, frame: NodeFrame, name: str = "Terminal", command: str = "bash", cwd: str = "",
+                          **content_fields) -> CanvasNode:
+        """A terminal CanvasNode whose node id IS its terminal id (K1, like macOS), upper-case, with agentType from the command.
+        Not added to the document: callers use `_insert_node`."""
+        nid = str(uuid.uuid4()).upper()
+        content_fields.setdefault("agent_type", agent_type_for_command(command))
+        content = TerminalContent(id=nid, terminal_id=nid, name=name, command=command, working_directory=cwd, **content_fields)
+        z = max((n.z_index for n in self.document.payload.nodes), default=0) + 1
+        return CanvasNode(id=nid, frame=frame, node_type="terminal", content=content, z_index=z)
+
+    def _insert_node(self, node: CanvasNode, focus: bool = False, flush: bool = True) -> CanvasNode:
+        """Add a node created by the UI to the document + canvas and persist it."""
+        self.document.payload.nodes.append(node)
+        self._add_node_to_canvas(node, focus=focus)
+        self.canvas_widget.controller.dirty = True
+        bus.emit("node-added", node)
+        if flush and self.sync is not None:
+            self.sync.flush()
+        return node
 
     def _show_about(self):
         about = Gtk.AboutDialog(transient_for=self, modal=True, program_name="Open Maestri",
@@ -1335,6 +1371,80 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         node.last_modified_at = current_iso8601()
         bus.emit("node-updated", node.id)
 
+    def _push_terminal_meta(self, node: CanvasNode) -> None:
+        """Item 10: a renamed terminal (or new role) reaches the core's session (displayName / roleName), off the main loop.
+        The name is also in workspace.json after the flush; PATCH is best effort (older cores answer 404)."""
+        if node.node_type != "terminal" or not self.core_connected:
+            return
+        tid, name, role = self._terminal_id(node), node.content.name, role_name(node.content)
+        threading.Thread(target=lambda: self.client.update_terminal(tid, display_name=name, roleName=role),
+                         name="maestri-terminal-meta", daemon=True).start()
+
+    # ---- K13: reload / unload a terminal ----------------------------------------------------------------------------
+    def reload_terminal(self, node_id: str) -> bool:
+        """Restart the node's shell with the same parameters (core: POST /api/terminals/:id/restart; local VTE: respawn)."""
+        node = self._find_node(node_id)
+        if node is None or node.node_type != "terminal":
+            return False
+        if self.core_connected:
+            tid = self._terminal_id(node)
+
+            def worker():
+                try:
+                    self.client.restart_terminal(tid)
+                    ok = True
+                except Exception as exc:   # noqa: BLE001 - older cores have no restart route: recreate the session instead
+                    print(f"[window] restart {tid[:8]} failed ({exc!r}); recreating the session")
+                    try:
+                        self.client.delete_terminal(tid)
+                        ok = True
+                    except Exception:   # noqa: BLE001
+                        ok = False
+                GLib.idle_add(lambda: (self._rebuild_terminal(node) if ok else None, GLib.SOURCE_REMOVE)[1])
+            threading.Thread(target=worker, name="maestri-terminal-restart", daemon=True).start()
+        else:
+            self._rebuild_terminal(node)
+        return True
+
+    def unload_terminal(self, node_id: str) -> bool:
+        """Stop the shell but keep the node (core: POST /api/terminals/:id/unload). Reload brings it back."""
+        node = self._find_node(node_id)
+        if node is None or node.node_type != "terminal":
+            return False
+        frame = self.canvas_widget.frames.get(norm(node.id))
+        if frame is not None:
+            if is_terminal(frame.content):
+                terminate_terminal(frame.content)
+            elif getattr(frame.content, "transport", None) is not None:
+                frame.content.dispose()
+        if self.core_connected:
+            tid = self._terminal_id(node)
+
+            def worker():
+                try:
+                    self.client.unload_terminal(tid)
+                except Exception:   # noqa: BLE001 - older cores: ending the session is the closest equivalent
+                    try:
+                        self.client.delete_terminal(tid)
+                    except Exception:   # noqa: BLE001
+                        pass
+            threading.Thread(target=worker, name="maestri-terminal-unload", daemon=True).start()
+        return True
+
+    def _rebuild_terminal(self, node: CanvasNode) -> None:
+        """Replace the node's widget (same frame/selection) so it attaches to the fresh PTY."""
+        if self._find_node(node.id) is None:
+            return
+        frame = self.canvas_widget.frames.get(norm(node.id))
+        if frame is not None:
+            if is_terminal(frame.content):
+                terminate_terminal(frame.content)
+            elif getattr(frame.content, "transport", None) is not None:
+                frame.content.dispose()
+        self.canvas_widget.remove_node(node.id)
+        self._add_node_to_canvas(node)
+        self.canvas_widget.controller.dirty = True
+
     def _on_node_title_changed(self, _canvas, node_id, new_title):
         """Title renamed directly on node header via inline entry."""
         node = self._find_node(node_id)
@@ -1348,6 +1458,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         bus.emit("node-updated", node.id)
         if self.sync is not None:
             self.sync.flush()
+        self._push_terminal_meta(node)
 
     def _on_files_dropped(self, _canvas, paths, x, y):
         """Files dropped on the empty canvas (FileTree rows, file managers) become preview nodes, stacked from the drop point
@@ -1467,17 +1578,16 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
     def _on_canvas_duplicate_requested(self, _canvas, mapping: dict):
         import copy
-        import uuid
         for src_id, new_frame in mapping.items():
             src_node = self._find_node(src_id)
             if src_node is None:
                 continue
             new_id = str(uuid.uuid4()).upper()
             content = copy.deepcopy(src_node.content)
-            if hasattr(content, "id"):
+            if hasattr(content, "terminal_id"):   # K1: the copy's terminal id is its node id
+                content.id = content.terminal_id = new_id
+            elif hasattr(content, "id"):
                 content.id = str(uuid.uuid4()).upper()
-            if hasattr(content, "terminal_id"):
-                content.terminal_id = str(uuid.uuid4()).upper()
             if hasattr(content, "name"):
                 content.name = f"{content.name} Copy"
             new_node = CanvasNode(
@@ -1543,7 +1653,6 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             bus.emit("connection-created", conn)
         else:
             # Standalone/offline fallback: create and register locally in document payload
-            import uuid
             from maestri_core.models.connection import Connection
             local_id = str(uuid.uuid4()).upper()
             local_conn = Connection(id=local_id, a_id=a, b_id=b, kind=kind)
@@ -1565,29 +1674,20 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
     def create_terminal_preset(self, preset_id: str, at: Point | None = None) -> CanvasNode:
         """Creates a terminal node directly from a Quick Start preset (Claude Code, Codex, Gemini CLI, OpenCode, Shell)."""
-        import uuid
         preset = next((p for p in PRESETS if p["id"] == preset_id), PRESETS[0])
         cwd = self.floors.terminal_cwd() or self.document.payload.working_directory or os.path.expanduser("~")
         spawn_at = at or Point(
             self.canvas_widget.viewport.origin.x + (self.canvas_widget.get_width() or 1000) / 2 / self.canvas_widget.viewport.zoom - 210,
             self.canvas_widget.viewport.origin.y + (self.canvas_widget.get_height() or 700) / 2 / self.canvas_widget.viewport.zoom - 150,
         )
-        node_id = str(uuid.uuid4()).upper()
         frame = NodeFrame(x=spawn_at.x, y=spawn_at.y, width=420, height=300)
-        content = TerminalContent(name=preset["name"], command=preset["command"], working_directory=cwd)
-        node = CanvasNode(id=node_id, frame=frame, node_type="terminal", content=content, z_index=len(self.document.payload.nodes) + 1)
-        self.document.payload.nodes.append(node)
-        self._add_node_to_canvas(node)
-        self.canvas_widget.controller.dirty = True
-        bus.emit("node-added", node)
-        if self.sync is not None:
-            self.sync.flush()
-        return node
+        node = self.new_terminal_node(frame, preset["name"], preset["command"], cwd,
+                                      **{k: v for k, v in (("icon", preset.get("icon")), ("color", preset.get("color"))) if v})
+        return self._insert_node(node)
 
     def open_new_terminal_dialog(self, at: Point | None = None, size: tuple[float, float] | None = None, default_preset: str = "claude") -> NewTerminalDialog:
         """Opens the macOS-matching 'New Terminal' modal dialog with Quick Start presets."""
         def on_create(data: dict):
-            import uuid
             cwd = data.get("cwd") or self.floors.terminal_cwd() or os.path.expanduser("~")
             name = data.get("name") or "Terminal"
             cmd = data.get("command") or "bash"
@@ -1597,16 +1697,9 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 self.canvas_widget.viewport.origin.x + (self.canvas_widget.get_width() or 1000) / 2 / self.canvas_widget.viewport.zoom - term_w / 2,
                 self.canvas_widget.viewport.origin.y + (self.canvas_widget.get_height() or 700) / 2 / self.canvas_widget.viewport.zoom - term_h / 2,
             )
-            node_id = str(uuid.uuid4()).upper()
             frame = NodeFrame(x=spawn_at.x, y=spawn_at.y, width=term_w, height=term_h)
-            content = TerminalContent(name=name, command=cmd, working_directory=cwd)
-            node = CanvasNode(id=node_id, frame=frame, node_type="terminal", content=content, z_index=len(self.document.payload.nodes) + 1)
-            self.document.payload.nodes.append(node)
-            self._add_node_to_canvas(node)
-            self.canvas_widget.controller.dirty = True
-            bus.emit("node-added", node)
-            if self.sync is not None:
-                self.sync.flush()
+            node = self.new_terminal_node(frame, name, cmd, cwd, **terminal_fields_from_dialog(data))
+            self._insert_node(node)
 
         dlg = NewTerminalDialog(
             self,
@@ -1632,17 +1725,25 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             return
         if node.node_type == "terminal":
             def on_save(data: dict):
-                node.content.name = data["name"]
-                node.content.command = data["command"]
-                node.content.working_directory = data["cwd"]
+                c = node.content
+                renamed = data.get("name") and data["name"] != c.name
+                c.name = data.get("name") or c.name
+                c.command = data.get("command") or c.command
+                c.working_directory = data.get("cwd", c.working_directory)
+                changed = apply_fields(c, terminal_fields_from_dialog(data))   # icon, color, theme, font, monitor, maestro, role
+                node.last_modified_at = current_iso8601()
                 frame = self.canvas_widget.frames.get(norm(node.id))
                 if frame and hasattr(frame, "title"):
-                    frame.title.set_label(data["name"])
+                    frame.title.set_label(c.name)
+                if {"theme_id", "font_family", "font_size"} & set(changed):
+                    self._style_terminal(node)
                 self.canvas_widget.controller.dirty = True
                 self.canvas_widget.queue_draw()
                 bus.emit("node-updated", node.id)
                 if self.sync is not None:
                     self.sync.flush()
+                if renamed or "assigned_role_id" in changed:
+                    self._push_terminal_meta(node)
 
             dlg = EditTerminalDialog(self, node, on_save)
             dlg.present()
@@ -1699,6 +1800,11 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             pass
         elif node_type == "terminal":
             content = TerminalContent(name=f"Terminal {n}", command="bash", working_directory=self.floors.terminal_cwd())
+        if node_type == "terminal":   # K1: node id == terminal id
+            tid = str(content.terminal_id or uuid.uuid4()).upper()
+            content.id = content.terminal_id = tid
+            if content.agent_type in ("", "generic_shell"):
+                content.agent_type = agent_type_for_command(content.command)
         elif node_type == "stickyNote":
             taken = {x.content.file_name[:-3] if x.content.file_name.endswith(".md") else x.content.file_name
                      for x in self.document.payload.nodes if x.node_type == "stickyNote"}
@@ -1710,6 +1816,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             content = FileTreeContent(name="Files", root_path=os.path.expanduser("~"))
 
         new_node = CanvasNode(
+            **({"id": content.terminal_id} if node_type == "terminal" else {}),
             frame=NodeFrame(x=cx, y=cy, width=size[0] if size else 420, height=size[1] if size else 300),
             node_type=node_type,
             content=content,

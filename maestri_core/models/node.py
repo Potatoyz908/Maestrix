@@ -56,6 +56,26 @@ class NodeFrame:
         return self.x <= px <= (self.x + self.width) and self.y <= py <= (self.y + self.height)
 
 
+# Contract K4: the agent type the core uses for `ask` (wait for idle vs. shell prompt), derived from the launch command.
+AGENT_TYPES = {"claude": "claude_code", "codex": "codex", "gemini": "gemini_cli", "opencode": "open_code"}
+
+
+def agent_type_for_command(command: str) -> str:
+    """claude -> claude_code, codex -> codex, gemini -> gemini_cli, opencode -> open_code, anything else -> generic_shell.
+    Looks at the executable of the command line (`npx claude --resume` and `/usr/bin/codex` count too)."""
+    import os
+    import shlex
+    try:
+        words = shlex.split(command or "")
+    except ValueError:
+        words = (command or "").split()
+    for w in words[:3]:   # tolerate a launcher prefix (npx, env FOO=1, ...)
+        name = os.path.basename(w).lower()
+        if name in AGENT_TYPES:
+            return AGENT_TYPES[name]
+    return "generic_shell"
+
+
 @dataclass
 class TerminalContent:
     name: str = "Terminal"

@@ -923,6 +923,9 @@ class MaestriClient:
         workspace_id: Optional[str] = None,
         terminal_id: Optional[str] = None,
         display_name: Optional[str] = None,
+        agent_type: Optional[str] = None,
+        floor_id: Optional[str] = None,
+        role_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Creates a headless PTY terminal session on the server. `terminal_id` pins the id (a canvas node's
         terminalId), otherwise the core generates one. NOTE: the core replaces an existing session with the same id;
@@ -939,6 +942,12 @@ class MaestriClient:
             payload["id"] = terminal_id
         if display_name:
             payload["displayName"] = display_name
+        if agent_type:
+            payload["agentType"] = agent_type   # K4: claude_code / codex / gemini_cli / open_code / generic_shell
+        if floor_id:
+            payload["floorId"] = floor_id       # K12: the core injects MAESTRI_FLOOR_* into the PTY
+        if role_name:
+            payload["roleName"] = role_name     # RoleInjector writes the role's CLAUDE.md / AGENTS.md
 
         resp = self.session.post(
             f"{self.base_url}/api/terminals",
@@ -966,6 +975,9 @@ class MaestriClient:
         working_directory: str = "",
         workspace_id: Optional[str] = None,
         display_name: Optional[str] = None,
+        agent_type: Optional[str] = None,
+        floor_id: Optional[str] = None,
+        role_name: Optional[str] = None,
     ) -> bool:
         """Make sure the core runs a PTY for `terminal_id`: reuse a live one (its shell and scrollback survive a UI
         restart), create it otherwise. Returns True when a new session was created."""
@@ -979,7 +991,55 @@ class MaestriClient:
             workspace_id=workspace_id,
             terminal_id=terminal_id,
             display_name=display_name,
+            agent_type=agent_type,
+            floor_id=floor_id,
+            role_name=role_name,
         )
+        return True
+
+    def update_terminal(self, terminal_id: str, display_name: Optional[str] = None, **fields: Any) -> bool:
+        """PATCH /api/terminals/:id (displayName, roleName, ...): the core's session metadata (what `list` shows). False when
+        the core does not support it (404/405) or is unreachable; the name also travels in workspace.json on the next save."""
+        payload: Dict[str, Any] = {k: v for k, v in fields.items() if v is not None}
+        if display_name is not None:
+            payload["displayName"] = display_name
+        try:
+            resp = self.session.patch(
+                f"{self.base_url}/api/terminals/{urllib.parse.quote(terminal_id)}",
+                json=payload,
+                headers=self._headers({"Content-Type": "application/json"}),
+                timeout=self.timeout,
+            )
+            if resp.status_code in (404, 405):
+                return False
+            self._handle_response(resp)
+            return True
+        except AuthenticationError:
+            raise
+        except (requests.RequestException, MaestriAPIError):
+            return False
+
+    def restart_terminal(self, terminal_id: str) -> Dict[str, Any]:
+        """K13: POST /api/terminals/:id/restart - kill and recreate the PTY with the same parameters (same terminal id)."""
+        resp = self.session.post(
+            f"{self.base_url}/api/terminals/{urllib.parse.quote(terminal_id)}/restart",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        data = self._handle_response(resp)
+        try:
+            return data.json()
+        except ValueError:
+            return {}
+
+    def unload_terminal(self, terminal_id: str) -> bool:
+        """K13: POST /api/terminals/:id/unload - stop the PTY but keep the node (scrollback stays on disk)."""
+        resp = self.session.post(
+            f"{self.base_url}/api/terminals/{urllib.parse.quote(terminal_id)}/unload",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        self._handle_response(resp)
         return True
 
     def delete_terminal(self, terminal_id: str) -> bool:
