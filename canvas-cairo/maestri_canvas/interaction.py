@@ -18,7 +18,7 @@ from .drawn import DRAWN_KINDS, FREEHAND_PADDING, FREEHAND_TOOLS, SHAPE_TOOLS, T
 from .geometry import Point, Rect, round_half_away
 from .resize import Edge, resize_frame
 from .rope import RopeSimulation
-from .scene import ConnItem, PinSide, Scene, norm, pin_point
+from .scene import ConnItem, PinSide, Scene, WIDGET_KINDS, norm, pin_point
 from .alignment_guides import align, align_resize, candidates
 from .snapping import GuideLine, snap
 from .viewport import Viewport
@@ -352,7 +352,9 @@ class CanvasController:
             self._emit(DrawRequested(st.kind, frame))
         elif r.w >= MIN_NODE_WIDTH / 2 and r.h >= MIN_NODE_HEIGHT / 2:   # widget kinds
             x0, y0 = snapped(r.x), snapped(r.y)
-            frame = Rect(x0, y0, max(MIN_NODE_WIDTH, snapped(r.w)), max(MIN_NODE_HEIGHT, snapped(r.h)))
+            min_w = 280.0 if st.kind == "terminal" else MIN_NODE_WIDTH
+            min_h = 180.0 if st.kind == "terminal" else MIN_NODE_HEIGHT
+            frame = Rect(x0, y0, max(min_w, snapped(r.w)), max(min_h, snapped(r.h)))
             self._emit(DrawRequested(st.kind, frame))
 
     def cancel(self) -> bool:
@@ -439,6 +441,10 @@ class CanvasController:
             self.vp.focus_on(r, *self.size); self._viewport_changed(); return True
         if name == "p":
             self.set_tool("portal"); return True
+        if name == "t":
+            self.set_tool("terminal"); return True
+        if name == "v":
+            self.set_tool("select"); return True
         if name in ("left", "right", "up", "down") and self.scene.selection:
             step = CANVAS_GRID_SPACING * (NUDGE_SHIFT_MULT if mods & Mods.SHIFT else 1)
             dx = {"left": -step, "right": step}.get(name, 0.0)

@@ -336,6 +336,15 @@ class NewTerminalDialog(Gtk.Window):
         self.close()
         self.on_create(data)
 
+    def close(self) -> None:
+        try:
+            self.set_visible(False)
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        super().close()
+
 
 class EditTerminalDialog(Gtk.Window):
     """Matches macOS EditTerminalSheet.swift: edit Name, Command, Directory."""
@@ -452,3 +461,12 @@ class EditTerminalDialog(Gtk.Window):
         }
         self.close()
         self.on_save(data)
+
+    def close(self) -> None:
+        try:
+            self.set_visible(False)
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        super().close()

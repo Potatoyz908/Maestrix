@@ -75,6 +75,10 @@ class DrawingTools:
 
     # ---- canvas gestures -> document -----------------------------------------------------------------
     def _on_draw_requested(self, _cw, tool: str, x: float, y: float, w: float, h: float) -> None:
+        if tool == "terminal":
+            self.window.open_new_terminal_dialog(at=Point(x, y), size=(w, h))
+            self.window.canvas_widget.set_tool("select")
+            return
         if tool in WIDGET_KINDS:   # a widget tool (P = portal) dragged a frame: same node as the toolbar button, at that frame
             self.window._create_node(tool, at=Point(x, y), size=(w, h))
             return

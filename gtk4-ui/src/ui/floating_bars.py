@@ -126,8 +126,7 @@ class CanvasTopToolbar(Gtk.Box):
         if tool_id == "select":
             self.cw.set_tool("select")
         elif tool_id == "terminal":
-            self.window.open_new_terminal_dialog()
-            self._set_active_tool_btn("select")
+            self.cw.set_tool("terminal")
         elif tool_id == "stickyNote":
             self.window._create_node("stickyNote")
             self._set_active_tool_btn("select")
@@ -146,7 +145,7 @@ class CanvasTopToolbar(Gtk.Box):
             self.cw.set_tool("freehand_pen")
 
     def _on_canvas_tool_changed(self, _cw, tool: str) -> None:
-        mapping = {"select": "select", "text": "text", "freehand_pen": "draw", "freehand_highlighter": "draw"}
+        mapping = {"select": "select", "terminal": "terminal", "text": "text", "freehand_pen": "draw", "freehand_highlighter": "draw"}
         tid = mapping.get(tool, "select")
         self._set_active_tool_btn(tid)
 

@@ -1579,19 +1579,21 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self.sync.flush()
         return node
 
-    def open_new_terminal_dialog(self, at: Point | None = None, default_preset: str = "claude") -> NewTerminalDialog:
+    def open_new_terminal_dialog(self, at: Point | None = None, size: tuple[float, float] | None = None, default_preset: str = "claude") -> NewTerminalDialog:
         """Opens the macOS-matching 'New Terminal' modal dialog with Quick Start presets."""
         def on_create(data: dict):
             import uuid
             cwd = data.get("cwd") or self.floors.terminal_cwd() or os.path.expanduser("~")
             name = data.get("name") or "Terminal"
             cmd = data.get("command") or "bash"
+            term_w = size[0] if size else 560
+            term_h = size[1] if size else 360
             spawn_at = at or Point(
-                self.canvas_widget.viewport.origin.x + (self.canvas_widget.get_width() or 1000) / 2 / self.canvas_widget.viewport.zoom - 210,
-                self.canvas_widget.viewport.origin.y + (self.canvas_widget.get_height() or 700) / 2 / self.canvas_widget.viewport.zoom - 150,
+                self.canvas_widget.viewport.origin.x + (self.canvas_widget.get_width() or 1000) / 2 / self.canvas_widget.viewport.zoom - term_w / 2,
+                self.canvas_widget.viewport.origin.y + (self.canvas_widget.get_height() or 700) / 2 / self.canvas_widget.viewport.zoom - term_h / 2,
             )
             node_id = str(uuid.uuid4()).upper()
-            frame = NodeFrame(x=spawn_at.x, y=spawn_at.y, width=420, height=300)
+            frame = NodeFrame(x=spawn_at.x, y=spawn_at.y, width=term_w, height=term_h)
             content = TerminalContent(name=name, command=cmd, working_directory=cwd)
             node = CanvasNode(id=node_id, frame=frame, node_type="terminal", content=content, z_index=len(self.document.payload.nodes) + 1)
             self.document.payload.nodes.append(node)
@@ -1727,6 +1729,15 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if self._cleaned_up:
             return
         self._cleaned_up = True
+        if getattr(self, "_title_controls_timer", 0):
+            GLib.source_remove(self._title_controls_timer)
+            self._title_controls_timer = 0
+        if getattr(self, "_sidebar_tick", 0):
+            try:
+                self.paned.remove_tick_callback(self._sidebar_tick)
+            except Exception:
+                pass
+            self._sidebar_tick = 0
         self._core_link.dispose()
         if self._autosave_id:
             GLib.source_remove(self._autosave_id)
