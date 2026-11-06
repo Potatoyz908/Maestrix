@@ -38,7 +38,7 @@ ARTIFACTS_DIR="${REPO_ROOT}/artifacts/e2e-screenshots"
 mkdir -p "${ARTIFACTS_DIR}"
 
 # 3. Test execution under virtual framebuffer (1920x1080x24)
-TARGET="${1:-tests/e2e/test_gtk4_window_visual.py}"
+TARGET="${1:-tests/e2e}"
 shift || true
 EXTRA_ARGS=("$@")
 
