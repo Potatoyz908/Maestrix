@@ -331,14 +331,19 @@ class TestFullAppSmokeXvfb:
             # -----------------------------------------------------------------
             # 11. Criar rotina e executar run-now
             # -----------------------------------------------------------------
-            with patch.object(client, "create_routine") as mock_create_routine, patch.object(
-                client, "run_routine_now"
-            ) as mock_run_now:
-                mock_create_routine.return_value = {"id": "ROUTINE-1"}
-                r_id = client.create_routine("Smoke Routine", command="echo routine", interval=60)
-                client.run_routine_now("ROUTINE-1")
-                assert mock_create_routine.called
-                assert mock_run_now.called
+            # Against the real isolated core: create (real signature), list, run-now on t1's live PTY.
+            routine = client.create_routine("Smoke Routine", "echo smoke-routine", 3600, t1.id)
+            r_id = str(routine.get("id", "")).upper()
+            assert r_id, f"create_routine returned no id: {routine!r}"
+            assert any(str(r.get("id", "")).upper() == r_id for r in client.get_routines())
+            assert wait_until(lambda: client.get_terminal(t1.id) is not None, timeout=6.0), "t1 has no core PTY"
+            run_resp = client.session.post(
+                f"{client.base_url}/api/routines/{r_id}/run-now",
+                headers=client._headers({"Content-Type": "application/json"}),
+                timeout=30.0,
+            )
+            assert run_resp.status_code == 200, f"run-now: {run_resp.status_code} {run_resp.text}"
+            assert run_resp.json().get("status") == "ok"
             capture_step_screenshot(win, "11_routine_run_now_executed")
 
             # -----------------------------------------------------------------
@@ -358,17 +363,15 @@ class TestFullAppSmokeXvfb:
             # -----------------------------------------------------------------
             # 13. Salvar partitura e aplicar (K11)
             # -----------------------------------------------------------------
-            if hasattr(win, "save_partitura") and hasattr(win, "apply_partitura"):
-                with patch.object(client, "create_partitura") as mock_save_part, patch.object(
-                    client, "apply_partitura"
-                ) as mock_apply_part:
-                    mock_save_part.return_value = {"id": "PART-SMOKE-1", "name": "Smoke Partitura"}
-                    win.save_partitura("Smoke Partitura", [t1.id, t2.id])
-                    pump_gtk(60)
-                    win.apply_partitura("PART-SMOKE-1", at=Point(11000, 8800))
-                    pump_gtk(60)
-                    assert mock_save_part.called
-                    assert mock_apply_part.called
+            # Against the real isolated core (K11): save through the window, find it in the list, apply it, and the core's
+            # K2 events (or the apply reply) put two new nodes on the open canvas.
+            win.save_partitura("Smoke Partitura", [t1.id, t2.id])
+            assert wait_until(lambda: any(p.get("name") == "Smoke Partitura" for p in client.list_partituras()), timeout=6.0)
+            part_id = next(p["id"] for p in client.list_partituras() if p.get("name") == "Smoke Partitura")
+            nodes_before = len(win.document.payload.nodes)
+            win.apply_partitura(part_id, at=Point(11000, 8800))
+            assert wait_until(lambda: len(win.document.payload.nodes) >= nodes_before + 2, timeout=8.0), \
+                "applying the partitura did not add its two terminals to the canvas"
             capture_step_screenshot(win, "13_partitura_saved_and_applied")
 
             # Clean up window before server shutdown
