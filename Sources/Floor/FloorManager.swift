@@ -260,6 +260,12 @@ final class FloorManager {
     /// is checked out in Ground is refused (moving its ref would leave Ground's files behind). Returns the new target commit.
     @discardableResult
     func land(floor: Floor, targetBranch: String, workingDirectory: String) throws -> String {
+        // Resolve exact commit SHAs first to avoid races if target advances between preview and update-ref.
+        let oldTarget = try runGit(["rev-parse", "--verify", "refs/heads/\(targetBranch)"], in: workingDirectory)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let floorTip = try runGit(["rev-parse", "--verify", "refs/heads/\(floor.branchName)"], in: workingDirectory)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
         let p = try landPreview(floor: floor, target: targetBranch, workingDirectory: workingDirectory)
         if p.dirty { throw MaestriError.floorOperationFailed("floor has uncommitted changes") }
         if p.sameBranch { throw MaestriError.floorOperationFailed("target is the floor's own branch: nothing to land") }
@@ -269,14 +275,14 @@ final class FloorManager {
         if !p.conflicts.isEmpty { throw MaestriError.floorOperationFailed("merge conflicts: \(p.conflicts.joined(separator: ", "))") }
         if p.ahead == 0 { throw MaestriError.floorOperationFailed("nothing to land: \(floor.branchName) has no new commits") }
 
-        let oldTarget = try runGit(["rev-parse", "refs/heads/\(targetBranch)"], in: workingDirectory)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let floorTip = try runGit(["rev-parse", "refs/heads/\(floor.branchName)"], in: workingDirectory)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let isFastForward = (try? runGit(["merge-base", "--is-ancestor", oldTarget, floorTip], in: workingDirectory)) != nil
         var newCommit = floorTip
-        if !p.fastForward {
-            let tree = try runGit(["merge-tree", "--write-tree", targetBranch, floor.branchName], in: workingDirectory)
+        if !isFastForward {
+            let tree = try runGit(["merge-tree", "--write-tree", oldTarget, floorTip], in: workingDirectory)
                 .split(separator: "\n").first.map(String.init) ?? ""
+            guard !tree.isEmpty else {
+                throw MaestriError.floorOperationFailed("git merge-tree produced an empty tree")
+            }
             newCommit = try runGit(["commit-tree", tree, "-p", oldTarget, "-p", floorTip,
                                     "-m", "Land floor '\(floor.name)' (\(floor.branchName)) into \(targetBranch)"],
                                    in: workingDirectory).trimmingCharacters(in: .whitespacesAndNewlines)

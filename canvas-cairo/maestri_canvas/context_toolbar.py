@@ -334,7 +334,7 @@ class ContextToolbarHost:
             tb = DrawingContextToolbar(nid, kind, c.scene.get(nid).content, on_change=lambda patch, n=nid: self._change(n, patch),
                                        on_delete=lambda n=nid: c.emit("delete-requested", (n,)))
         setattr(tb, self.role_attr, ("content", nid))
-        tb.set_visible(False)   # shown by _place once it has a position (no flash at 0,0)
+        tb.set_opacity(0.0)
         c.add_overlay(tb)
         self.toolbar = tb
 
@@ -364,8 +364,9 @@ class ContextToolbarHost:
             tb.set_visible(False)
             return
         # the allocated size once there is one (measure() can differ from what the overlay allocates), else the natural size
-        tw = tb.get_width() or tb.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
-        th = tb.get_height() or tb.measure(Gtk.Orientation.VERTICAL, tw)[1]
+        # measure(-1) includes margins set on the widget: subtract them to get the actual outer bounds
+        tw = max(1, tb.measure(Gtk.Orientation.HORIZONTAL, -1)[1] - tb.get_margin_start() - tb.get_margin_end())
+        th = max(1, tb.measure(Gtk.Orientation.VERTICAL, -1)[1] - tb.get_margin_top() - tb.get_margin_bottom())
         x = min(max(self.MARGIN, (tl.x + br.x) / 2 - tw / 2), max(self.MARGIN, width - tw - self.MARGIN))
         y = tl.y - th - self.GAP
         if y < self.MARGIN:   # no room above: below the node, else pinned inside the top edge
@@ -377,3 +378,4 @@ class ContextToolbarHost:
             tb.set_margin_top(pos[1])
         if not tb.get_visible():
             tb.set_visible(True)
+        tb.set_opacity(1.0)

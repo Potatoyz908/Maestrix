@@ -104,13 +104,15 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.set_child(root)
 
         # 4. Setup Shortcuts
+        self._bus_handlers: list[tuple[object, int]] = []
         self._setup_shortcuts()
         self.floors = install_floors(self)       # floating Floors button (bottom-right) + New/Land/Delete dialogs
         self.routines = install_routines(self)   # File → Routines (Ctrl+Shift+R), scheduler on the main loop
         self.ask_agent = install_ask_agent(self)  # DiffView 'Ask agent' -> bus 'ask-agent' -> active terminal
 
-        bus.connect("workspace-switched", self._on_workspace_switched)
+        self._bus_handlers.append((bus, bus.connect("workspace-switched", self._on_workspace_switched)))
         self.connect("close-request", self._on_close_request)
+        self.connect("destroy", self._on_destroy)
 
         # Apply dark theme styling
         self._setup_theme()
@@ -188,7 +190,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         cw.controller.dirty = True
 
         # Real-time sync: bus events -> debounced snapshot -> REST (schemaVersion 2)
-        if not self.auth_failed:
+        if not self.auth_failed and self.core_connected:
             self.sync = WorkspaceSync(
                 self.client,
                 get_document=lambda: self.document,
@@ -198,7 +200,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                     self.canvas_widget.viewport.zoom,
                 ),
             )
-            bus.connect("status-changed", self._on_sync_status_changed)
+            self._bus_handlers.append((bus, bus.connect("status-changed", self._on_sync_status_changed)))
             self._restart_autosave()
 
         self.loading_label.set_visible(False)
@@ -332,7 +334,9 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_sync_status_changed(self, _emitter, status: str, ok: bool = True, *args):
-        if status == "save-failed" or not ok:
+        if not getattr(self, "core_connected", False) or getattr(self, "auth_failed", False):
+            return
+        if status in ("save-failed", "sync-failed") or not ok:
             self.lbl_status.set_label("⚠️ Falha ao Salvar")
             self.lbl_status.set_tooltip_text("O último salvamento para o servidor falhou.")
         elif status in ("idle", "saved", "save-ok") or ok:
@@ -786,14 +790,28 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if self.sync is not None:
             self.sync.flush()
 
-    def _on_close_request(self, *_args):
+    def _cleanup(self) -> None:
         if self._autosave_id:
             GLib.source_remove(self._autosave_id)
             self._autosave_id = 0
         if self.sync is not None:
             self.sync.close()
+            self.sync = None
+        if hasattr(self, "ask_agent") and self.ask_agent is not None:
+            self.ask_agent.dispose()
+            self.ask_agent = None
+        for obj, hid in list(self._bus_handlers):
+            if hasattr(obj, "handler_is_connected") and obj.handler_is_connected(hid):
+                obj.disconnect(hid)
+        self._bus_handlers.clear()
         self._release_terminals()
+
+    def _on_close_request(self, *_args):
+        self._cleanup()
         return False
+
+    def _on_destroy(self, *_args):
+        self._cleanup()
 
     def _release_terminals(self) -> None:
         """Window closing: hang up local shells; core-backed terminals only close their socket (the core keeps the shell)."""

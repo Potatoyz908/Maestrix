@@ -92,6 +92,8 @@ class AskAgentRouter:
         return tid, True, (f"Pasted into {name}: review and press Enter." if plain_shell else f"Sent to {name}.")
 
     def _on_ask(self, _bus, source_id: str, text: str) -> None:
+        if not self._handlers:
+            return
         target, ok, message = self.deliver(text)
         self.bus.emit("ask-agent-done", source_id, target, ok, message)
 
@@ -109,4 +111,5 @@ def install_ask_agent(window) -> AskAgentRouter:
 
     router = AskAgentRouter(window.canvas_widget, lambda: window.document.payload.nodes, bus)
     window.connect("close-request", lambda *_: router.dispose() or False)
+    window.connect("destroy", lambda *_: router.dispose())
     return router
