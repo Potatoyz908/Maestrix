@@ -72,6 +72,8 @@ class Xdo:
     def __init__(self, title: str) -> None:
         assert wait_until(lambda: self._find(title), timeout=5), "window not mapped"
         self.wid = self._find(title)
+        subprocess.run(["xdotool", "windowactivate", "--sync", self.wid], capture_output=True)
+        pump(0.05)
 
     @staticmethod
     def _find(title: str) -> str | None:

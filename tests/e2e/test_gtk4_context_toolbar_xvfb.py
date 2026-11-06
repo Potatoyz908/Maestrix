@@ -331,6 +331,8 @@ class Xdo:
         return out[0] if out else None
 
     def click(self, x, y):
+        subprocess.run(["xdotool", "windowactivate", "--sync", self.wid], capture_output=True)
+        pump(0.05)
         subprocess.run(["xdotool", "mousemove", "--window", self.wid, str(int(x)), str(int(y))], check=True)
         pump(0.05)
         subprocess.run(["xdotool", "click", "1"], check=True)
