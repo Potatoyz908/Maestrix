@@ -237,7 +237,6 @@ class TestK3PortalViewAndBridge:
         meta = PortalMeta(
             name="Portal Test",
             portal_id=str(uuid.uuid4()).upper(),
-            initial_url=html_file.as_uri(),
             current_url=html_file.as_uri(),
         )
         view = PortalView(meta, autoload=True)
@@ -284,7 +283,6 @@ class TestStickyNoteFileTreeRingsAndDeadCode:
         note_file.write_text("Initial disk content", encoding="utf-8")
 
         meta = NoteMeta(
-            name="WatchedNote",
             file_name="WatchedNote.md",
             storage_mode={"custom": {"_0": str(note_file)}},
         )
