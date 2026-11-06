@@ -1,7 +1,7 @@
 """Routines UI for Open Maestri GTK 4 (spec: docs/linux-gtk-sprint4-spec.md §2; reference docs/reference/official/11-routines.md).
 
 File → Routines… (`win.routines`, Ctrl+Shift+R) opens `RoutinesWindow` (non-modal): one row per routine with a live
-indicator (● pulsing while a run is in progress), name, target and interval, a Switch (pause / resume), Run now, Edit and
+indicator (a CSS dot, pulsing while a run is in progress), name, target and interval, a Switch (pause / resume), Run now, Edit and
 Delete. "New Routine" / Edit open `RoutineEditor`: name, prompt (`&&` on its own line chains prompts), interval
 (SpinButton + min/h DropDown, minimum 1 min) and the target terminal (DropDown of the workspace's terminals).
 
@@ -31,9 +31,9 @@ IDLE_QUIET_SECONDS = 2.0
 ENTER_DELAY_MS = 120      # TUIs (Claude Code, Codex…) treat text+CR in one write as a paste: press Enter separately
 
 CSS = """
-.routine-dot { color: alpha(currentColor, 0.35); font-size: 14px; }
-.routine-dot.active { color: #23d18b; }
-.routine-dot.running { color: #23d18b; animation: routine-pulse 1s ease-in-out infinite alternate; }
+.routine-dot { min-width: 9px; min-height: 9px; border-radius: 50%; background-color: alpha(currentColor, 0.35); }
+.routine-dot.active { background-color: #23d18b; }
+.routine-dot.running { background-color: #23d18b; animation: routine-pulse 1s ease-in-out infinite alternate; }
 @keyframes routine-pulse { from { opacity: 1; } to { opacity: 0.25; } }
 .routine-row { padding: 6px 8px; }
 """
@@ -403,7 +403,7 @@ class RoutinesWindow(Gtk.Window):
         row.routine_id = r.id
         box = Gtk.Box(spacing=10)
         box.add_css_class("routine-row")
-        dot = Gtk.Label(label="●")
+        dot = Gtk.Box(valign=Gtk.Align.CENTER)   # CSS-drawn status dot (no "●" glyph)
         dot.add_css_class("routine-dot")
         if c.is_running(r.id):
             dot.add_css_class("running")
@@ -463,12 +463,14 @@ class RoutinesWindow(Gtk.Window):
 # terminal header badge
 # ---------------------------------------------------------------------------------------------------------------------
 BADGE_KEY = "routine"
+BADGE_ICON = "maestri-timer-symbolic"   # terminal header badge of a terminal with active routines
 
 
 def routine_badges(routines: List[Routine], terminals: List[TerminalInfo],
                    is_running: Callable[[str], bool]) -> Dict[str, Optional[Tuple[str, str, Tuple[str, ...]]]]:
-    """node id -> (text, tooltip, css) for every terminal: "⏱" (or "⏱ N") when at least one ACTIVE routine targets it,
-    pulsing while one of them runs; None (no badge) when it has none or only paused ones."""
+    """node id -> (text, tooltip, css) for every terminal: the timer badge (BADGE_ICON) with text "" (or the count "N")
+    when at least one ACTIVE routine targets it, pulsing while one of them runs; None (no badge) when it has none or only
+    paused ones. Running routines are marked "(running)" in the tooltip."""
     out: Dict[str, Optional[Tuple[str, str, Tuple[str, ...]]]] = {}
     for tid, _name, nid in terminals:
         keys = {tid.upper(), nid.upper()}
@@ -477,8 +479,8 @@ def routine_badges(routines: List[Routine], terminals: List[TerminalInfo],
             out[nid] = None
             continue
         running = [r for r in mine if is_running(r.id)]
-        text = "⏱" if len(mine) == 1 else f"⏱ {len(mine)}"
-        lines = [f"{'▶ ' if is_running(r.id) else ''}{r.name} — {describe_interval(r.interval_seconds)}" for r in mine]
+        text = "" if len(mine) == 1 else str(len(mine))
+        lines = [f"{r.name} — {describe_interval(r.interval_seconds)}{' (running)' if is_running(r.id) else ''}" for r in mine]
         out[nid] = (text, "Routines:\n" + "\n".join(lines), ("routine-running",) if running else ())
     return out
 
@@ -488,7 +490,7 @@ def apply_routine_badges(canvas, controller: "RoutinesController", terminals: Ca
         if badge is None:
             canvas.set_node_badge(nid, BADGE_KEY, None)
         else:
-            canvas.set_node_badge(nid, BADGE_KEY, *badge)
+            canvas.set_node_badge(nid, BADGE_KEY, *badge, icon=BADGE_ICON)
 
 
 # ---------------------------------------------------------------------------------------------------------------------

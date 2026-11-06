@@ -287,9 +287,9 @@ def test_routine_badges_pure():
     paused.is_active = False
     out = routine_badges([a, b, paused], terms, lambda rid: rid == b.id)
     text, tip, css = out[AGENT]
-    assert text == "⏱ 2" and "Tests — every 5m" in tip and "▶ Review — every 1h" in tip and css == ("routine-running",)
+    assert text == "2" and "Tests — every 5m" in tip and "Review — every 1h (running)" in tip and css == ("routine-running",)
     assert out[SHELL] is None                                    # only a paused routine: no badge
-    assert routine_badges([a], terms, lambda _r: False)[AGENT] == ("⏱", "Routines:\nTests — every 5m", ())
+    assert routine_badges([a], terms, lambda _r: False)[AGENT] == ("", "Routines:\nTests — every 5m", ())
 
 
 def test_routine_badge_on_terminal_header_follows_controller(env):
@@ -313,7 +313,8 @@ def test_routine_badge_on_terminal_header_follows_controller(env):
     ctl.refresh()
     assert pump(lambda: cw.frames[AGENT].badge(BADGE_KEY) is not None)
     badge = cw.frames[AGENT].badge(BADGE_KEY)
-    assert badge.get_label() == "⏱" and cw.frames[SHELL].badge(BADGE_KEY) is None
+    assert badge.get_label() == "" and badge.maestri_icon.get_icon_name() == "maestri-timer-symbolic"   # icon, no emoji
+    assert cw.frames[SHELL].badge(BADGE_KEY) is None
     ctl.run_now(r.id)                                            # chain waits for idle: running -> pulsing badge
     assert badge.has_css_class("routine-running")
     ctl.set_active(r.id, False)

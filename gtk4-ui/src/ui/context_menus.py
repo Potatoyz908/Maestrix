@@ -45,13 +45,10 @@ def make_menu_row(
     box.set_margin_start(4)
     box.set_margin_end(4)
 
-    # Checkmark or Icon
+    # Checkmark or icon: a checked item shows the outline check where its icon goes (macOS "Monitor Activity ✓")
+    img = Gtk.Image.new_from_icon_name("maestri-check-symbolic" if is_checked else icon_name)
     if is_checked:
-        check_lbl = Gtk.Label(label="✓")
-        check_lbl.add_css_class("maestri-menu-check")
-        box.append(check_lbl)
-
-    img = Gtk.Image.new_from_icon_name(icon_name)
+        img.add_css_class("maestri-menu-check")
     img.set_icon_size(Gtk.IconSize.NORMAL)
     img.add_css_class("maestri-menu-icon")
     box.append(img)
@@ -61,7 +58,7 @@ def make_menu_row(
     box.append(lbl)
 
     if has_chevron:
-        chev = Gtk.Label(label="›")
+        chev = Gtk.Image.new_from_icon_name("maestri-chevron-right-symbolic")
         chev.add_css_class("maestri-menu-chevron")
         box.append(chev)
 
@@ -496,7 +493,7 @@ class NodeContextMenu(Gtk.Popover):
             self.cw.controller.dirty = True
             f = self._frame()
             if f:
-                f.set_badge("lock", "🔒" if item.locked else None)
+                f.set_badge("lock", "" if item.locked else None, "Locked", icon="maestri-lock-symbolic")
 
     def _on_delete(self) -> None:
         self.popdown()

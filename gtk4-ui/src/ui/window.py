@@ -45,6 +45,7 @@ from .sidebar import SidebarView
 from .terminal_dialog import EditTerminalDialog, NewTerminalDialog, PRESETS
 from .workspace_dialogs import CreateWorkspaceDialog, GroupDialog, create_workspace_record
 from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
+from .iconography import StatusIndicator, gicon, icon_label, icon_name, install_css as install_icon_css
 
 
 class OpenMaestriWindow(Gtk.ApplicationWindow):
@@ -227,12 +228,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self._offline_mutated = False
 
         if self.auth_failed:
-            self._update_status_label("🔴 Token Inválido")
+            self._update_status_label("Token Inválido", "error")
             self.lbl_status.set_tooltip_text("Falha de autenticação: token inválido ou ausente.")
         elif self.core_connected:
-            self._update_status_label(f"🟢 Porta {self.client.port}")
+            self._update_status_label(f"Porta {self.client.port}", "connected")
         else:
-            self._update_status_label("⚪ Standalone")
+            self._update_status_label("Standalone", "offline")
 
         cw = self.canvas_widget
         vp = self._viewport_from_payload()
@@ -276,7 +277,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if status == "connected" and not self.core_connected:
             self._core_link.stop()
             self.core_connected = True
-            self._update_status_label(f"🟢 Porta {self.client.port}")
+            self._update_status_label(f"Porta {self.client.port}", "connected")
             self.lbl_status.set_tooltip_text("Conectado ao core: sincronizando.")
             self._configure_notes_backend()
 
@@ -308,7 +309,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         elif status == "unauthorized":
             self._core_link.stop()
             self.auth_failed, self.core_connected = True, False
-            self._update_status_label("🔴 Token Inválido")
+            self._update_status_label("Token Inválido", "error")
             self.lbl_status.set_tooltip_text("Falha de autenticação: token inválido ou ausente.")
 
     def _apply_reconnected_workspace(self, doc) -> bool:
@@ -317,7 +318,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if not doc or not doc.payload:
             # B1: GET failed (core still starting or transient error): keep offline placeholder, no sync, keep probing
             self.core_connected = False
-            self._update_status_label("⚪ Standalone")
+            self._update_status_label("Standalone", "offline")
             self.lbl_status.set_tooltip_text("Core indisponível: as mudanças serão sincronizadas quando ele voltar.")
             self._core_link.start()
             return GLib.SOURCE_REMOVE
@@ -340,7 +341,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if not server_doc or not server_doc.payload:
             # B1: GET failed: keep offline placeholder, do not save demo orphan, retry probe
             self.core_connected = False
-            self._update_status_label("⚪ Standalone")
+            self._update_status_label("Standalone", "offline")
             self.lbl_status.set_tooltip_text("Core indisponível: as mudanças serão sincronizadas quando ele voltar.")
             self._core_link.start()
             return GLib.SOURCE_REMOVE
@@ -376,7 +377,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if self._cleaned_up or not self.core_connected:
             return
         self.core_connected = False
-        self._update_status_label("⚪ Standalone")
+        self._update_status_label("Standalone", "offline")
         self.lbl_status.set_tooltip_text("Core indisponível: as mudanças serão sincronizadas quando ele voltar.")
         self.floors.stop_events()
         self.floors.refresh()   # unavailable -> the floor button disables itself
@@ -406,6 +407,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             icons_dir = os.path.join(os.path.dirname(__file__), "icons")
             if os.path.isdir(icons_dir):
                 theme.add_search_path(icons_dir)
+            install_icon_css(display)   # status dot + icon sizes (ui/iconography.py)
         css_provider = Gtk.CssProvider()
         css = """
         window {
@@ -953,7 +955,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         header.pack_start(traffic_box)
 
         # Quick Add (+ Add) MenuButton
-        btn_quick_add = Gtk.MenuButton(label="＋ Add")
+        btn_quick_add = Gtk.MenuButton(child=icon_label("plus", "Add"))
         btn_quick_add.set_tooltip_text("Quick Create Node")
         btn_quick_add.add_css_class("maestri-header-btn")
         quick_menu = Gio.Menu()
@@ -961,7 +963,9 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         quick_menu.append("New Group…", "win.new-group")
         term_submenu = Gio.Menu()
         for preset in PRESETS:
-            term_submenu.append(f"{preset['icon']}  {preset['name']}", f"win.new-terminal-{preset['id']}")
+            preset_item = Gio.MenuItem.new(preset["name"], f"win.new-terminal-{preset['id']}")
+            preset_item.set_icon(gicon(preset["icon"]))   # outline icon (GTK shows it on label-less items only)
+            term_submenu.append_item(preset_item)
         term_submenu.append("New Terminal…", "win.new-terminal")
         quick_menu.append_submenu("Terminal", term_submenu)
         quick_menu.append("New Sticky Note", "win.new-note")
@@ -987,14 +991,14 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self._header = header
 
         # Right: Settings button
-        btn_settings = Gtk.Button(label="⚙️")
+        btn_settings = Gtk.Button(icon_name=icon_name("settings"))
         btn_settings.set_tooltip_text("Preferences")
         btn_settings.add_css_class("maestri-header-btn")
         btn_settings.connect("clicked", lambda _b: self.show_preferences())
         header.pack_end(btn_settings)
 
         # Backend Connection status indicator
-        self.lbl_status = Gtk.Label(label="⚪ Conectando...")
+        self.lbl_status = StatusIndicator("pending", "Conectando...")   # CSS dot in the semantic colour + text (no emoji)
         self.lbl_status.set_margin_end(8)
         header.pack_end(self.lbl_status)
 
@@ -1003,12 +1007,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         def worker():
             status = self.client.check_connection_status()
             if status == "connected":
-                status_text = f"🟢 Porta {self.client.port}"
+                status_text, state = f"Porta {self.client.port}", "connected"
             elif status == "unauthorized":
-                status_text = "🔴 Token Inválido"
+                status_text, state = "Token Inválido", "error"
             else:
-                status_text = "⚪ Standalone"
-            GLib.idle_add(self._update_status_label, status_text)
+                status_text, state = "Standalone", "offline"
+            GLib.idle_add(self._update_status_label, status_text, state)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1022,22 +1026,22 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self._core_link.probe(self._on_save_failed_probe)
         elif status in ("idle", "saved", "save-ok") or ok:
             if getattr(self, "core_connected", False) and not getattr(self, "auth_failed", False):
-                self.lbl_status.set_label(f"🟢 Porta {self.client.port}")
+                self.lbl_status.set_status("connected", f"Porta {self.client.port}")
                 self.lbl_status.set_tooltip_text("Conectado e sincronizado.")
 
     def _on_save_failed_probe(self, status: str) -> None:
         if self._cleaned_up or not self.core_connected:
             return
         if status == "connected":
-            self.lbl_status.set_label("⚠️ Falha ao Salvar")
+            self.lbl_status.set_status("warning", "Falha ao Salvar")
             self.lbl_status.set_tooltip_text("O último salvamento para o servidor falhou.")
         elif status == "unauthorized":
             self._on_core_probe(status)
         else:
             self._on_core_lost()
 
-    def _update_status_label(self, status_text: str):
-        self.lbl_status.set_label(status_text)
+    def _update_status_label(self, status_text: str, state: str = "pending"):
+        self.lbl_status.set_status(state, status_text)
         return GLib.SOURCE_REMOVE
 
     def _build_menu_model(self) -> Gio.Menu:

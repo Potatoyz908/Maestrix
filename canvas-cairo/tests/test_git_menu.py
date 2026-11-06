@@ -88,7 +88,7 @@ def test_indicator_shows_branch_and_dirty_state(repo, window):
     assert b.get_visible() and b.label.get_label() == "main"
     (repo / "a.txt").write_text("two\n")
     b.refresh(force=True)
-    assert pump_until(lambda: b.label.get_label() == "main ●")
+    assert pump_until(lambda: b.label.get_label() == "main" and b.dirty_dot.get_visible())
     assert "1 changed path" in b.menu_button.get_tooltip_text()
 
 
@@ -113,7 +113,8 @@ def test_menu_lists_every_reference_operation_and_branches(repo, window):
     labels = b.menu_labels()
     for op in ("Commit…", "Pull", "Push", "Fetch", "Checkout", "New Branch…", "Merge", "Stash", "Stash Pop", "Show Changes"):
         assert op in labels
-    assert "Checkout/✓ main" in labels and "Checkout/feature" in labels
+    assert "Checkout/main" in labels and "Checkout/feature" in labels
+    assert b.actions.get_action_state("checkout").get_string() == "main"   # current branch: radio mark, not "✓" text
     assert "Merge/feature" in labels and "Merge/main" not in labels   # never offer merging a branch into itself
 
 
@@ -124,7 +125,8 @@ def test_checkout_via_menu_action(repo, window):
     b.actions.activate_action("checkout", GLib.Variant.new_string("feature"))
     assert pump_until(lambda: done and b.label.get_label() == "feature")
     assert done[0].ok and git(repo, "branch", "--show-current").strip() == "feature"
-    assert "✓ checkout" in b.feedback_label.get_label() and b.feedback.get_reveal_child()
+    assert "checkout:" in b.feedback_label.get_label() and b.feedback.get_reveal_child()
+    assert b.feedback_icon.get_icon_name() == "maestri-check-symbolic"
 
 
 def test_new_branch_prompt_validates_and_creates(repo, window):
@@ -163,7 +165,8 @@ def test_stash_fetch_and_failure_feedback(repo, window):
     assert run(b, "stash").ok and (repo / "a.txt").read_text() == "one\n"
     assert run(b, "stash-pop").ok and (repo / "a.txt").read_text() == "wip\n"
     r = run(b, "push")                                 # no remote configured
-    assert not r.ok and "✗ push" in b.feedback_label.get_label()
+    assert not r.ok and "push:" in b.feedback_label.get_label()
+    assert b.feedback_icon.get_icon_name() == "maestri-warning-symbolic"
     assert b.feedback_label.has_css_class("error")
     assert run(b, "fetch").ok                          # no remotes: fetch is a no-op success
 

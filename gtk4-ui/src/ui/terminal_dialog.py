@@ -12,40 +12,43 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk  # noqa: E402
 
+from .iconography import check_button, icon_name  # noqa: E402
+
+# "icon" = outline icon of gtk4-ui/src/ui/icons (maestri-<icon>-symbolic), never an emoji
 PRESETS = [
     {
         "id": "claude",
         "name": "Claude Code",
         "command": "claude",
-        "icon": "✻",
+        "icon": "asterisk",
         "color": "#D97706",
     },
     {
         "id": "codex",
         "name": "Codex",
         "command": "codex",
-        "icon": "🧠",
+        "icon": "brain",
         "color": "#8B5CF6",
     },
     {
         "id": "gemini",
         "name": "Gemini CLI",
         "command": "gemini",
-        "icon": "✦",
+        "icon": "sparkle",
         "color": "#2563EB",
     },
     {
         "id": "opencode",
         "name": "OpenCode",
         "command": "opencode",
-        "icon": "📖",
+        "icon": "book-open",
         "color": "#059669",
     },
     {
         "id": "shell",
         "name": "Shell",
         "command": "bash",
-        "icon": ">_",
+        "icon": "terminal",
         "color": "#4B5563",
     },
 ]
@@ -104,8 +107,9 @@ class NewTerminalDialog(Gtk.Window):
             vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             vbox.set_size_request(68, 64)
 
-            icon_lbl = Gtk.Label(label=p["icon"])
+            icon_lbl = Gtk.Image.new_from_icon_name(icon_name(p["icon"]))   # outline icon (theme colour)
             icon_lbl.add_css_class("maestri-preset-icon")
+            icon_lbl.add_css_class("maestri-preset-icon-img")
             name_lbl = Gtk.Label(label=p["name"], ellipsize=3)
             name_lbl.add_css_class("maestri-preset-name")
 
@@ -222,11 +226,11 @@ class NewTerminalDialog(Gtk.Window):
         checks_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         checks_box.set_margin_top(4)
 
-        self.chk_monitor = Gtk.CheckButton(label="👁️ Monitor Activity")
+        self.chk_monitor = check_button("eye", "Monitor Activity")
         self.chk_monitor.set_active(True)
         checks_box.append(self.chk_monitor)
 
-        self.chk_maestro = Gtk.CheckButton(label="✨ Maestro")
+        self.chk_maestro = check_button("sparkles", "Maestro")
         self.chk_maestro.set_active(False)
         checks_box.append(self.chk_maestro)
 

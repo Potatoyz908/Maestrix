@@ -234,7 +234,7 @@ def test_shape_toolbar_emits_patches_with_macos_ranges(canvas):
     tb.fill_items["hatched"].emit("clicked")
     tb.stroke_items["dotted"].emit("clicked")
     assert changes[-2]["fillStyle"] == "hatched" and changes[-1]["strokeStyle"] == "dotted"
-    assert tb.fill_items["hatched"].get_label().startswith("✓")
+    assert tb.fill_items["hatched"].has_css_class("checked") and not tb.fill_items["solid"].has_css_class("checked")
     n = len(changes)
     tb.palette_buttons["purple"].emit("clicked")                                 # same value: no change emitted
     assert len(changes) == n

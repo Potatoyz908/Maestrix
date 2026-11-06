@@ -281,7 +281,7 @@ class StickyNoteView(Gtk.Box):
         self.saver.flush(done)
 
     def _on_save_state(self, state: str, err: Exception | None) -> None:
-        label = {"dirty": "●", "saving": "Saving…", "saved": "Saved", "error": "Save failed", "idle": ""}[state]
+        label = {"dirty": "Unsaved", "saving": "Saving…", "saved": "Saved", "error": "Save failed", "idle": ""}[state]
         self.status.set_text(label)
         (self.status.add_css_class if state == "error" else self.status.remove_css_class)("error")
         if state == "error":

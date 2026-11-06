@@ -239,7 +239,7 @@ class NodeFrame(Gtk.Overlay):
         header.set_size_request(-1, HEADER_H)
         setattr(header, _ROLE, ("header", item.id))
         self.title = Gtk.Label(label=item.title or item.id[:8], xalign=0, hexpand=True, ellipsize=3)
-        close = Gtk.Button(label="×")
+        close = Gtk.Button(icon_name="maestri-close-symbolic", tooltip_text="Close")   # outline icon, not a "×" glyph
         close.add_css_class("flat")
         close.connect("clicked", lambda _b: on_close(self.node_id))
         setattr(close, _ROLE, ("content", item.id))   # a real button: it keeps its own click
@@ -323,11 +323,14 @@ class NodeFrame(Gtk.Overlay):
         if n_press == 2:
             self.start_inline_rename()
 
-    def set_badge(self, key: str, text: str | None, tooltip: str = "", css: tuple[str, ...] = ()) -> None:
-        """Show `text` as the header badge `key`; None removes it. `css` replaces the badge's extra style classes."""
+    def set_badge(self, key: str, text: str | None, tooltip: str = "", css: tuple[str, ...] = (), icon: str | None = None) -> None:
+        """Show `text` as the header badge `key`; None removes it. `css` replaces the badge's extra style classes.
+        `icon` = a symbolic icon name drawn before the text (outline, theme colour; the text may then be "" or a count)."""
         lbl = self._badges.get(key)
         if text is None:
             if lbl is not None:
+                if lbl.maestri_icon is not None:
+                    self.badges.remove(lbl.maestri_icon)
                 self.badges.remove(lbl)
                 del self._badges[key]
             return
@@ -336,14 +339,30 @@ class NodeFrame(Gtk.Overlay):
             lbl.add_css_class("maestri-node-badge")
             setattr(lbl, _ROLE, ("header", self.node_id))
             lbl.maestri_css = ()
+            lbl.maestri_icon = None
             self._badges[key] = lbl
             self.badges.append(lbl)
+        if icon is not None:
+            if lbl.maestri_icon is None:
+                lbl.maestri_icon = Gtk.Image()
+                lbl.maestri_icon.add_css_class("maestri-node-badge-icon")
+                setattr(lbl.maestri_icon, _ROLE, ("header", self.node_id))
+                self.badges.insert_child_after(lbl.maestri_icon, lbl.get_prev_sibling())
+            lbl.maestri_icon.set_from_icon_name(icon)
+            lbl.maestri_icon.set_tooltip_text(tooltip or None)
+        elif lbl.maestri_icon is not None:
+            self.badges.remove(lbl.maestri_icon)
+            lbl.maestri_icon = None
         lbl.set_label(text)
+        lbl.set_visible(bool(text) or lbl.maestri_icon is None)
         lbl.set_tooltip_text(tooltip or None)
-        for c in lbl.maestri_css:
-            lbl.remove_css_class(c)
-        for c in css:
-            lbl.add_css_class(c)
+        for w in (lbl, lbl.maestri_icon):
+            if w is None:
+                continue
+            for c in lbl.maestri_css:
+                w.remove_css_class(c)
+            for c in css:
+                w.add_css_class(c)
         lbl.maestri_css = tuple(css)
 
     def badge(self, key: str) -> Gtk.Label | None:
@@ -396,7 +415,10 @@ CSS = b"""
 .maestri-node.selected { border: 2px dashed #3b82f6; }
 .maestri-node-header { background: alpha(currentColor, .06); padding: 0 8px; border-radius: 7px 7px 0 0; }
 .maestri-node-badge { font-size: 12px; padding: 0 5px; border-radius: 8px; background: alpha(currentColor, .10); }
-.maestri-node-badge.routine-paused { opacity: .45; }
+.maestri-node-badge.routine-paused, .maestri-node-badge-icon.routine-paused { opacity: .45; }
+.maestri-node-badge-icon { margin-left: 2px; }
+.maestri-node-badge-icon.routine-running { color: #23d18b; animation: maestri-badge-pulse 1s ease-in-out infinite alternate; }
+.maestri-git-dirty-dot { min-width: 6px; min-height: 6px; border-radius: 50%; background-color: #f59e0b; }
 .maestri-node-badge.routine-running { color: #23d18b; animation: maestri-badge-pulse 1s ease-in-out infinite alternate; }
 @keyframes maestri-badge-pulse { from { opacity: 1; } to { opacity: .35; } }
 .maestri-pin { background: #3b82f6; border: 2px solid white; border-radius: 50%; opacity: 0; transition: opacity 120ms; }
@@ -575,12 +597,13 @@ class CanvasWidget(Gtk.Overlay):
             if focus:
                 GLib.idle_add(lambda: (content.grab_focus(), False)[1])
 
-    def set_node_badge(self, node_id: str, key: str, text: str | None, tooltip: str = "", css: tuple[str, ...] = ()) -> bool:
+    def set_node_badge(self, node_id: str, key: str, text: str | None, tooltip: str = "", css: tuple[str, ...] = (),
+                       icon: str | None = None) -> bool:
         """Header badge on a widget node (see NodeFrame.set_badge). False when the node has no frame."""
         frame = self.frames.get(norm(node_id))
         if frame is None:
             return False
-        frame.set_badge(key, text, tooltip, css)
+        frame.set_badge(key, text, tooltip, css, icon)
         return True
 
     def remove_node(self, node_id: str) -> None:

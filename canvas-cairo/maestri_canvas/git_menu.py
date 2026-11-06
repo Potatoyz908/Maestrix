@@ -1,13 +1,13 @@
 """Branch indicator + Git operations menu for the FileTree toolbar (spec: docs/reference/maestri-reference-index.md §7).
 
-    [⎇ main ↑1 ●]  -> Commit… / Pull / Push / Fetch | Checkout ▸ / New Branch… / Merge ▸ | Stash / Stash Pop | Show Changes / Refresh
+    [branch-icon main ↑1 dirty-dot]  -> Commit… / Pull / Push / Fetch | Checkout ▸ / New Branch… / Merge ▸ | Stash / Stash Pop | Show Changes / Refresh
 
 `GitBranchButton(root)` is self-contained: it reads `GitOps.status()` (60 s TTL cache shared by every tree on the canvas,
 invalidated by each action), hides itself outside a repository, and runs every action through `GitOps` (Gio.Subprocess,
 argv only, never blocks the main loop). Commit and New Branch ask for their text in a small popover anchored to the button.
 
 Signals: `status-changed(GitStatus)`, `action-finished(GitResult)`, `diff-requested()`. `feedback` is a Gtk.Revealer with
-the last result line ("✓ pull: Already up to date.") for the host to place under its toolbar.
+the last result line (check icon + "pull: Already up to date.") for the host to place under its toolbar.
 """
 from __future__ import annotations
 
@@ -52,7 +52,9 @@ class GitBranchButton(Gtk.Box):
         self._add_action("new-branch", lambda *_: self.prompt("new-branch"))
         self._add_action("show-diff", lambda *_: self.emit("diff-requested"))
         self._add_action("refresh", lambda *_: self.refresh(force=True))
-        self._add_action("checkout", lambda _a, p: self.run_action("checkout", p.get_string()), GLib.VariantType.new("s"))
+        # stateful: state = current branch, so the Checkout submenu marks it with GTK's own radio indicator (no "✓" text)
+        self._add_action("checkout", lambda _a, p: self.run_action("checkout", p.get_string()), GLib.VariantType.new("s"),
+                         state=GLib.Variant.new_string(""))
         self._add_action("merge", lambda _a, p: self.run_action("merge", p.get_string()), GLib.VariantType.new("s"))
         self.insert_action_group("git", self.actions)
 
@@ -60,8 +62,11 @@ class GitBranchButton(Gtk.Box):
         self.label = Gtk.Label(ellipsize=Pango.EllipsizeMode.END, max_width_chars=22)
         self.spinner = Gtk.Spinner(visible=False)
         content = Gtk.Box(spacing=4)
-        content.append(Gtk.Image(icon_name="media-playlist-shuffle-symbolic"))   # stands in for a branch glyph
+        content.append(Gtk.Image(icon_name="maestri-git-branch-symbolic"))   # outline branch icon (gtk4-ui/src/ui/icons)
         content.append(self.label)
+        self.dirty_dot = Gtk.Box(valign=Gtk.Align.CENTER, visible=False, tooltip_text="Uncommitted changes")
+        self.dirty_dot.add_css_class("maestri-git-dirty-dot")   # CSS-drawn, replaces the "●" glyph
+        content.append(self.dirty_dot)
         content.append(self.spinner)
         self.menu_button = Gtk.MenuButton(menu_model=self.menu, tooltip_text="Git")
         self.menu_button.set_child(content)
@@ -87,7 +92,11 @@ class GitBranchButton(Gtk.Box):
         self.feedback_label = Gtk.Label(xalign=0, wrap=True, wrap_mode=Pango.WrapMode.WORD_CHAR, selectable=True,
                                         margin_start=8, margin_end=8, margin_top=2, margin_bottom=2)
         self.feedback = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN, reveal_child=False)
-        self.feedback.set_child(self.feedback_label)
+        self.feedback_icon = Gtk.Image(margin_start=8, visible=False)   # check / warning outline instead of ✓ / ✗
+        feedback_box = Gtk.Box()
+        feedback_box.append(self.feedback_icon)
+        feedback_box.append(self.feedback_label)
+        self.feedback.set_child(feedback_box)
 
         self.set_visible(False)       # until status says this is a repository
         self.connect("destroy", lambda _w: self.input_popover.unparent())
@@ -146,8 +155,8 @@ class GitBranchButton(Gtk.Box):
         return out
 
     # ---- internals --------------------------------------------------------------------------------
-    def _add_action(self, name: str, cb, param: GLib.VariantType | None = None) -> None:
-        a = Gio.SimpleAction.new(name, param)
+    def _add_action(self, name: str, cb, param: GLib.VariantType | None = None, state: GLib.Variant | None = None) -> None:
+        a = Gio.SimpleAction.new(name, param) if state is None else Gio.SimpleAction.new_stateful(name, param, state)
         a.connect("activate", cb)
         self.actions.add_action(a)
 
@@ -183,13 +192,12 @@ class GitBranchButton(Gtk.Box):
             return
         self.branches = names
         current = self.status.branch
+        self.actions.lookup_action("checkout").set_state(GLib.Variant.new_string(current or ""))
         self.checkout_menu.remove_all()
         self.merge_menu.remove_all()
         for name in names:
             item = Gio.MenuItem.new(name, None)
             item.set_action_and_target_value("git.checkout", GLib.Variant.new_string(name))
-            if name == current:
-                item.set_attribute_value("label", GLib.Variant.new_string(f"✓ {name}"))
             self.checkout_menu.append_item(item)
             if name != current:
                 m = Gio.MenuItem.new(name, None)
@@ -203,8 +211,10 @@ class GitBranchButton(Gtk.Box):
         self.set_visible(st.is_repo)
         if st.is_repo:
             name = st.branch or "detached"
-            extra = (f" ↑{st.ahead}" if st.ahead else "") + (f" ↓{st.behind}" if st.behind else "") + (" ●" if st.dirty else "")
+            extra = (f" ↑{st.ahead}" if st.ahead else "") + (f" ↓{st.behind}" if st.behind else "")
             self.label.set_label(name + extra)
+            self.dirty_dot.set_visible(st.dirty)
+            self.actions.lookup_action("checkout").set_state(GLib.Variant.new_string(st.branch or ""))
             tip = [f"Branch: {name}"]
             if st.upstream:
                 tip.append(f"Upstream: {st.upstream} (ahead {st.ahead}, behind {st.behind})")
@@ -226,13 +236,16 @@ class GitBranchButton(Gtk.Box):
             return
         lines = [ln for ln in r.output.splitlines() if ln.strip()]
         detail = lines[-1] if lines else ("done" if r.ok else "failed")
-        self._show_feedback(f"{'✓' if r.ok else '✗'} {r.action}: {detail}", r.ok)
+        self._show_feedback(f"{r.action}: {detail}", r.ok)
         self.refresh(force=True)
         self.emit("action-finished", r)
 
     def _show_feedback(self, text: str, ok: bool | None) -> None:
         lbl = self.feedback_label
         lbl.set_label(text)
+        self.feedback_icon.set_visible(ok is not None)
+        if ok is not None:
+            self.feedback_icon.set_from_icon_name("maestri-check-symbolic" if ok else "maestri-warning-symbolic")
         for c in ("success", "error", "dim-label"):
             lbl.remove_css_class(c)
         lbl.add_css_class("dim-label" if ok is None else "success" if ok else "error")

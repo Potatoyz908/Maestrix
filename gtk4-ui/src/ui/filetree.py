@@ -9,6 +9,8 @@ from maestri_core.gitops import GitOps, GitResult
 from maestri_core.signals.bus import bus
 from maestri_core.models.node import FileTreeContent
 
+from .iconography import icon_label, icon_name
+
 _BADGE_CSS = {"M": "warning", "A": "success", "D": "error", "R": "accent", "?": "dim-label"}
 
 
@@ -35,7 +37,11 @@ class FileTreeWidget(Gtk.Box):
             self._box.remove(child)
             child = nxt
         if self.model.error and not self.model.entries(""):
-            self._box.append(Gtk.Label(label=f"⚠ {self.model.error}", xalign=0, wrap=True, margin_start=8, margin_top=8))
+            err = icon_label("warning", self.model.error)
+            err.set_margin_start(8)
+            err.set_margin_top(8)
+            err.label.set_wrap(True)
+            self._box.append(err)
         self._add_level("", 0)
         return GLib.SOURCE_REMOVE
 
@@ -48,8 +54,16 @@ class FileTreeWidget(Gtk.Box):
     def _row(self, e: FileEntry, depth: int) -> Gtk.Widget:
         btn = Gtk.Button(has_frame=False)
         row = Gtk.Box(spacing=6, margin_start=8 + depth * 14)
-        arrow = ("▾ " if e.path in self._expanded else "▸ ") if e.is_dir else "   "
-        row.append(Gtk.Label(label=f"{arrow}{'📁' if e.is_dir else '📄'} {e.name}", xalign=0, hexpand=True))
+        if e.is_dir:   # disclosure chevron (rotated when expanded) + folder outline; files get an aligned blank slot
+            chev = Gtk.Image.new_from_icon_name(icon_name("chevron-right"))
+            if e.path in self._expanded:
+                chev.add_css_class("maestri-expanded")
+            row.append(chev)
+        else:
+            row.append(Gtk.Box(width_request=16))
+        row.append(Gtk.Image.new_from_icon_name(icon_name("folder-open" if e.is_dir and e.path in self._expanded
+                                                          else "folder" if e.is_dir else "file")))
+        row.append(Gtk.Label(label=e.name, xalign=0, hexpand=True))
         badge = self.model.badge_for(e)
         if badge:
             lbl = Gtk.Label(label=badge, margin_end=6)
@@ -79,14 +93,14 @@ class FileTreeWidget(Gtk.Box):
     def _build_toolbar(self) -> Gtk.Widget:
         bar = Gtk.Box(spacing=4, margin_start=6, margin_end=6, margin_top=4)
         self._git_buttons = []
-        for label, tip, handler in (
-            ("⬇ Pull", "git pull --ff-only", lambda: self._run_git("pull")),
-            ("⬆ Push", "git push", lambda: self._run_git("push")),
-            ("⎇ Checkout", "Switch branch", self._choose_branch),
-            ("📦 Stash", "git stash push -u", lambda: self._run_git("stash")),
-            ("📤 Pop", "git stash pop", lambda: self._run_git("stash-pop")),
+        for icon, label, tip, handler in (
+            ("arrow-down", "Pull", "git pull --ff-only", lambda: self._run_git("pull")),
+            ("arrow-up", "Push", "git push", lambda: self._run_git("push")),
+            ("git-branch", "Checkout", "Switch branch", self._choose_branch),
+            ("archive", "Stash", "git stash push -u", lambda: self._run_git("stash")),
+            ("archive-out", "Pop", "git stash pop", lambda: self._run_git("stash-pop")),
         ):
-            b = Gtk.Button(label=label, tooltip_text=tip)
+            b = Gtk.Button(child=icon_label(icon, label), tooltip_text=tip)
             b.connect("clicked", lambda _b, h=handler: h())
             bar.append(b)
             self._git_buttons.append(b)
@@ -103,7 +117,7 @@ class FileTreeWidget(Gtk.Box):
 
     def _on_git_done(self, r: GitResult) -> None:
         first = r.output.splitlines()[-1] if r.output else ""
-        self._set_busy(False, ("✓ " if r.ok else "✗ ") + f"{r.action}: {first}")
+        self._set_busy(False, f"{r.action} {'ok' if r.ok else 'failed'}: {first}")
         self.model.refresh_async(lambda: GLib.idle_add(self._rebuild))
         bus.emit("status-changed", f"git-{r.action}", r.ok)
 
@@ -114,7 +128,7 @@ class FileTreeWidget(Gtk.Box):
     def _show_branch_popover(self, branches) -> None:
         self._set_busy(False)
         if not branches:
-            self._status.set_text("✗ no branches found")
+            self._status.set_text("No branches found")
             return
         pop = Gtk.Popover()
         pop.set_parent(self._git_buttons[2])

@@ -156,7 +156,12 @@ class FileTreeView(Gtk.Box):
         self.status_label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, visible=False, margin_start=8, margin_end=8,
                                       margin_top=2, margin_bottom=2)
         self.status_label.add_css_class("caption")
-        self.append(self.status_label)
+        self.status_icon = Gtk.Image(icon_name="maestri-warning-symbolic", visible=False, margin_start=8)   # errors: outline icon, no "⚠"
+        self.status_icon.add_css_class("error")
+        status_row = Gtk.Box()
+        status_row.append(self.status_icon)
+        status_row.append(self.status_label)
+        self.append(status_row)
 
         self._install_actions()
         keys = Gtk.EventControllerKey()
@@ -756,8 +761,9 @@ class FileTreeView(Gtk.Box):
 
     def _status(self, text: str, ok: bool) -> None:
         self.last_error = None if ok else text
-        self.status_label.set_label(("" if ok else "⚠ ") + text)
+        self.status_label.set_label(text)
         self.status_label.set_visible(bool(text))
+        self.status_icon.set_visible(bool(text) and not ok)
         (self.status_label.remove_css_class if ok else self.status_label.add_css_class)("error")
         self.emit("status-changed", text, ok)
 

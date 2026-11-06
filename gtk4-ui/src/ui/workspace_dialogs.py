@@ -18,6 +18,8 @@ from gi.repository import GLib, Gtk  # noqa: E402
 
 from maestri_core.models.workspace import WorkspaceEntry
 
+from .iconography import sf_symbol_icon
+
 
 def _close_modal(win: Gtk.Window) -> None:
     """GTK4 / Python 3.14: drop modality and the transient parent BEFORE closing, else the parent can stay insensitive; then
@@ -130,45 +132,45 @@ def create_workspace_record(client, name: str, wd: str, icon: str = "folder") ->
     return new_id
 
 
-# 8 core icon options for creation (matching CreateWorkspaceSheet.swift)
-CREATE_ICON_OPTIONS = [
-    ("📁", "folder"),
-    ("📂", "folder.fill"),
-    ("💻", "terminal.fill"),
-    ("⚙️", "cpu"),
-    ("🧠", "brain"),
-    ("🖥️", "desktopcomputer"),
-    ("🌐", "network"),
-    ("🗄️", "server.rack"),
-]
+# (outline icon name, SF Symbol name stored in the workspace). 8 core icon options for creation (CreateWorkspaceSheet.swift)
+CREATE_ICON_OPTIONS = [(sf_symbol_icon(n), n) for n in (
+    "folder",
+    "folder.fill",
+    "terminal.fill",
+    "cpu",
+    "brain",
+    "desktopcomputer",
+    "network",
+    "server.rack",
+)]
 
 # 24 icons for edit grid (matching EditWorkspaceSheet.swift 8x3 grid)
-EDIT_ICON_OPTIONS = [
-    ("📁", "folder"),
-    ("📂", "folder.fill"),
-    ("💻", "terminal.fill"),
-    ("⭐", "star.fill"),
-    ("🎭", "theatermasks"),
-    ("⚙️", "gear"),
-    ("💬", "bubble.left.and.bubble.right"),
-    ("🧠", "cpu"),
-    ("🔲", "rectangle"),
-    ("📋", "list.bullet.rectangle"),
-    ("🌐", "globe"),
-    ("🔨", "hammer.fill"),
-    ("🔧", "wrench.and.screwdriver"),
-    ("⚡", "bolt.fill"),
-    ("⏹️", "square.on.square"),
-    ("📸", "photo.on.rectangle.angled"),
-    ("💻", "laptopcomputer"),
-    ("🖥️", "desktopcomputer"),
-    ("🎨", "paintbrush.fill"),
-    ("📄", "doc.text"),
-    ("📦", "shippingbox"),
-    ("🧊", "cube"),
-    ("👁️", "eye"),
-    ("😀", "face.smiling"),
-]
+EDIT_ICON_OPTIONS = [(sf_symbol_icon(n), n) for n in (
+    "folder",
+    "folder.fill",
+    "terminal.fill",
+    "star.fill",
+    "theatermasks",
+    "gear",
+    "bubble.left.and.bubble.right",
+    "cpu",
+    "rectangle",
+    "list.bullet.rectangle",
+    "globe",
+    "hammer.fill",
+    "wrench.and.screwdriver",
+    "bolt.fill",
+    "square.on.square",
+    "photo.on.rectangle.angled",
+    "laptopcomputer",
+    "desktopcomputer",
+    "paintbrush.fill",
+    "doc.text",
+    "shippingbox",
+    "cube",
+    "eye",
+    "face.smiling",
+)]
 
 # 9 color options (matching EditWorkspaceSheet.swift)
 COLOR_OPTIONS = [
@@ -277,8 +279,8 @@ class CreateWorkspaceDialog(Gtk.Window):
         icon_flow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.icon_buttons: dict[str, Gtk.Button] = {}
 
-        for emoji, name in CREATE_ICON_OPTIONS:
-            btn = Gtk.Button(label=emoji)
+        for icon, name in CREATE_ICON_OPTIONS:
+            btn = Gtk.Button(icon_name=icon)
             btn.add_css_class("maestri-icon-btn")
             if name == self.selected_icon:
                 btn.add_css_class("active")
@@ -417,8 +419,8 @@ class EditWorkspaceDialog(Gtk.Window):
         # Chunk into rows of 8
         for i in range(0, len(EDIT_ICON_OPTIONS), 8):
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            for emoji, name in EDIT_ICON_OPTIONS[i:i+8]:
-                btn = Gtk.Button(label=emoji)
+            for icon, name in EDIT_ICON_OPTIONS[i:i+8]:
+                btn = Gtk.Button(icon_name=icon)
                 btn.add_css_class("maestri-icon-btn")
                 if name == self.selected_icon:
                     btn.add_css_class("active")

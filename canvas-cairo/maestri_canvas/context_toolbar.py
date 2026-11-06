@@ -26,15 +26,20 @@ from .markdown_format import format_edit  # noqa: E402
 
 # NoteColorPickerPopover rows (shapes, drawings and text labels resolve their colour names with this palette)
 PALETTE = ("yellow", "pink", "blue", "green", "orange", "purple", "white", "black", "darkgray", "darkblue")
-STROKE_STYLES = (("solid", "━  Sólido"), ("dashed", "╍  Tracejado"), ("dotted", "┈  Pontilhado"))
-FILL_STYLES = (("solid", "■  Sólido"), ("none", "□  Sem preenchimento"), ("hatched", "▨  Hachurado"),
-               ("crossHatched", "▦  Hachura cruzada"))
+# (value, label, outline icon). Icons: gtk4-ui/src/ui/icons (maestri-*-symbolic, registered by the window) - no glyph art.
+STROKE_STYLES = (("solid", "Sólido", "maestri-stroke-solid-symbolic"), ("dashed", "Tracejado", "maestri-stroke-dashed-symbolic"),
+                 ("dotted", "Pontilhado", "maestri-stroke-dotted-symbolic"))
+FILL_STYLES = (("solid", "Sólido", "maestri-fill-solid-symbolic"), ("none", "Sem preenchimento", "maestri-fill-none-symbolic"),
+               ("hatched", "Hachurado", "maestri-fill-hatched-symbolic"),
+               ("crossHatched", "Hachura cruzada", "maestri-fill-crosshatched-symbolic"))
+ICON = "icon:"   # a NOTE_ACTIONS / _button label starting with this is an icon name, not text
 STROKE_RANGE = (1, 20)                                    # ShapeContextToolbar / FreehandContextToolbar
 FONT_RANGE = {"text": (8, 96), "shape": (8, 72)}          # TextContextToolbar / shape caption
 NOTE_ACTIONS = (("bold", "<b>B</b>", "Negrito (**)"), ("italic", "<i>I</i>", "Itálico (*)"),
                 ("strike", "<s>S</s>", "Tachado (~~)"), ("code", "<tt>&lt;/&gt;</tt>", "Código inline (`)"),
                 ("h1", "H1", "Título 1 (#)"), ("h2", "H2", "Título 2 (##)"),
-                ("bullet", "•≡", "Item de lista (-)"), ("task", "☐", "Tarefa (- [ ])"))
+                ("bullet", ICON + "maestri-list-symbolic", "Item de lista (-)"),
+                ("task", ICON + "maestri-list-checks-symbolic", "Tarefa (- [ ])"))
 
 _CSS = b"""
 .maestri-context-toolbar { background: #ffffff; color: #1f1f1f; border: 1px solid #e3e3e3; border-radius: 9px;
@@ -63,9 +68,12 @@ def _install_css() -> None:
 
 def _button(label: str, tooltip: str, on_click: Callable[[], None], markup: bool = False) -> Gtk.Button:
     b = Gtk.Button(focus_on_click=False, can_focus=False, tooltip_text=tooltip)
-    lbl = Gtk.Label()
-    (lbl.set_markup if markup else lbl.set_text)(label)
-    b.set_child(lbl)
+    if label.startswith(ICON):
+        b.set_child(Gtk.Image.new_from_icon_name(label[len(ICON):]))
+    else:
+        lbl = Gtk.Label()
+        (lbl.set_markup if markup else lbl.set_text)(label)
+        b.set_child(lbl)
     b.connect("clicked", lambda _b: on_click())
     return b
 
@@ -189,7 +197,7 @@ class DrawingContextToolbar(ContextToolbar):
             self._stepper("fontSize", FONT_RANGE["shape"], 16.0, "a fonte da legenda")   # the caption inside the shape
         if on_delete is not None:
             self.append(_separator())
-            delete = _button("🗑", "Apagar", on_delete)
+            delete = _button(ICON + "maestri-trash-symbolic", "Apagar", on_delete)
             delete.add_css_class("destructive")
             self.append(delete)
         self.update(self.content)
@@ -207,9 +215,13 @@ class DrawingContextToolbar(ContextToolbar):
         items = {}
         pop = Gtk.Popover(child=box)
         pop.add_css_class("maestri-ctx-popover")
-        for value, label in options:
-            b = Gtk.Button(label=label, has_frame=False, focus_on_click=False)
-            b.get_child().set_xalign(0)
+        for value, label, icon in options:
+            row = Gtk.Box(spacing=8)
+            b = Gtk.Button(child=row, has_frame=False, focus_on_click=False)
+            b.maestri_check = Gtk.Image.new_from_icon_name("maestri-check-symbolic")   # shown on the current value
+            row.append(b.maestri_check)
+            row.append(Gtk.Image.new_from_icon_name(icon))
+            row.append(Gtk.Label(label=label, xalign=0))
             b.connect("clicked", lambda _b, v=value: (pop.popdown(), self._set(key, v)))
             box.append(b)
             items[value] = b
@@ -232,11 +244,12 @@ class DrawingContextToolbar(ContextToolbar):
 
     @staticmethod
     def _mark(btn: Gtk.MenuButton, items: dict[str, Gtk.Button], options, current: str) -> None:
-        labels = dict(options)
-        btn.set_label(labels.get(current, labels[options[0][0]]).split("  ")[0])
+        icons = {value: icon for value, _label, icon in options}
+        btn.set_icon_name(icons.get(current, options[0][2]))
         for value, b in items.items():
-            b.set_label(("✓ " if value == current else "    ") + labels[value])
-            b.get_child().set_xalign(0)
+            on = value == current
+            b.maestri_check.set_opacity(1.0 if on else 0.0)   # keeps the column aligned
+            (b.add_css_class if on else b.remove_css_class)("checked")
 
     def _value(self, key: str) -> float:
         default = self.steppers[key][4]
@@ -270,7 +283,7 @@ class MultiContextToolbar(ContextToolbar):
     def __init__(self, node_ids: tuple[str, ...], on_delete: Callable[[], None]) -> None:
         super().__init__(node_ids[0], "multi")
         self.node_ids = node_ids
-        self.delete_btn = _button("🗑", f"Apagar {len(node_ids)} nós", on_delete)
+        self.delete_btn = _button(ICON + "maestri-trash-symbolic", f"Apagar {len(node_ids)} nós", on_delete)
         self.delete_btn.add_css_class("destructive")
         self.append(self.delete_btn)
 
