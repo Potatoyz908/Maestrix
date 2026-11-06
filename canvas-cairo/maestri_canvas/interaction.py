@@ -4,6 +4,7 @@ Reference spec (docs/reference/maestri-reference-index.md), with the macOS comma
   pan: two-finger scroll / middle-drag / Space+drag      zoom: Ctrl+scroll / pinch / Ctrl+= / Ctrl+-
   move: drag a node header (smart alignment guides when `snapping` is on; Ctrl = magnetic tile snapping)   resize: drag edge/corner (16-unit grid; with `snapping`, edges also snap to neighbours' edges/centers)
   duplicate: Alt+drag     delete: Ctrl+W / Delete     focus node: \\     select: click, Shift+click, marquee on empty space
+  connect: drag from a pin and release on the target's pin OR anywhere on its box (anchors at the border center nearest the source)
 """
 from __future__ import annotations
 
@@ -257,7 +258,7 @@ class CanvasController:
         elif isinstance(st, _Connecting):
             src = self.scene.get(st.src)
             if src is not None:
-                hit = self.scene.hit_pin(canvas, self.vp.zoom, exclude=st.src)
+                hit = self.scene.hit_connect_target(canvas, self.vp.zoom, st.src)
                 target = (hit[0].id, hit[1]) if hit and self.scene.can_connect(st.src, hit[0].id) else None
                 self.overlay.connecting = (pin_point(src.frame, st.side), canvas, target)
                 self.dirty = True
@@ -313,7 +314,7 @@ class CanvasController:
         elif isinstance(st, _Marquee) and not st.moved and not st.base:
             self._set_selection(set())   # a plain click on empty space deselects
         elif isinstance(st, _Connecting):
-            hit = self.scene.hit_pin(canvas, self.vp.zoom, exclude=st.src)
+            hit = self.scene.hit_connect_target(canvas, self.vp.zoom, st.src)   # pin, or anywhere on the target's box
             if hit and self.scene.can_connect(st.src, hit[0].id):
                 self._emit(ConnectRequested(st.src, st.side, hit[0].id, hit[1]))
         elif isinstance(st, _Drawing):

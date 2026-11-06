@@ -8,7 +8,7 @@ from typing import Iterator, Literal
 from .geometry import Point, Rect
 from .rope import static_catenary  # noqa: F401  (re-exported for callers)
 
-PinSide = Literal["left", "right"]
+PinSide = Literal["left", "right", "top", "bottom"]   # pins (handles) are left/right; a body drop may anchor on any side
 PIN_RADIUS_PX = 9.0
 
 # Kinds rendered as real GTK widgets (chrome + content). Everything else (shape, stroke, freehand, text) is drawn by Cairo.
@@ -48,7 +48,21 @@ class ConnItem:
 
 
 def pin_point(frame: Rect, side: PinSide) -> Point:
+    """Center of the given border."""
+    if side in ("top", "bottom"):
+        return Point(frame.x + frame.w / 2, frame.min_y if side == "top" else frame.max_y)
     return Point(frame.min_x if side == "left" else frame.max_x, frame.y + frame.h / 2)
+
+
+def nearest_side(target: Rect, source: Rect) -> PinSide:
+    """Border of `target` facing `source`: the side the segment target-center -> source-center exits through
+    (aspect-aware: compares |dx| / w against |dy| / h, so a wide node is entered from the side only when the source is truly beside it).
+    Ties and coincident centers prefer left/right, the classic pin sides."""
+    dx = source.center.x - target.center.x
+    dy = source.center.y - target.center.y
+    if abs(dx) * max(target.h, 1e-9) >= abs(dy) * max(target.w, 1e-9):
+        return "left" if dx <= 0 else "right"
+    return "top" if dy < 0 else "bottom"
 
 
 def facing_sides(a: Rect, b: Rect) -> tuple[PinSide, PinSide]:
@@ -139,6 +153,23 @@ class Scene:
                 q = pin_point(n.frame, side)  # type: ignore[arg-type]
                 if math.hypot(q.x - p.x, q.y - p.y) <= r:
                     return n, side  # type: ignore[return-value]
+        return None
+
+    def hit_connect_target(self, p: Point, zoom: float, src: str) -> tuple[NodeItem, PinSide] | None:
+        """Where a rope dragged from node `src` lands when released at `p`: an explicit pin keeps its side; otherwise ANY point of a
+        connectable node's box counts, anchored at the center of its border nearest to the source. The topmost connectable node
+        under `p` wins (the source itself and canvas-drawn kinds are looked through). Validity (`can_connect`) is checked by the caller."""
+        hit = self.hit_pin(p, zoom, exclude=src)
+        if hit is not None:
+            return hit
+        source = self.get(src)
+        if source is None:
+            return None
+        for n in self.descending():
+            if n.id == source.id or n.kind not in CONNECTABLE_KINDS:
+                continue
+            if n.frame.contains(p):
+                return n, nearest_side(n.frame, source.frame)
         return None
 
     # ---- connections ------------------------------------------------------------------------
