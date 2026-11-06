@@ -113,6 +113,17 @@ def role_presets(parent) -> list[dict]:
     return [r for r in roles if isinstance(r, dict) and r.get("id")] if isinstance(roles, list) else []
 
 
+def agent_presets(parent) -> list[dict]:
+    prefs = getattr(parent, "preferences", None)
+    records = getattr(prefs, "_extra", {}).get("agentPresets")
+    if not isinstance(records, list):
+        return PRESETS
+    return [dict(id=p["id"], name=p.get("name", "Agent"), command=p.get("command", "bash"),
+                 icon="terminal", sf_icon=p.get("icon", "terminal"), color=p.get("color", "#8E8E93"),
+                 agent_type=p.get("agentType", "generic_shell"))
+            for p in records if isinstance(p, dict) and p.get("id") and p.get("isActive", True)]
+
+
 def _label(text: str, css: str = "maestri-form-label") -> Gtk.Label:
     lbl = Gtk.Label(label=text, xalign=0.0)
     lbl.add_css_class(css)
@@ -346,6 +357,7 @@ class NewTerminalDialog(_TerminalForm, Gtk.Window):
         self._parent = parent
         self.on_create = on_create
         self.cwd = os.path.expanduser(default_cwd or "~")
+        self.presets = agent_presets(parent)
         self.selected_preset = default_preset
         prefs = getattr(parent, "preferences", None)
         self._init = {"name": "", "command": "", "cwd": self.cwd, "monitor": True, "maestro": False, "icon": "terminal",
@@ -363,9 +375,9 @@ class NewTerminalDialog(_TerminalForm, Gtk.Window):
 
         preset_box = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER, margin_bottom=14)
         self.preset_buttons: dict[str, Gtk.Button] = {}
-        for p in PRESETS:
+        for p in self.presets:
             col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            btn = Gtk.Button(icon_name=icon_name(p["icon"]), tooltip_text=p["name"], halign=Gtk.Align.CENTER)
+            btn = Gtk.Button(icon_name=sf_symbol_icon(p["sf_icon"]), tooltip_text=p["name"], halign=Gtk.Align.CENTER)
             btn.add_css_class("maestri-preset-btn")
             btn.add_css_class(_hex_class(p["color"]))
             btn.connect("clicked", lambda _b, pid=p["id"]: self._select_preset(pid))
@@ -391,14 +403,15 @@ class NewTerminalDialog(_TerminalForm, Gtk.Window):
         self.set_child(root)
         self.set_default_widget(self.create_btn)
 
-        self._select_preset(default_preset)
+        self._select_preset(default_preset if any(p["id"] == default_preset for p in self.presets)
+                            else self.presets[0]["id"] if self.presets else "")
         self._select_tab("details")
 
     def _select_preset(self, preset_id: str) -> None:
         self.selected_preset = preset_id
         for pid, btn in self.preset_buttons.items():
             (btn.add_css_class if pid == preset_id else btn.remove_css_class)("active")
-        p = next((x for x in PRESETS if x["id"] == preset_id), None)
+        p = next((x for x in self.presets if x["id"] == preset_id), None)
         if p:
             self.name_entry.set_text(p["name"])
             self.cmd_entry.set_text(p["command"])

@@ -302,7 +302,7 @@ class CanvasContextMenu(_StackMenu):
             _load_partituras_async(self, self._refill_partituras)
 
     def _fill(self) -> None:
-        from .terminal_dialog import PRESETS
+        from .terminal_dialog import agent_presets
         self.add_page("main", "", [
             Item("add", "Add", "maestri-plus-symbolic", submenu="add"),
             self._contract("paste", "Paste", "maestri-paste-symbolic", "paste_nodes", self.pt),
@@ -319,7 +319,7 @@ class CanvasContextMenu(_StackMenu):
         ])
         presets = [Item(f"preset:{p['id']}", p["name"], f"maestri-{p['icon']}-symbolic",
                         action=self._close_then(lambda pid=p["id"]: self.window.create_terminal_preset(pid, at=self.pt)))
-                   for p in PRESETS]
+                   for p in agent_presets(self.window)]
         self.add_page("terminal", "Terminal", presets + [
             SEPARATOR,
             Item("terminal-custom", "Custom…", "maestri-sliders-symbolic",

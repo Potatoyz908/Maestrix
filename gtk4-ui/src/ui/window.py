@@ -47,7 +47,7 @@ from .live_events import LiveEvents
 from .window_actions import WindowActionsMixin
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
-from .terminal_dialog import EditTerminalDialog, NewTerminalDialog, PRESETS
+from .terminal_dialog import EditTerminalDialog, NewTerminalDialog, PRESETS, agent_presets
 from .workspace_dialogs import CreateWorkspaceDialog, GroupDialog, create_workspace_record
 from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
 from .iconography import StatusIndicator, gicon, icon_label, icon_name, install_css as install_icon_css
@@ -1003,9 +1003,9 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         quick_menu.append("New Workspace…", "win.new-workspace")
         quick_menu.append("New Group…", "win.new-group")
         term_submenu = Gio.Menu()
-        for preset in PRESETS:
-            preset_item = Gio.MenuItem.new(preset["name"], f"win.new-terminal-{preset['id']}")
-            preset_item.set_icon(gicon(preset["icon"]))   # outline icon (GTK shows it on label-less items only)
+        for preset in agent_presets(self):
+            preset_item = Gio.MenuItem.new(preset["name"], None)
+            preset_item.set_action_and_target_value("win.terminal-preset", GLib.Variant.new_string(preset["id"]))
             term_submenu.append_item(preset_item)
         term_submenu.append("New Terminal…", "win.new-terminal")
         quick_menu.append_submenu("Terminal", term_submenu)
@@ -1196,6 +1196,10 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             action.connect("activate", lambda _a, _p, f=fn: f())
             self.add_action(action)
 
+        preset_action = Gio.SimpleAction.new("terminal-preset", GLib.VariantType.new("s"))
+        preset_action.connect("activate", lambda _a, p: self.create_terminal_preset(p.get_string()))
+        self.add_action(preset_action)
+
         # View → Snap to Alignment Guides (Ctrl+;): stateful, persisted in preferences.json as canvasSnapping
         snap = Gio.SimpleAction.new_stateful("snapping", None, GLib.Variant.new_boolean(self.canvas_widget.snapping))
         snap.connect("change-state", lambda a, v: self._set_snapping(v.get_boolean()))
@@ -1247,6 +1251,12 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         """Persisted by SettingsWindow already; apply live: terminal font/theme, canvas background, autosave interval."""
         old = self.preferences
         self.preferences = prefs
+        self.terminal_presets_menu.remove_all()
+        for preset in agent_presets(self):
+            item = Gio.MenuItem.new(preset["name"], None)
+            item.set_action_and_target_value("win.terminal-preset", GLib.Variant.new_string(preset["id"]))
+            self.terminal_presets_menu.append_item(item)
+        self.terminal_presets_menu.append("New Terminal…", "win.new-terminal")
         cw = self.canvas_widget
         cw.renderer.background = prefs.canvas_background
         cw.set_snapping(prefs.canvas_snapping)
@@ -1760,7 +1770,9 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
 
     def create_terminal_preset(self, preset_id: str, at: Point | None = None) -> CanvasNode:
         """Creates a terminal node directly from a Quick Start preset (Claude Code, Codex, Gemini CLI, OpenCode, Shell)."""
-        preset = next((p for p in PRESETS if p["id"] == preset_id), PRESETS[0])
+        preset = next((p for p in agent_presets(self) if p["id"] == preset_id), None)
+        if preset is None:
+            return None
         cwd = self.floors.terminal_cwd() or self.document.payload.working_directory or os.path.expanduser("~")
         spawn_at = at or Point(
             self.canvas_widget.viewport.origin.x + (self.canvas_widget.get_width() or 1000) / 2 / self.canvas_widget.viewport.zoom - 210,
@@ -1768,7 +1780,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         )
         frame = NodeFrame(x=spawn_at.x, y=spawn_at.y, width=420, height=300)
         node = self.new_terminal_node(frame, preset["name"], preset["command"], cwd,
-                                      **{k: v for k, v in (("icon", preset.get("icon")), ("color", preset.get("color"))) if v})
+                                      **{k: v for k, v in (("icon", preset.get("sf_icon", preset.get("icon"))), ("color", preset.get("color"))) if v})
         return self._insert_node(node)
 
     def open_new_terminal_dialog(self, at: Point | None = None, size: tuple[float, float] | None = None, default_preset: str = "claude") -> NewTerminalDialog:

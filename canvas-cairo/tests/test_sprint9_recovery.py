@@ -94,3 +94,19 @@ class NoteConflictRecoveryTests(unittest.TestCase):
         win = NS(scene=NS(get=lambda nid: NS(locked=True)), frames={}, emit=Mock())
         remove(win, ['locked-note'])
         win.emit.assert_not_called()
+
+
+class PresetRecoveryTests(unittest.TestCase):
+    def test_custom_active_presets_are_consumed_by_dialog(self):
+        tree = ast.parse((ROOT / 'gtk4-ui/src/ui/terminal_dialog.py').read_text())
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'agent_presets')
+        ns = dict(PRESETS=[{'id': 'default'}])
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), 'terminal_dialog.py', 'exec'), ns)
+        prefs = NS(_extra={'agentPresets': [dict(id='A', name='Custom', command='codex --resume', icon='brain'),
+                                          dict(id='B', isActive=False)]})
+        presets = ns['agent_presets'](NS(preferences=prefs))
+        self.assertEqual([p['id'] for p in presets], ['A'])
+        self.assertEqual(presets[0]['command'], 'codex --resume')
+        self.assertEqual(presets[0]['sf_icon'], 'brain')
+        prefs._extra['agentPresets'] = []
+        self.assertEqual(ns['agent_presets'](NS(preferences=prefs)), [])
