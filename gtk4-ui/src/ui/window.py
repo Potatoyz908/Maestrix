@@ -1679,33 +1679,10 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                 threading.Thread(target=self._delete_core_terminal, args=(core_tid,), daemon=True).start()
 
     def _on_canvas_duplicate_requested(self, _canvas, mapping: dict):
-        import copy
         for src_id, new_frame in mapping.items():
             src_node = self._find_node(src_id)
-            if src_node is None:
-                continue
-            new_id = str(uuid.uuid4()).upper()
-            content = copy.deepcopy(src_node.content)
-            if hasattr(content, "terminal_id"):   # K1: the copy's terminal id is its node id
-                content.id = content.terminal_id = new_id
-            elif hasattr(content, "id"):
-                content.id = str(uuid.uuid4()).upper()
-            if hasattr(content, "name"):
-                content.name = f"{content.name} Copy"
-            new_node = CanvasNode(
-                id=new_id,
-                frame=NodeFrame(x=new_frame.x, y=new_frame.y, width=new_frame.w, height=new_frame.h),
-                node_type=src_node.node_type,
-                content=content,
-                z_index=len(self.document.payload.nodes) + 1,
-            )
-            self.document.payload.nodes.append(new_node)
-            self._add_node_to_canvas(new_node)
-            bus.emit("node-added", new_node)
-        self.canvas_widget.controller.dirty = True
-        self.canvas_widget.queue_draw()
-        if self.sync is not None:
-            self.sync.flush()
+            if src_node is not None:
+                self._paste_payload(self._element_json([src_node]), Point(new_frame.x, new_frame.y))
 
     def _delete_core_terminal(self, tid: str) -> None:
         try:

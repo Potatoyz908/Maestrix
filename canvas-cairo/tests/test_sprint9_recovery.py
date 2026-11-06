@@ -218,3 +218,19 @@ class ElementDefaultsRecoveryTests(unittest.TestCase):
         prefs._extra['newElementDefaults']['terminal']['size'] = [float('nan'), -1]
         apply_element_defaults(node, prefs)
         self.assertEqual((node.frame.width, node.frame.height), (640, 480))
+
+
+class ClipboardRecoveryTests(unittest.TestCase):
+    def test_pasted_note_gets_independent_storage_and_text(self):
+        import json
+        from typing import List, Optional
+        from maestri_core.models.connection import Connection
+        source = CanvasNode(node_type='stickyNote', content=StickyNoteContent(name='Note', file_name='Note.md'), frame=NodeFrame())
+        paste = method('gtk4-ui/src/ui/window_actions.py', 'WindowActionsMixin', '_paste_payload',
+                       dict(globals(), json=json, List=List, Optional=Optional, Connection=Connection, PASTE_OFFSET=24, bus=Mock()))
+        win = NS(document=NS(payload=NS(nodes=[source])), canvas_widget=NS(controller=NS(dirty=False)),
+                 _add_node_to_canvas=Mock(), _fill_note_when_loaded=Mock(), sync=None)
+        result = paste(win, json.dumps({'nodes': [source.to_dict()], 'noteTexts': {source.id: 'Keep this content'}}), None)
+        self.assertNotEqual(result[0].content.file_name, source.content.file_name)
+        self.assertEqual(result[0].content.storage_mode, {'managed': {}})
+        win._fill_note_when_loaded.assert_called_once_with(result[0].id, 'Keep this content')

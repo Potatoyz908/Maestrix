@@ -29,6 +29,7 @@ from maestri_core.signals.bus import bus
 from maestri_canvas.connection_rules import LIST_ATTRS
 from maestri_canvas.geometry import Point, Rect
 from maestri_canvas.scene import norm
+from maestri_canvas.note_model import unique_name
 
 ELEMENT_MIME = "application/x-maestri-element"
 URL_RE = re.compile(r"^(https?|file)://\S+$", re.IGNORECASE)
@@ -122,7 +123,12 @@ class WindowActionsMixin:
         ids = {n.id.upper() for n in nodes}
         conns = [c.to_dict() | {"kind": c.kind} for c in self.document.payload.all_connections()
                  if c.a_id.upper() in ids and c.b_id.upper() in ids]
-        return json.dumps({"nodes": [n.to_dict() for n in nodes], "connections": conns})
+        texts = {}
+        for node in nodes:
+            view = getattr(self.canvas_widget.frames.get(norm(node.id)), "content", None)
+            if node.node_type == "stickyNote" and callable(getattr(view, "text", None)):
+                texts[node.id] = view.text()
+        return json.dumps({"nodes": [n.to_dict() for n in nodes], "connections": conns, "noteTexts": texts})
 
     def _set_element_clipboard(self, nodes: List[CanvasNode]) -> bool:
         if not nodes:
@@ -213,7 +219,10 @@ class WindowActionsMixin:
         new = next((n for n in self.document.payload.nodes if n.id not in before), None)
         if new is None:
             return
-        frame = self.canvas_widget.frames.get(norm(new.id))
+        self._fill_note_when_loaded(new.id, text)
+
+    def _fill_note_when_loaded(self, node_id, text):
+        frame = self.canvas_widget.frames.get(norm(node_id))
         view = getattr(frame, "content", None)
         tries = [0]
 
@@ -252,18 +261,29 @@ class WindowActionsMixin:
             if hasattr(c, "terminal_id"):          # K1: terminal id == node id
                 c.id = c.terminal_id = new_id
                 c.scrollback_file = None
+            elif isinstance(c, PortalContent):
+                c.portal_id = new_id
             elif hasattr(c, "id") and not isinstance(c, dict):
                 c.id = str(uuid.uuid4()).upper()
             name = getattr(c, "name", None)
             if name and name in names:            # " Copy" only when the name collides
-                c.name = f"{name} Copy"
-            if isinstance(c, StickyNoteContent) and "managed" in (c.storage_mode or {}):
+                c.name = unique_name(f"{name} Copy", names)
+            if name:
+                names.add(c.name)
+            if isinstance(c, StickyNoteContent):
+                # Element copies are independent notes, even if the source links to a custom file.
+                c.storage_mode = {"managed": {}}
+                taken = {n.content.file_name[:-3] for n in self.document.payload.nodes if n.node_type == "stickyNote"}
+                c.name = unique_name(c.name, taken)
                 c.file_name = f"{c.name}.md"
             node = CanvasNode(id=new_id, frame=NodeFrame(x=src.frame.x + dx, y=src.frame.y + dy, width=src.frame.width,
                                                          height=src.frame.height),
                               node_type=src.node_type, content=c, z_index=max_z + 1 + i)
             self.document.payload.nodes.append(node)
             self._add_node_to_canvas(node)
+            note_text = (obj.get("noteTexts") or {}).get(src.id)
+            if isinstance(c, StickyNoteContent) and isinstance(note_text, str):
+                self._fill_note_when_loaded(node.id, note_text)
             bus.emit("node-added", node)
             created.append(node)
         for raw in obj.get("connections") or []:   # recreate ropes between pasted nodes through the normal path
