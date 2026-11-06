@@ -765,6 +765,7 @@ public final class InterAgentServer {
             var roleName: String? = nil
             var requestedId: UUID? = nil
             var agentType: String? = nil
+            var floorId: UUID? = nil
 
             if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
                 command = json["command"] as? String ?? ""
@@ -778,13 +779,35 @@ public final class InterAgentServer {
                 displayName = json["displayName"] as? String
                 roleName = json["roleName"] as? String
                 agentType = (json["agentType"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                if let floorString = json["floorId"] as? String, !floorString.isEmpty {
+                    guard let parsed = UUID(uuidString: floorString) else {
+                        return Self.buildHTTPResponse(status: 400, body: "error: invalid floor ID", allowedOrigin: allowedOrigin)
+                    }
+                    floorId = parsed
+                }
             }
             // K4: the ask strategy depends on it (agent -> wait for idle; shell -> wait for the prompt)
             let resolvedAgentType = agentType ?? Self.agentType(forCommand: command)
 
             let newId = requestedId ?? UUID()
+            var floorEnvironment: [String: String] = [:]
+            if let floorId {
+                let candidates = workspaceId.map { [$0] } ?? NexusWorkspaces.allWorkspaceIds()
+                guard let match = candidates.compactMap({ ws -> (UUID, WorkspaceDocument, FloorEntry)? in
+                    guard let doc = try? PersistenceManager.shared.loadWorkspace(id: ws),
+                          let entry = doc.payload.floors.first(where: { $0.id == floorId }) else { return nil }
+                    return (ws, doc, entry)
+                }).first else {
+                    return Self.buildHTTPResponse(status: 404, body: "error: floor not found in workspace", allowedOrigin: allowedOrigin)
+                }
+                workspaceId = match.0
+                floorEnvironment = FloorHookRunner.environment(for: match.2, rootDirectory: FloorHookRunner.rootDirectory(of: match.2, fallback: match.1.payload.workingDirectory))
+            }
             await MainActor.run {   // the PTY exists before the response: an immediate list/ask finds it
                 let tm = PlatformHooks.terminals
+                #if os(Linux)
+                if !floorEnvironment.isEmpty { LinuxTerminalManager.shared.pendingEnvironment[newId] = floorEnvironment }
+                #endif
                 tm.createTerminal(
                     id: newId,
                     command: command,
