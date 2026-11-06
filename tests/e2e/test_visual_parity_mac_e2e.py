@@ -340,6 +340,29 @@ class TestVisualParityMac:
         dots = [c for c in window.traffic_box.observe_children()]
         assert len(dots) == 3
 
+        # Verify title buttons are disabled on HeaderBar to prevent ghost buttons from GNOME/system
+        assert header.get_show_title_buttons() is False
+
+        # Verify paned configuration keeps sidebar width stable
+        assert window.paned.get_resize_start_child() is False
+        assert window.paned.get_shrink_start_child() is True
+
+        # Verify sidebar toggle behavior and floating restore button
+        assert window.sidebar.get_visible() is True
+        assert window.btn_floating_sidebar.get_visible() is False
+
+        # Toggle hidden
+        window.btn_sidebar.emit("clicked")
+        pump_events(0.05)
+        assert window.sidebar.get_visible() is False
+        assert window.btn_floating_sidebar.get_visible() is True
+
+        # Click floating button to restore
+        window.btn_floating_sidebar.emit("clicked")
+        pump_events(0.05)
+        assert window.sidebar.get_visible() is True
+        assert window.btn_floating_sidebar.get_visible() is False
+
     def test_terminal_creation_and_renaming(self, window):
         """Verifies terminal creation and renaming via dialog and inline."""
         n0 = len(window.document.payload.nodes)

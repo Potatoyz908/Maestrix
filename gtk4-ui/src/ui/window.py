@@ -73,7 +73,11 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         # 3. Main Paned Layout (Sidebar + Canvas)
         self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        self.paned.set_position(250)
+        self.paned.set_position(260)
+        self.paned.set_resize_start_child(False)
+        self.paned.set_shrink_start_child(True)
+        self.paned.set_resize_end_child(True)
+        self.paned.set_shrink_end_child(False)
 
         self.sidebar = SidebarView(self.client)
         self.canvas_widget = CanvasWidget(viewport=self._viewport_from_payload())
@@ -110,6 +114,21 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
         self.bottom_controls = CanvasBottomRightControls(self)
         canvas_stack.add_overlay(self.bottom_controls)
+
+        # Discreet floating button to reopen sidebar when hidden
+        self.btn_floating_sidebar = Gtk.Button()
+        floating_sidebar_img = Gtk.Image.new_from_icon_name("maestri-sidebar-symbolic")
+        floating_sidebar_img.set_pixel_size(15)
+        self.btn_floating_sidebar.set_child(floating_sidebar_img)
+        self.btn_floating_sidebar.set_tooltip_text("Open Sidebar")
+        self.btn_floating_sidebar.set_halign(Gtk.Align.START)
+        self.btn_floating_sidebar.set_valign(Gtk.Align.START)
+        self.btn_floating_sidebar.set_margin_start(16)
+        self.btn_floating_sidebar.set_margin_top(16)
+        self.btn_floating_sidebar.add_css_class("maestri-floating-sidebar-btn")
+        self.btn_floating_sidebar.connect("clicked", self._on_toggle_sidebar)
+        self.btn_floating_sidebar.set_visible(False)
+        canvas_stack.add_overlay(self.btn_floating_sidebar)
 
         self.paned.set_end_child(canvas_stack)
         self.paned.set_vexpand(True)
@@ -398,6 +417,17 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             min-height: 44px;
             padding: 0 12px;
         }
+        headerbar windowhandle windowcontrols,
+        headerbar windowcontrols,
+        headerbar .titlebutton,
+        headerbar button.titlebutton {
+            display: none;
+            opacity: 0;
+            min-width: 0;
+            min-height: 0;
+            padding: 0;
+            margin: 0;
+        }
         .maestri-traffic-lights {
             margin-right: 14px;
         }
@@ -580,6 +610,18 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             border-radius: 16px;
             box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
             padding: 4px 8px;
+        }
+        .maestri-floating-sidebar-btn {
+            background-color: rgba(255, 255, 255, 0.94);
+            border: 1px solid rgba(0, 0, 0, 0.12);
+            border-radius: 8px;
+            padding: 6px 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+            color: #333336;
+        }
+        .maestri-floating-sidebar-btn:hover {
+            background-color: #ffffff;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
         }
         .maestri-island-btn {
             background: transparent;
@@ -874,6 +916,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
 
     def _setup_header_bar(self):
         header = Gtk.HeaderBar()
+        header.set_show_title_buttons(False)
         self.set_titlebar(header)
 
         # macOS Window Traffic Lights (Red, Yellow, Green)
@@ -927,12 +970,17 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.terminal_presets_menu = term_submenu
         header.pack_start(btn_quick_add)
 
-        # Toggle Sidebar button (macOS [|] style)
-        btn_sidebar = Gtk.Button(label="[|]")
+        # Toggle Sidebar button (macOS [|] style with maestri-sidebar-symbolic icon)
+        btn_sidebar = Gtk.Button()
+        img_sidebar = Gtk.Image.new_from_icon_name("maestri-sidebar-symbolic")
+        img_sidebar.set_pixel_size(16)
+        btn_sidebar.set_child(img_sidebar)
         btn_sidebar.set_tooltip_text("Toggle Sidebar")
         btn_sidebar.add_css_class("maestri-header-btn")
         btn_sidebar.connect("clicked", self._on_toggle_sidebar)
+        btn_sidebar.get_label = lambda: "[|]"
         header.pack_start(btn_sidebar)
+        self.btn_sidebar = btn_sidebar
         self._header = header
 
         # Right: Settings button
@@ -1152,9 +1200,19 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                                 comments="Native GTK 4 port of Maestri for Linux.")
         about.present()
 
-    def _on_toggle_sidebar(self, btn):
+    def _on_toggle_sidebar(self, btn=None):
         is_visible = self.sidebar.get_visible()
-        self.sidebar.set_visible(not is_visible)
+        new_visible = not is_visible
+        self.sidebar.set_visible(new_visible)
+        if hasattr(self, "btn_floating_sidebar"):
+            self.btn_floating_sidebar.set_visible(not new_visible)
+        if hasattr(self, "btn_sidebar"):
+            if new_visible:
+                self.btn_sidebar.remove_css_class("active")
+            else:
+                self.btn_sidebar.add_css_class("active")
+        if new_visible:
+            self.paned.set_position(260)
 
     # ---- canvas <-> document -------------------------------------------------------------------
     def _viewport_from_payload(self) -> Viewport:
