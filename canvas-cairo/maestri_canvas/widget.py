@@ -611,6 +611,7 @@ class CanvasWidget(Gtk.Overlay):
             content = StickyNoteView(meta, storage, client=client, name_taken=lambda n: self._note_name_taken(nid, n), base_dir=self.notes_dir)
             content.connect("meta-changed", lambda _v, d: self.emit("note-meta-changed", nid, d))
             content.connect("delete-requested", lambda _v: self.emit("delete-requested", (nid,)))
+            content.connect("file-dropped", lambda v, path: v.adopt_file(path))   # drop a .md on a note = use that file
         elif item.kind == "portal" and content is None:
             nid = item.id
             if webkit_available():
@@ -622,7 +623,7 @@ class CanvasWidget(Gtk.Overlay):
             else:
                 content = Gtk.Label(label="WebKit 6.0 (GTK 4) not available", wrap=True)
         if item.kind in WIDGET_KINDS and content is not None:
-            frame = NodeFrame(item, content, on_close=lambda i: self.emit("delete-requested", (i,)))
+            frame = NodeFrame(item, content, on_close=lambda i: self.request_delete((i,)))
             self.frames[item.id] = frame
             self.fixed.put(frame, 0, 0)
             if item.kind == "terminal":
@@ -668,6 +669,19 @@ class CanvasWidget(Gtk.Overlay):
         self._last_applied.pop(k, None)
         self.controller.dirty = True
         self._sync_portal_sessions()
+
+    def request_delete(self, ids) -> None:
+        """Del / Ctrl+W / close button: notes go through StickyNoteView.remove() first (a managed note deletes its .md, a custom
+        one is only unlinked) and emit "delete-requested" when that is done; every other node is requested directly."""
+        rest = []
+        for nid in ids:
+            frame = self.frames.get(norm(nid))
+            if frame is not None and isinstance(frame.content, StickyNoteView):
+                frame.content.remove()
+            else:
+                rest.append(nid)
+        if rest:
+            self.emit("delete-requested", tuple(rest))
 
     # ---- terminal state (Sprint 9: exit indicator, prefs) -------------------------------------------------------------
     def _local_terminal_exited(self, node_id: str, status: int) -> None:
@@ -885,7 +899,7 @@ class CanvasWidget(Gtk.Overlay):
             else:
                 self.emit("connect-requested", e.a, e.side_a, e.b, e.side_b)
         elif isinstance(e, DeleteRequested):
-            self.emit("delete-requested", e.ids)
+            self.request_delete(e.ids)
         elif isinstance(e, DuplicateRequested):
             self.emit("duplicate-requested", e.frames)
         elif isinstance(e, DrawRequested):

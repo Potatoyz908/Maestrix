@@ -144,13 +144,15 @@ class StickyNoteView(Gtk.Box):
 
         menu = Gio.Menu()
         menu.append("Rename", "note.rename")
+        menu.append("Use Automatic Name", "note.auto-name")
         menu.append("Move to…", "note.move")
         menu.append("Larger text", "note.larger")
         menu.append("Smaller text", "note.smaller")
         menu.append("Delete", "note.delete")
-        self.menu_btn = Gtk.MenuButton(label="⋯", menu_model=menu, has_frame=False)
+        self.menu_btn = Gtk.MenuButton(icon_name="maestri-ellipsis-symbolic", menu_model=menu, has_frame=False, tooltip_text="More")
         group = Gio.SimpleActionGroup()
-        for name, fn in (("rename", self.begin_rename), ("move", self.choose_folder_and_move), ("delete", self.request_delete),
+        for name, fn in (("rename", self.begin_rename), ("auto-name", self.clear_custom_name), ("move", self.choose_folder_and_move),
+                         ("delete", self.request_delete),
                          ("larger", lambda: self.set_font_size(self.meta.font_size + 1)), ("smaller", lambda: self.set_font_size(self.meta.font_size - 1))):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda _a, _p, f=fn: f())
@@ -447,6 +449,15 @@ class StickyNoteView(Gtk.Box):
 
     on_header_double_click = begin_rename   # NodeFrame/CanvasWidget call this on a double-click of the header
 
+    def clear_custom_name(self) -> None:
+        """Back to the automatic name (the first line of the text), like a note that was never renamed."""
+        if not self.meta.has_custom_name:
+            return
+        self.meta.has_custom_name = False
+        self._shown_title = ""
+        self._update_title()
+        self._emit_meta()
+
     def _on_title_editing(self, label: Gtk.EditableLabel, _p) -> None:
         editing = label.get_editing()
         if self._frame is not None:   # while editing the label must receive pointer events (caret, selection), not start a node drag
@@ -482,7 +493,7 @@ class StickyNoteView(Gtk.Box):
             self.meta.has_custom_name = True
             if path:
                 self.meta.set_custom_path(path)
-                self._start_watch()
+            self._start_watch()   # managed or custom: watch the renamed file
             self._shown_title = ""
             self._update_title()
             self._emit_meta()
@@ -589,7 +600,11 @@ class StickyNoteView(Gtk.Box):
         return False
 
     def request_delete(self) -> None:
-        dialog = Gtk.AlertDialog(message="Delete this note?", detail=f"“{self._title()}” and its file will be deleted. This cannot be undone.")
+        if self.meta.is_custom:
+            detail = f"“{self._title()}” will be removed from the canvas. Its file stays at {self.meta.custom_path}."
+        else:
+            detail = f"“{self._title()}” and its file will be deleted. This cannot be undone."
+        dialog = Gtk.AlertDialog(message="Delete this note?", detail=detail)
         dialog.set_buttons(["Cancel", "Delete"])
         dialog.set_cancel_button(0)
         dialog.set_default_button(0)
@@ -598,10 +613,18 @@ class StickyNoteView(Gtk.Box):
         def chosen(d, res) -> None:
             try:
                 if d.choose_finish(res) == 1:
-                    self.delete_file()
+                    self.remove()
             except GLib.Error:
                 pass
         dialog.choose(root if isinstance(root, Gtk.Window) else None, None, chosen)
+
+    def remove(self, done: Callable[[Exception | None], None] | None = None) -> None:
+        """Delete the note (every path: Del / Ctrl+W / close button / ⋯ menu): a managed note deletes its .md, a note stored at a
+        custom path is only unlinked from the canvas, its file is kept (reference 05-notes.md)."""
+        if self.meta.is_custom:
+            self.flush(lambda: (self.dispose(), self.emit("delete-requested"), done and done(None)))
+            return
+        self.delete_file(done)
 
     def delete_file(self, done: Callable[[Exception | None], None] | None = None) -> None:
         """Delete the note's file (no confirmation: use request_delete for the dialog) and ask for the node to be removed.
@@ -625,9 +648,20 @@ class StickyNoteView(Gtk.Box):
         self.saver.flush(lambda: self.storage.delete(deleted))
 
     # ---- external changes --------------------------------------------------------------------------------
+    def watch_target(self) -> str | None:
+        """File to monitor: the custom path, an explicit watch_path, or a managed note's `<notes dir>/<file name>` (so an agent's
+        `omaestri note write` shows up live instead of being overwritten by the next keystroke)."""
+        if self.meta.custom_path:
+            return self.meta.custom_path
+        if self._watch_path:
+            return self._watch_path
+        if self.base_dir and self.meta.file_name:
+            return os.path.join(self.base_dir, self.meta.file_name)
+        return None
+
     def _start_watch(self) -> None:
         self._stop_watch()
-        path = self.meta.custom_path or self._watch_path
+        path = self.watch_target()
         if path:
             self._monitor = watch_file(path, self._external_changed)
 
@@ -639,6 +673,8 @@ class StickyNoteView(Gtk.Box):
     def _external_changed(self) -> None:
         if not self._disposed:
             self.storage.read(self._on_external_read)
+
+    _on_external_change = _external_changed
 
     def _on_external_read(self, text: str | None, err: Exception | None) -> None:
         if self._disposed or err is not None or text is None or text == self.text():

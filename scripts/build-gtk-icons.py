@@ -178,6 +178,7 @@ GLYPHS.update({
 GLYPHS.update({
     "bell": '<path d="M4 11.25 V7.25 A4 4 0 0 1 12 7.25 V11.25 L13.25 12.5 H2.75 Z"/><path d="M6.5 14.25 H9.5"/>',
     "search": '<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 L14 14"/>',
+    "ellipsis": '<path d="M3.5 8 H3.6 M8 8 H8.1 M12.5 8 H12.6"/>',
     "collapse-all": '<path d="M4.5 2.5 L8 6 L11.5 2.5"/><path d="M4.5 13.5 L8 10 L11.5 13.5"/><path d="M2.5 8 H13.5"/>',
 })
 
