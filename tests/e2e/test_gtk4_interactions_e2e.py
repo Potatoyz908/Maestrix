@@ -59,8 +59,8 @@ def pump(seconds: float = 0.2) -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolated_home(tmp_path, monkeypatch):
-    """Isolate HOME so PreferencesStore and notes_dir never touch the real ~/.open-maestri."""
+def isolated_home(isolated_data_dir, tmp_path, monkeypatch):
+    """Data goes to this test's OPEN_MAESTRI_DATA_DIR (tests/conftest.py); HOME only keeps shell rc files hermetic."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("SHELL", "/bin/bash")
     (tmp_path / ".zshrc").touch()

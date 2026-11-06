@@ -649,8 +649,9 @@ class MaestriClient:
         if env_token:
             return env_token.strip()
 
-        # Read ~/.open-maestri/run/auth.token
-        token_path = Path.home() / ".open-maestri" / "run" / "auth.token"
+        # Read <data_dir>/run/auth.token (~/.open-maestri unless OPEN_MAESTRI_DATA_DIR is set)
+        from ..paths import run_dir
+        token_path = run_dir() / "auth.token"
         if token_path.is_file():
             try:
                 token = token_path.read_text(encoding="utf-8").strip()

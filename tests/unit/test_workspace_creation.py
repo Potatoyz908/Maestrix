@@ -14,8 +14,7 @@ from ui.workspace_dialogs import create_workspace_record
 from ui.sidebar import SidebarView
 
 
-def test_create_workspace_record_offline(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
+def test_create_workspace_record_offline(isolated_data_dir, tmp_path):
     # Client that fails (offline)
     mock_client = MagicMock()
     mock_client.create_workspace.side_effect = ConnectionError("Offline")
@@ -25,14 +24,14 @@ def test_create_workspace_record_offline(monkeypatch, tmp_path):
     assert len(ws_id) == 36
 
     # Verify manifest.json
-    manifest_path = tmp_path / ".open-maestri" / "manifest.json"
+    manifest_path = isolated_data_dir / "manifest.json"
     assert manifest_path.exists()
     with open(manifest_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     assert any(ws["id"] == ws_id and ws["name"] == "Test Offline WS" for ws in data["workspaces"])
 
     # Verify workspace.json
-    ws_json_path = tmp_path / ".open-maestri" / "workspaces" / ws_id / "workspace.json"
+    ws_json_path = isolated_data_dir / "workspaces" / ws_id / "workspace.json"
     assert ws_json_path.exists()
     with open(ws_json_path, "r", encoding="utf-8") as f:
         doc = json.load(f)

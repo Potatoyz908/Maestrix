@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Optional
 
 from ..models.workspace import SidebarLayout, WorkspaceDocument
+from ..paths import data_dir
 
 
 class PersistenceManager:
     def __init__(self, base_dir: Optional[Path] = None):
-        self.base_dir = base_dir or (Path.home() / ".open-maestri")
+        self.base_dir = Path(base_dir) if base_dir else data_dir()
         self.workspaces_dir = self.base_dir / "workspaces"
 
     def ensure_directories(self) -> None:

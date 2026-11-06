@@ -54,8 +54,9 @@ def app():
 
 
 @pytest.fixture(autouse=True)
-def isolated_home(tmp_path, monkeypatch):
-    """PreferencesStore and notes_dir resolve ~ at runtime: never touch the real ~/.open-maestri."""
+def isolated_home(isolated_data_dir, tmp_path, monkeypatch):
+    """Preferences land in this test's OPEN_MAESTRI_DATA_DIR (tests/conftest.py), never the real ~/.open-maestri; HOME only
+    keeps the shell's rc files out of the user's home."""
     monkeypatch.setenv("HOME", str(tmp_path))
     PreferencesStore().save(Preferences(terminal_font_family="DejaVu Sans Mono", terminal_font_size=15.0,
                                         terminal_theme="nord", canvas_background="solid", autosave_interval_seconds=30))

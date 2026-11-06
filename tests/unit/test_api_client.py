@@ -41,18 +41,24 @@ def test_client_token_and_port_resolution(tmp_path, monkeypatch):
     assert client_env.port == 54321
     assert client_env.auth_token == "env-token-xyz"
 
-    # 3. File fallback ~/.open-maestri/run/auth.token
+    # 3. File fallback <data_dir>/run/auth.token (OPEN_MAESTRI_DATA_DIR, else ~/.open-maestri)
     monkeypatch.delenv("MAESTRI_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("MAESTRI_SERVER_PORT", raising=False)
-    fake_home = tmp_path / "home"
-    run_dir = fake_home / ".open-maestri" / "run"
+    data = tmp_path / "data"
+    run_dir = data / "run"
     run_dir.mkdir(parents=True)
     token_file = run_dir / "auth.token"
     token_file.write_text("file-token-123", encoding="utf-8")
+    monkeypatch.setenv("OPEN_MAESTRI_DATA_DIR", str(data))
+    assert MaestriClient().auth_token == "file-token-123"
 
+    # 4. Without the variable: ~/.open-maestri under the (patched) home
+    monkeypatch.delenv("OPEN_MAESTRI_DATA_DIR")
+    fake_home = tmp_path / "home"
+    (fake_home / ".open-maestri" / "run").mkdir(parents=True)
+    (fake_home / ".open-maestri" / "run" / "auth.token").write_text("home-token-456", encoding="utf-8")
     with patch("pathlib.Path.home", return_value=fake_home):
-        client_file = MaestriClient()
-        assert client_file.auth_token == "file-token-123"
+        assert MaestriClient().auth_token == "home-token-456"
 
 
 def test_client_headers_contain_auth_and_origin():

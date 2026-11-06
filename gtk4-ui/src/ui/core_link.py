@@ -89,7 +89,8 @@ class CoreReconnector:
 # safe to call from worker threads, no GTK.
 
 def data_root() -> str:
-    return os.path.expanduser("~/.open-maestri")
+    from maestri_core.paths import data_dir   # OPEN_MAESTRI_DATA_DIR, else ~/.open-maestri
+    return str(data_dir())
 
 
 def _now_iso() -> str:

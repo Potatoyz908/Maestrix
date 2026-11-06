@@ -1,4 +1,4 @@
-"""Sticky note on real GTK 4 (needs a display) + end to end against the real core (isolated namespace, see core_support.py)."""
+"""Sticky note on real GTK 4 (needs a display) + end to end against the real core (throwaway data dir, see core_support.py)."""
 import json
 import os
 import time
@@ -602,7 +602,7 @@ def _ensure_workspace(core):
 
 
 def _notes_dirs(core):
-    return list((core["home"] / ".open-maestri" / "workspaces").glob("*/notes"))
+    return list((core["data_dir"] / "workspaces").glob("*/notes"))
 
 
 def _call(fn, *args):

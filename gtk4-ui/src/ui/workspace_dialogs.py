@@ -54,10 +54,11 @@ def create_workspace_record(client, name: str, wd: str, icon: str = "folder") ->
     except Exception:
         pass
 
-    # 2. Offline fallback: local filesystem (~/.open-maestri)
+    # 2. Offline fallback: local filesystem (OPEN_MAESTRI_DATA_DIR, else ~/.open-maestri)
+    from maestri_core.paths import data_dir
     new_id = str(uuid.uuid4()).upper()
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    manifest_dir = os.path.expanduser("~/.open-maestri")
+    manifest_dir = str(data_dir())
     manifest_path = os.path.join(manifest_dir, "manifest.json")
     os.makedirs(manifest_dir, exist_ok=True)
     manifest = {

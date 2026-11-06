@@ -1272,7 +1272,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         cw = self.canvas_widget
         if self.core_connected:
             cw.notes_client = CoreNotesClient(self.client.port, self.client.token)
-        ws_dir = Path.home() / ".open-maestri" / "workspaces" / self.document.payload.id
+        from maestri_core.paths import data_dir
+        ws_dir = data_dir() / "workspaces" / self.document.payload.id
         cw.notes_dir = str(ws_dir / "notes")
 
     def _make_content_widget(self, node: CanvasNode):
@@ -1790,7 +1791,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             except Exception:
                 doc = None
             if doc is None:
-                local_path = os.path.expanduser(f"~/.open-maestri/workspaces/{workspace_id}/workspace.json")
+                from maestri_core.paths import data_dir
+                local_path = str(data_dir() / "workspaces" / workspace_id / "workspace.json")
                 if os.path.isfile(local_path):
                     try:
                         with open(local_path, "r", encoding="utf-8") as f:

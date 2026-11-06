@@ -4,6 +4,7 @@ Provides mocking setup for GTK, WebKit2, and system dependencies.
 """
 
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -18,6 +19,43 @@ sys.path.insert(0, str(REPO_ROOT / "canvas-cairo"))
 sys.path.insert(0, str(REPO_ROOT / "canvas-cairo" / "src"))
 sys.path.insert(0, str(REPO_ROOT / "gtk4-ui" / "src"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from tests import data_dir_isolation as _isolation  # noqa: E402
+
+_REAL_DATA_DIR_BEFORE: dict = {}
+
+
+def pytest_configure(config):
+    """Before any test module is imported: point OPEN_MAESTRI_DATA_DIR at a throwaway dir and record the real one."""
+    root = Path(tempfile.mkdtemp(prefix="open-maestri-tests-"))
+    config._open_maestri_tmp_root = root
+    _isolation.isolate_session(root)
+    _REAL_DATA_DIR_BEFORE.clear()
+    _REAL_DATA_DIR_BEFORE.update(_isolation.snapshot())
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """FAIL the run when anything under the real ~/.open-maestri changed while the tests ran."""
+    changes = _isolation.diff(_REAL_DATA_DIR_BEFORE, _isolation.snapshot())
+    if changes:
+        listing = "\n  ".join(changes[:50])
+        reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        (reporter.write_line if reporter else print)(
+            f"\nERROR: the test run touched the REAL {_isolation.REAL_DATA_DIR} ({len(changes)} change(s)); tests must use "
+            f"{_isolation.DATA_DIR_ENV} (if you were using Open Maestri meanwhile, re-run to confirm):\n  {listing}")
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    root = getattr(session.config, "_open_maestri_tmp_root", None)
+    if root is not None:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path, monkeypatch):
+    """Every test gets its own empty data dir through the shared OPEN_MAESTRI_DATA_DIR contract."""
+    data = tmp_path / "open-maestri-data"
+    data.mkdir()
+    monkeypatch.setenv(_isolation.DATA_DIR_ENV, str(data))
+    return data
 
 
 @pytest.fixture

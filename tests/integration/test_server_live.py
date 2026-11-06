@@ -2,66 +2,29 @@
 Live end-to-end integration test: Python MaestriClient against running open-maestri-server.
 """
 
-from pathlib import Path
-import re
-import subprocess
 import time
 import pytest
 
 from maestri_core.client.api import MaestriClient, PTYWebSocketClient
+from tests import data_dir_isolation as isolation
 
 
 @pytest.fixture(scope="module")
-def live_server():
-    server_bin = Path(".build/release/open-maestri-server")
-    if not server_bin.is_file():
-        server_bin = Path(".build/x86_64-unknown-linux-gnu/release/open-maestri-server")
-    if not server_bin.is_file():
-        pytest.skip(f"Binary {server_bin} does not exist")
-
-    proc = subprocess.Popen(
-        [str(server_bin)],
-        stderr=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-    )
-
-    port = None
-    deadline = time.time() + 10.0
-    while time.time() < deadline:
-        line = proc.stderr.readline()
-        if not line:
-            if proc.poll() is not None:
-                raise RuntimeError(f"Server exited prematurely: code {proc.returncode}")
-            time.sleep(0.05)
-            continue
-
-        match = re.search(r"POSIX TCP ready on 127\.0\.0\.1:(\d+)", line)
-        if match:
-            port = int(match.group(1))
-            break
-
-    if port is None:
-        proc.kill()
-        raise TimeoutError("Failed to detect server port within timeout")
-
-    yield (port, proc)
-
-    proc.terminate()
+def live_server(tmp_path_factory):
+    """Our OWN core on a throwaway data dir (never the user's ~/.open-maestri); skipped when the binary is not built."""
+    server = isolation.start_isolated_server(tmp_path_factory.mktemp("home"))
     try:
-        proc.wait(timeout=3.0)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    try:
-        proc.wait(timeout=3.0)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+        yield server
+    finally:
+        isolation.stop_server(server["proc"])
 
 
-def test_live_rest_and_pty_stream(live_server):
-    port, proc = live_server
+def test_live_rest_and_pty_stream(live_server, monkeypatch):
+    port = live_server["port"]
+    monkeypatch.delenv("MAESTRI_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv(isolation.DATA_DIR_ENV, str(live_server["data_dir"]))
     client = MaestriClient(port=port)
-    assert client.auth_token, "Client should auto-resolve token from ~/.open-maestri/run/auth.token"
+    assert client.auth_token == live_server["token"], "Client should auto-resolve token from <data_dir>/run/auth.token"
 
     # 1. Test Workspaces API
     workspaces = client.get_workspaces()

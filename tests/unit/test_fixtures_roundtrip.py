@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload
 from maestri_core.models.node import CanvasNode
+from tests.data_dir_isolation import REAL_DATA_DIR
 
 
 def test_testworkspace_fixture_roundtrip():
@@ -33,7 +34,9 @@ def test_testworkspace_fixture_roundtrip():
 
 
 def test_live_workspaces_roundtrip():
-    workspaces_dir = Path.home() / ".open-maestri" / "workspaces"
+    # READ-ONLY look at the user's real workspaces (round-trips in memory, never writes; the session guard in
+    # tests/conftest.py fails the run if anything under ~/.open-maestri changes).
+    workspaces_dir = REAL_DATA_DIR / "workspaces"
     if not workspaces_dir.exists():
         pytest.skip("No live ~/.open-maestri/workspaces directory")
 

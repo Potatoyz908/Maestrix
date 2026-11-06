@@ -1,6 +1,6 @@
 """
 User preferences for Open Maestri GTK 4 Native.
-Reads/writes ~/.open-maestri/preferences.json (schemaVersion 1, camelCase keys, shared with the macOS app).
+Reads/writes <data_dir>/preferences.json (~/.open-maestri unless OPEN_MAESTRI_DATA_DIR is set) (schemaVersion 1, camelCase keys, shared with the macOS app).
 Only the fields the Linux UI edits are modelled; every other key (agentPresets, shortcuts, ...) is preserved on save.
 """
 
@@ -10,6 +10,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from .paths import data_dir
 
 TERMINAL_THEMES = ("system", "dark", "light", "dracula", "solarized-dark", "solarized-light", "nord", "one-dark", "tokyo-night")
 CANVAS_BACKGROUNDS = ("dotGrid", "solid", "transparent")
@@ -87,7 +89,7 @@ class Preferences:
 
 class PreferencesStore:
     def __init__(self, base_dir: Optional[Path] = None):
-        self.base_dir = Path(base_dir) if base_dir else Path.home() / ".open-maestri"
+        self.base_dir = Path(base_dir) if base_dir else data_dir()
 
     @property
     def path(self) -> Path:

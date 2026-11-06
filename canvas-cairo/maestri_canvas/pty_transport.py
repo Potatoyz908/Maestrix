@@ -28,11 +28,13 @@ class PtyTransport(Protocol):
 
 
 def read_auth_token(home: str | os.PathLike | None = None) -> str:
-    """MAESTRI_AUTH_TOKEN, else ~/.open-maestri/run/auth.token (the file the core writes with mode 0600)."""
+    """MAESTRI_AUTH_TOKEN, else <data_dir>/run/auth.token (the file the core writes with mode 0600). `home` (tests) pins the
+    data dir to <home>/.open-maestri; otherwise maestri_core.paths decides (OPEN_MAESTRI_DATA_DIR, else ~/.open-maestri)."""
     env = os.environ.get("MAESTRI_AUTH_TOKEN")
     if env:
         return env
-    path = Path(home or Path.home()) / ".open-maestri" / "run" / "auth.token"
+    from maestri_core.paths import DATA_DIR_NAME, run_dir
+    path = (Path(home) / DATA_DIR_NAME / "run" if home else run_dir()) / "auth.token"
     try:
         return path.read_text().strip()
     except OSError:

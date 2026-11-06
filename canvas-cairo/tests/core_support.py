@@ -1,64 +1,51 @@
-"""Shared by the end-to-end tests: the REAL open-maestri-server in a private user+mount namespace (see _isolated_cmd)."""
-import os
-import subprocess
-import time
-import uuid
+"""Shared by the canvas tests: the REAL open-maestri-server on a throwaway data dir, plus the guard that keeps the whole
+canvas-cairo session away from the user's real ~/.open-maestri. Both live in tests/data_dir_isolation.py (one copy for the
+root suite and this one): OPEN_MAESTRI_DATA_DIR when the core honours it, else a private user+mount namespace."""
+import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from tests import data_dir_isolation as isolation  # noqa: E402
+
+_REAL_BEFORE: dict = {}
+_TMP_ROOT: list[Path] = []
 
 
-def _binary():
-    for p in (REPO / ".build/debug/open-maestri-server", REPO / ".build/release/open-maestri-server"):
-        if p.exists():
-            return p
-    return None
+def guard_start() -> None:
+    """pytest_configure: every test of the session sees OPEN_MAESTRI_DATA_DIR = a throwaway dir."""
+    root = Path(tempfile.mkdtemp(prefix="open-maestri-canvas-tests-"))
+    _TMP_ROOT.append(root)
+    isolation.isolate_session(root)
+    _REAL_BEFORE.clear()
+    _REAL_BEFORE.update(isolation.snapshot())
 
 
-def _isolated_cmd(home: Path, argv: list[str]) -> list[str]:
-    """Run `argv` in a private user+mount namespace where the account's home (/root, as seen by getpwuid) is bind-mounted to `home`.
-    The core resolves its data dir with getpwuid, NOT $HOME, so setting HOME does not isolate it: without this it would use (and its
-    agent.sock would replace) the real ~/.open-maestri."""
-    return ["unshare", "--user", "--map-root-user", "--mount", "sh", "-c", 'mount --bind "$1" /root && shift && exec "$@"', "sh", str(home), *argv]
-
-
-def _isolation_proven(home: Path) -> bool:
-    """Pre-flight with a harmless command: prove a write to the account home lands in `home` and not in the real one."""
-    probe = f"probe-{uuid.uuid4().hex}"
-    r = subprocess.run(_isolated_cmd(home, ["sh", "-c", f'touch "$(getent passwd $(id -u) | cut -d: -f6)/{probe}"']), capture_output=True, timeout=10)
-    return r.returncode == 0 and (home / probe).exists() and not (Path.home() / probe).exists() and not (Path.home() / ".open-maestri" / probe).exists()
+def guard_finish(session) -> None:
+    """pytest_sessionfinish: FAIL the run when the real ~/.open-maestri changed."""
+    changes = isolation.diff(_REAL_BEFORE, isolation.snapshot())
+    if changes:
+        listing = "\n  ".join(changes[:50])
+        reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        (reporter.write_line if reporter else print)(
+            f"\nERROR: the test run touched the REAL {isolation.REAL_DATA_DIR} ({len(changes)} change(s)); tests must use "
+            f"{isolation.DATA_DIR_ENV} (if you were using Open Maestri meanwhile, re-run to confirm):\n  {listing}")
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    while _TMP_ROOT:
+        shutil.rmtree(_TMP_ROOT.pop(), ignore_errors=True)
 
 
 @pytest.fixture(scope="module")
 def core(tmp_path_factory):
-    binary = _binary()
-    if binary is None:
-        pytest.skip("open-maestri-server is not built")
-    home = tmp_path_factory.mktemp("home")
-    if not _isolation_proven(home):
-        pytest.skip("cannot isolate the core's home directory (user namespaces unavailable): refusing to start it against real user data")
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("MAESTRI_", "OMAESTRI_"))}
-    proc = subprocess.Popen(_isolated_cmd(home, [str(binary)]), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    """{"port", "token", "home", "data_dir"}: data_dir is <home>/.open-maestri, never the real one."""
+    server = isolation.start_isolated_server(tmp_path_factory.mktemp("home"))
     try:
-        port = None
-        end = time.time() + 25
-        while time.time() < end and port is None and proc.poll() is None:
-            line = proc.stdout.readline()
-            if "active on port" in line:
-                port = int(line.strip().rsplit(" ", 1)[1])
-        if port is None:
-            pytest.skip("core server did not start")
-        token_file = home / ".open-maestri/run/auth.token"
-        end = time.time() + 5
-        while not token_file.exists() and time.time() < end:
-            time.sleep(0.05)
-        assert token_file.exists(), "core wrote outside the isolated home"
-        yield {"port": port, "token": token_file.read_text().strip(), "home": home}
-    finally:   # runs on every path, including a failed assertion above: never leave a server behind
-        proc.terminate()
-        try:
-            proc.wait(5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        yield {k: server[k] for k in ("port", "token", "home", "data_dir")}
+    finally:   # runs on every path: never leave a server behind
+        isolation.stop_server(server["proc"])
