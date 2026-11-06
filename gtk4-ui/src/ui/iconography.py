@@ -68,6 +68,10 @@ SF_SYMBOL_ICONS: dict[str, str] = {
     "square.on.square": "squares", "photo.on.rectangle.angled": "photo", "paintbrush.fill": "brush",
     "paintbrush": "brush", "doc.text": "file-text", "shippingbox": "box", "cube": "cube", "eye": "eye",
     "face.smiling": "smile",
+    # terminal icons (EditTerminalSheet.swift IconPickerView) + AgentPreset.defaults icons
+    "gearshape": "settings", "wrench": "wrench", "tray.full": "archive", "display": "desktop", "doc": "file",
+    "wand.and.stars": "sparkles", "sparkle": "sparkle", "sparkles": "sparkles", "seal": "asterisk",
+    "rectangle.portrait": "book-open", "rectangle.inset.filled": "fill-solid",
 }
 
 
