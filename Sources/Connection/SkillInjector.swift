@@ -6,8 +6,8 @@ import OSLog
 
 /// 将 open-maestri skill 文件写入用户全局 ~/.claude/skills/ 目录
 /// 在建立 Connection 时调用，确保 Claude Code 能自动加载 omaestri 相关 skill
-final class SkillInjector {
-    static let shared = SkillInjector()
+public final class SkillInjector {
+    public static let shared = SkillInjector()
     private let logger = Logger.make(category: "SkillInjector")
     private init() {}
 
@@ -18,7 +18,7 @@ final class SkillInjector {
     }
 
     /// 按需写入：将内置 skill 写入用户配置的所有活跃 skillPaths，已存在则跳过
-    func installSkillsIfNeeded() {
+    public func installSkillsIfNeeded() {
         let prefs = PersistenceManager.shared.loadPreferencesSync()
         let activePaths = prefs.skillPaths.filter { $0.isActive }.map { $0.path }
         guard !activePaths.isEmpty else { return }

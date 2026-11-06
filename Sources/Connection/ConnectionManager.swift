@@ -27,17 +27,28 @@ struct ActiveConnection {
     let nodeIdB: UUID
     let type: ConnectionType
     var status: ConnectionStatus = .idle
+    /// Workspace whose `workspace.json` holds this connection (nil = created in memory only, macOS paths)
+    var workspaceId: UUID? = nil
 }
 
 /// 连接生命周期管理器（@MainActor，画布状态修改必须在主线程）
 @MainActor
-final class ConnectionManager {
-    static let shared = ConnectionManager()
+public final class ConnectionManager {
+    public static let shared = ConnectionManager()
     private let logger = Logger.make(category: "ConnectionManager")
 
     private(set) var connections: [UUID: ActiveConnection] = [:]
 
+    /// node id -> terminal id for terminals whose two ids differ (legacy Linux documents, contract K1).
+    /// Lets `X-Terminal-ID` / connection endpoints given as either id reach the same runtime terminal.
+    private(set) var terminalAliases: [UUID: UUID] = [:]
+
     private init() {}
+
+    /// The terminal id for `id` when it is a known terminal node id, otherwise `id` itself.
+    func canonical(_ id: UUID) -> UUID {
+        terminalAliases[id] ?? id
+    }
 
     // MARK: - 建立连接
 
@@ -181,11 +192,54 @@ final class ConnectionManager {
     // MARK: - 查询
 
     func connections(for nodeId: UUID) -> [ActiveConnection] {
-        connections.values.filter { $0.nodeIdA == nodeId || $0.nodeIdB == nodeId }
+        let id = canonical(nodeId)
+        return connections.values.filter { $0.nodeIdA == id || $0.nodeIdB == id }
+            .sorted { $0.id.uuidString < $1.id.uuidString }
     }
 
     func connectedNodeIds(for nodeId: UUID) -> [UUID] {
-        connections(for: nodeId).map { $0.nodeIdA == nodeId ? $0.nodeIdB : $0.nodeIdA }
+        let id = canonical(nodeId)
+        return connections(for: id).map { $0.nodeIdA == id ? $0.nodeIdB : $0.nodeIdA }
+    }
+
+    // MARK: - Linux: runtime state derived from workspace.json (contracts K1/K6)
+
+    /// Rebuild the runtime connections of one workspace from its persisted document: drops every connection of that
+    /// workspace (and any in-memory one touching its nodes), then registers each persisted connection with its
+    /// persisted id and terminal endpoints resolved to terminal ids. Idempotent; a removed connection or node is
+    /// revoked simply by not being in the document any more.
+    func restoreConnections(from graph: WorkspaceGraph) {
+        let ws = graph.workspaceId
+        var touched = Set(graph.payload.nodes.map(\.id))
+        touched.formUnion(graph.terminalIds)
+        connections = connections.filter { _, c in
+            c.workspaceId != ws && !(c.workspaceId == nil && (touched.contains(c.nodeIdA) || touched.contains(c.nodeIdB)))
+        }
+        terminalAliases = terminalAliases.filter { !touched.contains($0.key) }
+        for (nodeId, tid) in graph.terminalAliases { terminalAliases[nodeId] = tid }
+        for e in graph.edges {
+            connections[e.id] = ActiveConnection(id: e.id, nodeIdA: e.a, nodeIdB: e.b, type: e.type, workspaceId: ws)
+        }
+        logger.info("Restored \(graph.edges.count) connection(s) of workspace \(ws.uuidString.prefix(8))")
+    }
+
+    /// Forget a workspace entirely (deleted workspace).
+    func forgetWorkspace(_ workspaceId: UUID) {
+        connections = connections.filter { $0.value.workspaceId != workspaceId }
+    }
+
+    /// Re-read one workspace from disk (no-op when the document is gone: its connections are dropped).
+    func reloadWorkspace(_ workspaceId: UUID) {
+        if let g = WorkspaceGraph.load(workspaceId) {
+            restoreConnections(from: g)
+        } else {
+            forgetWorkspace(workspaceId)
+        }
+    }
+
+    /// Server start: restore the connections of every workspace on disk.
+    public func restoreAllWorkspaces() {
+        for id in WorkspaceGraph.allWorkspaceIds() { reloadWorkspace(id) }
     }
 
     // MARK: - 工作区恢复
