@@ -347,7 +347,7 @@ class TestTopToolbarButtons:
         for tool_kind in ("stickyNote", "fileTree", "portal"):
             tb._on_tool_clicked(tool_kind)
             pump_gtk(40)
-            assert cw.tool == tool_kind, f"Top toolbar button {tool_kind!r} should set cw.tool = {tool_kind!r}"
+            assert cw.controller.tool == tool_kind, f"Top toolbar button {tool_kind!r} should set cw.controller.tool = {tool_kind!r}"
 
         # Clicking Connect button in context_pill calls cw.begin_connect_mode(sel[0])
         t_node = win.new_terminal_node(NodeFrame(x=9900, y=8600, width=420, height=300), "Source", "bash", str(ws_workdir))
