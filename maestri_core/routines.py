@@ -347,6 +347,10 @@ class RoutinesClient:
             got = self.create(r)
         return got
 
+    def run_now(self, routine_id: str) -> None:
+        """The server owns PTYs in every workspace and waits for idle between prompts."""
+        self._req("POST", f"/api/routines/{routine_id}/run-now")
+
     def set_active(self, routine_id: str, active: bool) -> Routine:
         return Routine.from_dict(self._req("PATCH", f"/api/routines/{routine_id}", {"isActive": active}).json())
 

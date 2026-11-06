@@ -137,10 +137,11 @@ class RoutinesController:
         self.listeners: List[Callable[[], None]] = []
         self.events: List[Tuple[str, str, dict]] = []
         self.scheduler = RoutineScheduler(bridge.send, bridge.is_idle, self._on_event)
-        self.driver = GLibDriver(self.scheduler) if start_driver else None
+        self._remote_runs: set[str] = set()
+        self.driver = GLibDriver(self) if start_driver else None
 
     # ---- REST plumbing --------------------------------------------------------------------------------------------
-    def _async(self, work: Callable[[], object], done: Callable[[object], None]) -> None:
+    def _async(self, work: Callable[[], object], done: Callable[[object], None], finished=None) -> None:
         if self.store is None:
             self.error = "Core not connected: routines are unavailable offline."
             self._changed()
@@ -154,6 +155,8 @@ class RoutinesController:
 
             def apply():
                 self.error = err
+                if finished is not None:
+                    finished()
                 if not err:
                     done(result)
                 self._changed()
@@ -192,13 +195,33 @@ class RoutinesController:
         self._async(lambda: self.store.delete(routine_id),
                     lambda _r: self._set([x for x in self.routines if x.id != routine_id]))
 
+    def tick(self) -> None:
+        if self.store is None:
+            self.scheduler.tick()
+            return
+        now = self.scheduler.clock()
+        for rid, due in list(self.scheduler.next_due.items()):
+            routine = self.scheduler.routines.get(rid)
+            if routine is not None and now >= due:
+                interval = max(routine.interval_seconds, MIN_INTERVAL_SECONDS)
+                self.scheduler.next_due[rid] = due + (int((now - due) // interval) + 1) * interval
+                self.run_now(rid)
+
     def run_now(self, routine_id: str) -> bool:
+        if self.store is not None:
+            if routine_id in self._remote_runs or routine_id not in self.scheduler.routines:
+                return False
+            self._remote_runs.add(routine_id)
+            self._changed()
+            self._async(lambda: self.store.run_now(routine_id), lambda _result: None,
+                        finished=lambda: self._remote_runs.discard(routine_id))
+            return True
         ok = self.scheduler.run_now(routine_id)
         self._changed()
         return ok
 
     def is_running(self, routine_id: str) -> bool:
-        return self.scheduler.is_running(routine_id)
+        return routine_id in self._remote_runs or self.scheduler.is_running(routine_id)
 
     def stop(self) -> None:
         if self.driver is not None:

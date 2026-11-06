@@ -152,3 +152,54 @@ class WorkspaceBridgeRecoveryTests(unittest.TestCase):
         self.assertIs(view_for(bridge, 'portal-id'), content)
         self.assertIs(view_for(bridge, 'node-id'), content)
         self.assertIsNone(view_for(bridge, 'unknown'))
+
+
+@unittest.skipUnless(os.environ.get('DISPLAY') == ':99', 'GTK unit checks require isolated Xvfb :99')
+class GtkRecoveryTests(unittest.TestCase):
+    def test_settings_agents_and_terminal_dialog_construct(self):
+        import sys
+        sys.path.insert(0, str(ROOT / 'gtk4-ui/src'))
+        from maestri_canvas.gi_env import ensure_typelib_paths
+        ensure_typelib_paths()
+        import gi
+        gi.require_version('Gtk', '4.0')
+        from gi.repository import Gtk
+        from maestri_core.preferences import PreferencesStore
+        from ui.settings_window import SettingsWindow
+        from ui.terminal_dialog import NewTerminalDialog
+        if not Gtk.init_check():
+            self.skipTest("Xvfb :99 is not accepting GTK connections")
+        parent = Gtk.Window()
+        store = PreferencesStore(Path(os.environ['OPEN_MAESTRI_DATA_DIR']))
+        parent.preferences = store.load()
+        settings = SettingsWindow(parent, store=store)
+        self.assertIn('agents', settings.pages)
+        settings.agents_page.add_record('rolePresets')
+        settings.agents_page.add_record('agentPresets')
+        parent.preferences = store.load()
+        self.assertEqual(len(parent.preferences._extra['rolePresets']), 1)
+        self.assertEqual(len(parent.preferences._extra['agentPresets']), 6)
+        dialog = NewTerminalDialog(parent, on_create=lambda data: None, default_cwd='/tmp')
+        self.assertEqual(len(dialog.presets), 6)
+        self.assertIn('maestro', dialog._common_data())
+        dialog.close()
+        settings.close()
+        parent.destroy()
+
+
+class RoutineRecoveryTests(unittest.TestCase):
+    def test_remote_routine_never_uses_current_canvas_terminals(self):
+        run = method('gtk4-ui/src/ui/routines_window.py', 'RoutinesController', 'run_now', dict(globals()))
+        requests = []
+        controller = NS(store=NS(run_now=lambda rid: requests.append(rid)), _remote_runs=set(),
+                        scheduler=NS(routines={'OTHER-WORKSPACE': object()}, run_now=Mock()), _changed=Mock())
+        pending = []
+        controller._async = lambda work, done, finished: pending.append((work, done, finished))
+        self.assertTrue(run(controller, 'OTHER-WORKSPACE'))
+        self.assertFalse(run(controller, 'OTHER-WORKSPACE'))  # do not overlap
+        work, done, finished = pending.pop()
+        done(work())
+        finished()
+        self.assertEqual(requests, ['OTHER-WORKSPACE'])
+        self.assertFalse(controller._remote_runs)
+        controller.scheduler.run_now.assert_not_called()
