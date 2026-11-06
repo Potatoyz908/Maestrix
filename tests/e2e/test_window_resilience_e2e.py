@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT_DIR / "gtk4-ui" / "src"))
 sys.path.insert(0, str(ROOT_DIR))
 
 from maestri_core.client.api import MaestriAPIError, MaestriClient  # noqa: E402
+from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent  # noqa: E402
 from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload  # noqa: E402
 from maestri_core.signals.bus import bus  # noqa: E402
 from ui.floors import LandFloorDialog  # noqa: E402
@@ -144,7 +145,18 @@ class TestWindowResilience:
         assert pump_until(lambda: w.floor_button.get_sensitive() and len(w.floors.floors) == 1)
 
     def test_offline_start_with_edits_then_reconnect_merges_without_orphan(self, make_win):
-        server_doc = WorkspaceDocument(payload=WorkspacePayload(id="SERVER-UUID-5678", name="Active Workspace"))
+        srv_node = CanvasNode(
+            frame=NodeFrame(x=10000, y=8000, width=400, height=300),
+            node_type="terminal",
+            content=TerminalContent(name="Server Terminal", command="bash"),
+            z_index=1,
+            id="SERVER-NODE-1",
+        )
+        server_doc = WorkspaceDocument(payload=WorkspacePayload(
+            id="SERVER-UUID-5678",
+            name="Active Workspace",
+            nodes=[srv_node],
+        ))
         core = FlakyCore("offline", server_doc=server_doc)
         w = make_win(core)
         demo_id = w.document.payload.id
@@ -159,6 +171,22 @@ class TestWindowResilience:
         assert pump_until(lambda: w.document.payload.id == "SERVER-UUID-5678"), "adopts server id"
         assert demo_id not in core.saved, "demo uuid is never saved as orphan"
         assert pump_until(lambda: "SERVER-UUID-5678" in core.saved), "reconnect flushes changes under active server id"
+        # B2: Server node must be rendered in canvas_widget.frames!
+        assert pump_until(lambda: "SERVER-NODE-1" in w.canvas_widget.frames), "server nodes appear on canvas after merge"
+
+    def test_offline_start_then_core_probe_succeeds_but_get_fails_retries_without_orphan(self, make_win):
+        # B1: GET fails after probe returns connected
+        core = FlakyCore("offline", server_doc=None)
+        w = make_win(core)
+        demo_id = w.document.payload.id
+        assert w._is_offline_placeholder
+
+        core.status = "connected"
+        probe_now(w)
+        # Probe tick ran, GET returned None -> stays offline, probe keeps running, no sync, no orphan saved
+        assert pump_until(lambda: not w.core_connected and w._core_link.running)
+        assert w.sync is None and "Standalone" in w.lbl_status.get_label()
+        assert demo_id not in core.saved, "demo workspace was never saved as an orphan"
 
     def test_save_failure_with_core_gone_keeps_standalone_label(self, make_win):
         core = FlakyCore("connected")

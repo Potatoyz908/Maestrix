@@ -110,6 +110,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self._bus_handlers: list[tuple[object, int]] = []
         self._is_offline_placeholder: bool = False
         self._offline_mutated: bool = False
+        self._demo_node_ids: set[str] = set()
+        self._mutated_node_ids: set[str] = set()
         for sig in ("node-moved", "node-resized", "node-added", "node-updated", "node-removed",
                     "connection-created", "connection-changed", "connection-removed"):
             self._bus_handlers.append((bus, bus.connect(sig, self._on_canvas_mutated)))
@@ -152,9 +154,11 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             time.sleep(0.005)
         return self.loaded
 
-    def _on_canvas_mutated(self, *_args) -> None:
+    def _on_canvas_mutated(self, _bus, *args) -> None:
         if not self.core_connected or getattr(self, "_is_offline_placeholder", False):
             self._offline_mutated = True
+            if args and isinstance(args[0], str):
+                self._mutated_node_ids.add(args[0])
 
     def _apply_initial_load(self, status: str, doc) -> bool:
         if self.loaded:
@@ -187,7 +191,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             )
             payload.nodes = [term_a, term_b]
             self.document = WorkspaceDocument(payload=payload)
-            self._is_offline_placeholder = True
+            self._is_offline_placeholder = not self.core_connected
+            self._demo_node_ids = {term_a.id, term_b.id}
 
         self._offline_mutated = False
 
@@ -279,8 +284,19 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
     def _apply_reconnected_workspace(self, doc) -> bool:
         if self._cleaned_up:
             return GLib.SOURCE_REMOVE
-        if doc and doc.payload:
-            self._apply_workspace_switched(doc)
+        if not doc or not doc.payload:
+            # B1: GET failed (core still starting or transient error): keep offline placeholder, no sync, keep probing
+            self.core_connected = False
+            self._update_status_label("⚪ Standalone")
+            self.lbl_status.set_tooltip_text("Core indisponível: as mudanças serão sincronizadas quando ele voltar.")
+            self._core_link.start()
+            return GLib.SOURCE_REMOVE
+
+        # M-d: If an edit occurred while GET was in flight, merge rather than discarding
+        if getattr(self, "_offline_mutated", False):
+            return self._apply_reconnected_merge(doc)
+
+        self._apply_workspace_switched(doc)
         self._is_offline_placeholder = False
         self._offline_mutated = False
         self._enable_sync()
@@ -291,15 +307,34 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
     def _apply_reconnected_merge(self, server_doc) -> bool:
         if self._cleaned_up:
             return GLib.SOURCE_REMOVE
+        if not server_doc or not server_doc.payload:
+            # B1: GET failed: keep offline placeholder, do not save demo orphan, retry probe
+            self.core_connected = False
+            self._update_status_label("⚪ Standalone")
+            self.lbl_status.set_tooltip_text("Core indisponível: as mudanças serão sincronizadas quando ele voltar.")
+            self._core_link.start()
+            return GLib.SOURCE_REMOVE
+
+        # M-b: Merge only user-created or user-mutated nodes (exclude unedited demo terminals)
+        demo_ids = getattr(self, "_demo_node_ids", set())
+        mutated_ids = getattr(self, "_mutated_node_ids", set())
+        existing = {n.id.upper() for n in server_doc.payload.nodes}
+        for n in self.document.payload.nodes:
+            if n.id.upper() not in existing:
+                if n.id not in demo_ids or n.id in mutated_ids:
+                    server_doc.payload.nodes.append(n)
+
+        # M-a: Merge valid connections whose both endpoints exist in the final node set
+        final_ids = {n.id.upper() for n in server_doc.payload.nodes}
+        for conn in self.document.payload.all_connections():
+            if conn.a_id and conn.b_id and conn.a_id.upper() in final_ids and conn.b_id.upper() in final_ids:
+                if not any(c.id == conn.id for c in server_doc.payload.all_connections()):
+                    server_doc.payload.terminal_to_terminal.append(conn)
+
+        # B2: Render the merged workspace on canvas via _apply_workspace_switched!
+        self._apply_workspace_switched(server_doc)
         self._is_offline_placeholder = False
         self._offline_mutated = False
-        if server_doc and server_doc.payload:
-            existing = {n.id.upper() for n in server_doc.payload.nodes}
-            for n in self.document.payload.nodes:
-                if n.id.upper() not in existing:
-                    server_doc.payload.nodes.append(n)
-            self.document = server_doc
-            self._configure_notes_backend()
         self._enable_sync()
         self.sync.flush()
         self.floors.refresh()
