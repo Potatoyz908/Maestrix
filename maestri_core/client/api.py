@@ -500,6 +500,8 @@ class EventsWebSocketClient(PTYWebSocketClient):
             bus.emit("workspace-saved", str(event.get("workspaceId", "")))
         elif etype == "nodeAdded":
             bus.emit("node-added", event)
+        elif etype == "nodeChanged":
+            bus.emit("node-changed", event)
         elif etype == "nodeRemoved":
             bus.emit("node-removed", str(event.get("nodeId", "")))
         elif etype == "connectionCreated":

@@ -151,6 +151,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
 
         # 4. Setup Shortcuts
         self._bus_handlers: list[tuple[object, int]] = []
+        self._bus_handlers.append((bus, bus.connect("node-changed", self._on_server_node_changed)))
         self._is_offline_placeholder: bool = False
         self._offline_mutated: bool = False
         self._demo_node_ids: set[str] = set()
@@ -308,11 +309,53 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             payload, etype = etype, etype.get("type", "")
         if self._cleaned_up or not isinstance(payload, dict):
             return False
+        if etype == "nodeChanged":
+            bus.emit("node-changed", payload)
+            return False
         if etype == "portalCommand":
             if self.portal_bridge is not None:
                 self.portal_bridge.handle_event(payload)
             return False
         return self.live_events.handle(str(etype), payload)
+
+    def _on_server_node_changed(self, _bus, event) -> None:
+        """Apply server metadata without node-updated, REST writes or restarting the PTY."""
+        if self._cleaned_up or not self.loaded or not isinstance(event, dict):
+            return
+        if str(event.get("workspaceId", "")).upper() != self.document.payload.id.upper():
+            return
+        raw = event.get("node")
+        if not isinstance(raw, dict) or not raw.get("id"):
+            return
+        node = self._find_node(str(event.get("nodeId", "")))
+        if node is None or str(raw["id"]).upper() != node.id.upper():
+            return
+        updated = CanvasNode.from_dict(raw)
+        if updated.node_type != node.node_type:
+            return
+        node.__dict__.update(updated.__dict__)
+        cw = self.canvas_widget
+        item = cw.scene.get(node.id)
+        if item is not None:
+            item.title = node.title
+        frame = cw.frames.get(norm(node.id))
+        if frame is not None:
+            frame.title.set_label(node.title)
+            if node.node_type == "terminal":
+                from .iconography import sf_symbol_icon
+                icon = getattr(frame, "_server_header_icon", None)
+                if icon is None:
+                    icon = Gtk.Image()
+                    frame.title.get_parent().prepend(icon)
+                    frame._server_header_icon = icon
+                    frame._server_header_css = Gtk.CssProvider()
+                    icon.get_style_context().add_provider(frame._server_header_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                icon.set_from_icon_name(sf_symbol_icon(node.content.icon))
+                color = Gdk.RGBA()
+                css = f"image {{ color: {color.to_string()}; }}" if color.parse(node.content.color or "") else ""
+                frame._server_header_css.load_from_string(css)
+        cw.controller.dirty = True
+        cw.queue_draw()
 
     def _on_core_probe(self, status: str) -> None:
         """Periodic probe result while the core is unreachable."""

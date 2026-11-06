@@ -24,6 +24,7 @@ class SignalBus(GObject.Object):
 
         # Node events
         "node-added": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        "node-changed": (GObject.SignalFlags.RUN_FIRST, None, (object,)),  # server snapshot; never schedules a save
         "node-updated": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "node-removed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "node-moved": (GObject.SignalFlags.RUN_FIRST, None, (str, float, float)),
