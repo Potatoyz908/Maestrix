@@ -38,15 +38,16 @@ class CanvasTopToolbar(Gtk.Box):
 
         self.tool_buttons: dict[str, Gtk.Button] = {}
 
+        # macOS CanvasToolbar.swift order + canvas.toolbar.* texts; a shortcut is named only when the key exists
+        # (interaction.py: V, T, P, L). Note / File Tree / Browser are "tool + drag a frame" like Terminal.
         tools = [
-            ("select", "maestri-pointer-symbolic", "Select & Move (V)"),
-            ("terminal", "maestri-terminal-symbolic", "New Terminal (T)"),
-            ("stickyNote", "maestri-note-symbolic", "New Sticky Note (N)"),
+            ("select", "maestri-pointer-symbolic", "Select (V)"),
+            ("terminal", "maestri-terminal-symbolic", "Terminal (T)"),
+            ("stickyNote", "maestri-note-symbolic", "Note"),
             ("file", "maestri-paperclip-symbolic", "Attach File"),
-            ("fileTree", "maestri-file-tree-symbolic", "New File Tree (F)"),
-            ("portal", "maestri-globe-symbolic", "New Web Portal (P)"),
+            ("fileTree", "maestri-file-tree-symbolic", "File Tree"),
+            ("portal", "maestri-globe-symbolic", "Browser (P)"),
             ("text", "maestri-text-symbolic", "Text Label"),
-            ("draw", "maestri-pencil-symbolic", "Drawing & Shapes"),
         ]
 
         for tid, icon_name, tooltip in tools:
@@ -59,6 +60,17 @@ class CanvasTopToolbar(Gtk.Box):
             btn.connect("clicked", lambda _b, t=tid: self._on_tool_clicked(t))
             self.tool_buttons[tid] = btn
             pill.append(btn)
+
+        # Draw: the DrawingTools popover (Pen, Highlighter, Rectangle, Ellipse, Diamond - ShapeSubtoolbar.swift)
+        drawing = getattr(window, "drawing", None)
+        if drawing is not None:
+            draw_btn = drawing.button
+            if draw_btn.get_parent() is not None:
+                draw_btn.unparent()
+            draw_btn.add_css_class("maestri-island-btn")
+            draw_btn.set_has_frame(False)
+            self.tool_buttons["draw"] = draw_btn
+            pill.append(draw_btn)
 
         self.append(pill)
 
@@ -73,7 +85,7 @@ class CanvasTopToolbar(Gtk.Box):
         img_edit.set_pixel_size(15)
         btn_edit.set_child(img_edit)
         btn_edit.add_css_class("maestri-island-btn")
-        btn_edit.set_tooltip_text("Edit Node Name & Settings")
+        btn_edit.set_tooltip_text("Edit")
         btn_edit.connect("clicked", self._on_edit_clicked)
         self.context_pill.append(btn_edit)
 
@@ -82,7 +94,7 @@ class CanvasTopToolbar(Gtk.Box):
         img_conn.set_pixel_size(15)
         btn_conn.set_child(img_conn)
         btn_conn.add_css_class("maestri-island-btn")
-        btn_conn.set_tooltip_text("Connect Nodes")
+        btn_conn.set_tooltip_text("Start Connection (L)")
         btn_conn.connect("clicked", self._on_connect_clicked)
         self.context_pill.append(btn_conn)
 
@@ -91,7 +103,7 @@ class CanvasTopToolbar(Gtk.Box):
         img_dup.set_pixel_size(15)
         btn_dup.set_child(img_dup)
         btn_dup.add_css_class("maestri-island-btn")
-        btn_dup.set_tooltip_text("Duplicate Selection (Alt+Drag)")
+        btn_dup.set_tooltip_text("Duplicate")
         btn_dup.connect("clicked", self._on_duplicate_clicked)
         self.context_pill.append(btn_dup)
 
@@ -101,7 +113,7 @@ class CanvasTopToolbar(Gtk.Box):
         btn_del.set_child(img_del)
         btn_del.add_css_class("maestri-island-btn")
         btn_del.add_css_class("danger")
-        btn_del.set_tooltip_text("Delete Selection (Del / Cmd+W)")
+        btn_del.set_tooltip_text("Delete (Del)")
         btn_del.connect("clicked", self._on_delete_clicked)
         self.context_pill.append(btn_del)
 
@@ -128,26 +140,18 @@ class CanvasTopToolbar(Gtk.Box):
             self.cw.set_tool("select")
         elif tool_id == "terminal":
             self.cw.set_tool("terminal")
-        elif tool_id == "stickyNote":
-            self.window._create_node("stickyNote")
-            self._set_active_tool_btn("select")
+        elif tool_id in ("stickyNote", "fileTree", "portal"):   # tool + drag a frame (DrawingTools creates the node)
+            self.cw.set_tool(tool_id)
+            self.cw.grab_focus()   # Esc drops the tool
         elif tool_id == "file":
             self._choose_and_attach_file()
             self._set_active_tool_btn("select")
-        elif tool_id == "fileTree":
-            self.window._create_node("fileTree")
-            self._set_active_tool_btn("select")
-        elif tool_id == "portal":
-            self.window._create_node("portal")
-            self._set_active_tool_btn("select")
         elif tool_id == "text":
             self.cw.set_tool("text")
-        elif tool_id == "draw":
-            self.cw.set_tool("freehand_pen")
 
     def _on_canvas_tool_changed(self, _cw, tool: str) -> None:
-        mapping = {"select": "select", "terminal": "terminal", "text": "text", "freehand_pen": "draw", "freehand_highlighter": "draw"}
-        tid = mapping.get(tool, "select")
+        draw = {"freehand_pen", "freehand_highlighter", "rect", "ellipse", "diamond"}
+        tid = "draw" if tool in draw else tool if tool in self.tool_buttons else "select"
         self._set_active_tool_btn(tid)
 
     def _on_selection_changed(self, _cw, ids: tuple[str, ...]) -> None:
@@ -172,22 +176,13 @@ class CanvasTopToolbar(Gtk.Box):
             self.window.edit_selected_node()
 
     def _on_connect_clicked(self, _btn) -> None:
-        sel = list(self.cw.scene.selection)
-        if len(sel) >= 2:
+        """Start Connection (L): a rope from the selected node follows the pointer; clicking another node connects (K9).
+        Two selected nodes are connected directly."""
+        sel = sorted(self.cw.scene.selection)
+        if len(sel) == 2:
             self.cw.emit("connect-requested", sel[0], "right", sel[1], "left")
         elif len(sel) == 1:
-            all_other = [n.id for n in self.cw.scene.nodes if n.id != sel[0]]
-            if all_other:
-                self.cw.emit("connect-requested", sel[0], "right", all_other[0], "left")
-            else:
-                self.window._create_node("terminal")
-                nodes = [n.id for n in self.cw.scene.nodes if n.id != sel[0]]
-                if nodes:
-                    self.cw.emit("connect-requested", sel[0], "right", nodes[-1], "left")
-        else:
-            nodes = [n.id for n in self.cw.scene.nodes]
-            if len(nodes) >= 2:
-                self.cw.emit("connect-requested", nodes[0], "right", nodes[1], "left")
+            self.cw.begin_connect_mode(sel[0])
 
     def _on_delete_clicked(self, _btn) -> None:
         sel = tuple(self.cw.scene.selection)

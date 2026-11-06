@@ -18,13 +18,17 @@ from maestri_canvas.scene import WIDGET_KINDS
 from maestri_core.models.node import CanvasNode, NodeFrame, current_iso8601
 from maestri_core.signals.bus import bus
 
-# tool -> (label, outline icon of gtk4-ui/src/ui/icons - built by scripts/build-gtk-icons.py). No emoji/glyph icons.
+# The Draw popover of the top toolbar: macOS ShapeSubtoolbar.swift order and texts (draw.tool.*). Arrow and Line are not ported
+# (no such canvas tools yet). The Text tool has its own toolbar button ("Text Label"); it stays in TEXT_TOOL for the label.
 TOOL_LABELS = (
-    ("text", "Texto", "maestri-text-symbolic"), ("rect", "Retângulo", "maestri-square-symbolic"),
-    ("ellipse", "Elipse", "maestri-circle-symbolic"), ("diamond", "Losango", "maestri-diamond-symbolic"),
-    ("freehand_pen", "Caneta", "maestri-pencil-symbolic"), ("freehand_highlighter", "Marca-texto", "maestri-highlighter-symbolic"),
+    ("freehand_pen", "Pen", "maestri-pencil-symbolic"),
+    ("freehand_highlighter", "Highlighter", "maestri-highlighter-symbolic"),
+    ("rect", "Rectangle", "maestri-square-symbolic"),
+    ("ellipse", "Ellipse", "maestri-circle-symbolic"),
+    ("diamond", "Diamond", "maestri-diamond-symbolic"),
 )
-DEFAULT_LABEL, DEFAULT_ICON = "Desenho", "maestri-shapes-symbolic"
+TEXT_TOOL = ("text", "Text Label", "maestri-text-symbolic")
+DEFAULT_LABEL, DEFAULT_ICON = "Draw", "maestri-pencil-symbolic"
 
 
 def _icon_label(icon: str, label: str) -> tuple[Gtk.Box, Gtk.Image, Gtk.Label]:
@@ -56,9 +60,12 @@ class DrawingTools:
             b.connect("clicked", lambda _b, t=tool: self.select(t))
             box.append(b)
             self.tool_buttons[tool] = b
-        child, self._button_icon, self._button_label = _icon_label(DEFAULT_ICON, DEFAULT_LABEL)
-        btn = Gtk.MenuButton(child=child, popover=self.popover)
-        btn.set_tooltip_text("Texto, formas e desenho livre: escolha a ferramenta e arraste no canvas (Esc cancela)")
+        # icon-only, like the macOS toolbar ("pencil.and.scribble"); the icon follows the active drawing tool
+        self._button_icon = Gtk.Image.new_from_icon_name(DEFAULT_ICON)
+        self._button_icon.set_pixel_size(16)
+        self._button_label = Gtk.Label(label=DEFAULT_LABEL)   # not packed: kept for the tooltip text
+        btn = Gtk.MenuButton(child=self._button_icon, popover=self.popover)
+        btn.set_tooltip_text(DEFAULT_LABEL)
         return btn
 
     def select(self, tool: str) -> None:
@@ -72,6 +79,9 @@ class DrawingTools:
         label, icon = next(((lb, ic) for t, lb, ic in TOOL_LABELS if t == tool), (DEFAULT_LABEL, DEFAULT_ICON))
         self._button_label.set_label(label)
         self._button_icon.set_from_icon_name(icon)
+        self.button.set_tooltip_text(DEFAULT_LABEL if label == DEFAULT_LABEL else f"{DEFAULT_LABEL}: {label}")
+        (self.button.add_css_class if tool in dict((t, 1) for t, _l, _i in TOOL_LABELS) else
+         self.button.remove_css_class)("active")
 
     # ---- canvas gestures -> document -----------------------------------------------------------------
     def _on_draw_requested(self, _cw, tool: str, x: float, y: float, w: float, h: float) -> None:
@@ -79,8 +89,16 @@ class DrawingTools:
             self.window.open_new_terminal_dialog(at=Point(x, y), size=(w, h))
             self.window.canvas_widget.set_tool("select")
             return
-        if tool in WIDGET_KINDS:   # a widget tool (P = portal) dragged a frame: same node as the toolbar button, at that frame
+        if tool == "portal":   # NewPortalSheet first (name + URL), then the portal at the drawn frame
+            from .context_menus import _portal_content
+            from .portal_prompt import ask_portal_url
+            self.window.canvas_widget.set_tool("select")
+            ask_portal_url(self.window, lambda name, url: self.window._create_node(
+                "portal", at=Point(x, y), size=(w, h), content=_portal_content(name, url)))
+            return
+        if tool in WIDGET_KINDS:   # Note / File Tree tool dragged a frame: the node at that frame
             self.window._create_node(tool, at=Point(x, y), size=(w, h))
+            self.window.canvas_widget.set_tool("select")
             return
         if kind_for_tool(tool) is None:
             return
