@@ -121,6 +121,22 @@ def test_note_toolbar_floats_above_selected_note(canvas):
     assert canvas.target_at(x + 5, y + h / 2) == NodeContent("N1")  # clicks on it are left to the toolbar (not a marquee)
 
 
+def test_toolbar_is_not_clickable_until_placed(canvas):
+    """Review R5: between creation (opacity 0) and the first _place() the toolbar sits at its default spot; it must not take
+    clicks there (they belong to whatever is under it)."""
+    canvas.add_node(NodeItem("S1", Rect(400, 400, 200, 120), 1, "shape", content=default_shape()))
+    canvas.scene.selection = {"S1"}
+    host = canvas.context_toolbar
+    host._replace(("S1", "shape"))                      # created, not placed yet (no main-loop iteration in between)
+    tb = host.toolbar
+    assert tb.get_opacity() == 0.0 and not tb.get_can_target()
+    assert wait_until(lambda: tb.get_can_target() and tb.get_opacity() == 1.0)
+    pump(0.1)
+    x, y, w, h = toolbar_rect(canvas, tb)
+    assert y + h <= 400 and canvas.target_at(x + w / 2, y + h / 2) == NodeContent("S1")   # placed: now it takes clicks
+    assert not isinstance(canvas.target_at(5, 5), NodeContent)                              # nothing left at the old spot
+
+
 def test_drawing_toolbar_goes_below_when_node_is_at_the_top_multi_shows_delete_only(canvas):
     canvas.add_node(NodeItem("S1", Rect(300, 4, 200, 120), 1, "shape", content=default_shape()))
     canvas.add_node(NodeItem("S2", Rect(600, 300, 200, 120), 2, "shape", content=default_shape()))

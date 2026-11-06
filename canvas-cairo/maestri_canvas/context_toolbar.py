@@ -334,7 +334,10 @@ class ContextToolbarHost:
             tb = DrawingContextToolbar(nid, kind, c.scene.get(nid).content, on_change=lambda patch, n=nid: self._change(n, patch),
                                        on_delete=lambda n=nid: c.emit("delete-requested", (n,)))
         setattr(tb, self.role_attr, ("content", nid))
+        # Transparent AND not pickable until _place() has given it real coordinates: an invisible toolbar sitting at its
+        # default spot (0, 0 or a stale position) must not swallow clicks meant for the canvas or a node (review R5).
         tb.set_opacity(0.0)
+        tb.set_can_target(False)
         c.add_overlay(tb)
         self.toolbar = tb
 
@@ -378,4 +381,6 @@ class ContextToolbarHost:
             tb.set_margin_top(pos[1])
         if not tb.get_visible():
             tb.set_visible(True)
-        tb.set_opacity(1.0)
+        if not tb.get_can_target():   # coordinates are real now: show it and let it take clicks
+            tb.set_opacity(1.0)
+            tb.set_can_target(True)
