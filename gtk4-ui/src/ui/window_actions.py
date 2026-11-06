@@ -281,6 +281,13 @@ class WindowActionsMixin:
     # ============================================================================================================
     # K11 - partituras
     # ============================================================================================================
+    def list_partituras(self) -> list:
+        """Saved partituras (GET /api/partituras). Blocking: the menus call it off the main thread."""
+        try:
+            return self.client.list_partituras()
+        except Exception:   # noqa: BLE001 - offline / no route yet
+            return []
+
     def save_partitura(self, name: str, node_ids: Optional[Iterable[str]] = None) -> None:
         """Save the given nodes (default: every terminal) and the connections among them as a reusable layout."""
         wanted = {i.upper() for i in node_ids} if node_ids else None
