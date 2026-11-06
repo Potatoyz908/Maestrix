@@ -189,3 +189,17 @@ def test_close_workspace_leaves_nothing_to_autosave(win):
     assert win.document.payload.nodes == [] and not win.canvas_widget.scene.nodes and win.sync is None
     win._create_node("stickyNote", at=Point(0, 0))
     assert win.document.payload.nodes == []
+
+
+def test_menubar_installed_accels_and_reload_unload(win):
+    app = win.get_application()
+    assert app.get_menubar() is not None and win.get_show_menubar()
+    accels = {a: app.get_accels_for_action(a) for a in
+              ("win.next-workspace", "win.prev-workspace", "win.jump-terminal-1", "win.jump-terminal-9", "win.open-in-editor")}
+    assert accels == {"win.next-workspace": ["<Control>Down"], "win.prev-workspace": ["<Control>Up"],
+                      "win.jump-terminal-1": ["<Control>1"], "win.jump-terminal-9": ["<Control>9"],
+                      "win.open-in-editor": ["<Shift><Control>e"]}
+    t = win._insert_node(win.new_terminal_node(NodeFrame(x=0, y=0, width=400, height=300), "Shell"))
+    assert win.unload_terminal(t.id) and win._find_node(t.id) is not None
+    assert win.reload_terminal(t.id) and norm(t.id) in win.canvas_widget.frames
+    assert not win.reload_terminal("NOPE")
