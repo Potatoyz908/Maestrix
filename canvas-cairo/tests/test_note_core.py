@@ -9,7 +9,7 @@ from maestri_canvas.note_saver import NoteSaver
 
 # ---- colours ----------------------------------------------------------------------------------------------
 def test_colour_names_hex_shorthand_and_fallback():
-    assert C.resolve_hex("yellow") == "#FEFDE8" and C.resolve_hex("BLUE") == C.NAMED["blue"]
+    assert C.resolve_hex("yellow") == "#FCF7B8" and C.resolve_hex("BLUE") == C.NAMED["blue"]
     assert C.resolve_hex("#abc") == "#AABBCC" and C.resolve_hex("12ab34") == "#12AB34" and C.resolve_hex("#11223344") == "#112233"
     for bad in (None, "", "not-a-colour", "#12", "#GGGGGG"):
         assert C.resolve_hex(bad) == C.DEFAULT_COLOR
@@ -18,8 +18,8 @@ def test_colour_names_hex_shorthand_and_fallback():
 def test_text_colour_follows_luminance_and_shade_darkens():
     assert C.text_color("#FEFDE8") == "#1F1F1F" and C.text_color("#102030") == "#F2F2F2"
     assert C.luminance(C.shade("#FEFDE8", 0.5)) < C.luminance("#FEFDE8")
-    assert C.css_class("yellow") == C.css_class("#fefde8") == "note-c-fefde8"       # the same colour spelled two ways shares a rule
-    assert "background: #FEFDE8" in C.css_rule("yellow") and C.clamp_font_size(5) == 10 and C.clamp_font_size(99) == 32
+    assert C.css_class("yellow") == C.css_class("#fcf7b8") == "note-c-fcf7b8"       # the same colour spelled two ways shares a rule
+    assert "background: #EDEDE9" in C.css_rule("yellow") and C.clamp_font_size(5) == 10 and C.clamp_font_size(99) == 32
 
 
 # ---- model ------------------------------------------------------------------------------------------------

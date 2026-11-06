@@ -7,14 +7,11 @@ import re
 DEFAULT_COLOR = "#FEFDE8"   # Constants.noteDefaultColor
 
 NAMED: dict[str, str] = {
-    "yellow": "#FEFDE8", "orange": "#FFE8CC", "red": "#FFD9D6", "pink": "#FFD6E7", "purple": "#E8DEFF",
-    "blue": "#D6EBFF", "teal": "#D3F2F0", "green": "#DDF5DD", "gray": "#EDEDED", "grey": "#EDEDED", "white": "#FFFFFF",
+    "yellow": "#FCF7B8", "pink": "#F5BFCC", "blue": "#BAD6F5", "green": "#BAEDCC",
+    "orange": "#FCD6AB", "purple": "#DEC4F5", "white": "#F7F7F7",
+    "black": "#2E2E2E", "darkgray": "#405261", "darkblue": "#1A2E73",
 }
-# Toolbar presets, in order: (persisted string, label). Names are kept as names so Maestri keeps resolving them its own way.
-PRESETS: list[tuple[str, str]] = [
-    (DEFAULT_COLOR, "Yellow"), ("#FFE8CC", "Orange"), ("#FFD6E7", "Pink"), ("#E8DEFF", "Purple"),
-    ("#D6EBFF", "Blue"), ("#DDF5DD", "Green"), ("#EDEDED", "Gray"),
-]
+PRESETS: list[tuple[str, str]] = [(name, name.title()) for name in NAMED]
 _HEX = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 
 
@@ -65,13 +62,16 @@ def css_class(color: str | None) -> str:
 
 def css_rule(color: str | None) -> str:
     """Per-colour rule. Only the card, its header/footer tint and the text colour depend on the note colour."""
-    hx, cls, fg = resolve_hex(color), css_class(color), text_color(color)
-    head, edge = shade(hx, 0.93), shade(hx, 0.78)
-    return (f".maestri-node.maestri-note.{cls} {{ background: {hx}; color: {fg}; }}\n"
-            f".maestri-node.maestri-note.{cls}:not(.selected) {{ border-color: {edge}; }}\n"   # the dashed selection border keeps its blue
-
-            f".maestri-note.{cls} .note-bar {{ background: {head}; }}\n"
+    hx, cls = resolve_hex(color), css_class(color)
+    # NodeShellView overlays themeColor on the neutral shell (5%) and header (18%).
+    def tint(base, alpha):
+        return _hex(tuple(b * (1 - alpha) + c * alpha for b, c in zip(to_rgb(base), to_rgb(hx))))
+    body, head = tint("#ECECEC", .05), tint("#E6E8EA", .18)
+    return (f".maestri-node.maestri-note.{cls} {{ background: {body}; color: #1F1F1F; }}\n"
+            f".maestri-node.maestri-note.{cls}:not(.selected) {{ border-color: rgba(0,0,0,.06); }}\n"
+            f".maestri-note.{cls} .note-bar {{ background: {body}; }}\n"
             f".maestri-note.{cls} .maestri-node-header {{ background: {head}; }}\n")
+
 
 
 def css_font_size_rule(sizes: range = range(10, 33)) -> str:
