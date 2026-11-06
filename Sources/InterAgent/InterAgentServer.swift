@@ -742,6 +742,8 @@ public final class InterAgentServer {
             do {
                 try pm.ensureWorkspaceDirectoryExists(id: doc.payload.id)
                 try pm.saveSync(doc, to: pm.workspaceURL(id: doc.payload.id))
+                let savedId = doc.payload.id
+                await MainActor.run { ConnectionManager.shared.reloadWorkspace(savedId) }   // K6: runtime follows the file
                 Self.publishWorkspaceSaved(doc.payload.id)
                 let respJson = "{\"status\":\"ok\",\"id\":\"\(doc.payload.id.uuidString)\",\"terminalCount\":\(doc.payload.terminalCount)}"
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: respJson, allowedOrigin: allowedOrigin)
@@ -758,6 +760,7 @@ public final class InterAgentServer {
             var displayName: String? = nil
             var roleName: String? = nil
             var requestedId: UUID? = nil
+            var agentType: String? = nil
 
             if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
                 command = json["command"] as? String ?? ""
@@ -770,10 +773,13 @@ public final class InterAgentServer {
                 }
                 displayName = json["displayName"] as? String
                 roleName = json["roleName"] as? String
+                agentType = (json["agentType"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             }
+            // K4: the ask strategy depends on it (agent -> wait for idle; shell -> wait for the prompt)
+            let resolvedAgentType = agentType ?? Self.agentType(forCommand: command)
 
             let newId = requestedId ?? UUID()
-            Task { @MainActor in
+            await MainActor.run {   // the PTY exists before the response: an immediate list/ask finds it
                 let tm = PlatformHooks.terminals
                 tm.createTerminal(
                     id: newId,
@@ -782,7 +788,7 @@ public final class InterAgentServer {
                     workspaceId: workspaceId,
                     roleName: roleName,
                     displayName: displayName,
-                    agentType: "generic_shell"
+                    agentType: resolvedAgentType
                 )
             }
             let resp = "{\"id\":\"\(newId.uuidString)\"}"
@@ -1035,231 +1041,61 @@ public final class InterAgentServer {
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: jsonData, allowedOrigin: allowedOrigin)
         }
 
-        // 10. POST /api/connections
+        // 10. POST /api/connections  (K1b/K2/K6: ServerWorkspace persists, publishes connectionCreated, reloads the runtime)
         if method == "POST" && cleanPath == "/api/connections" {
             guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
                 return Self.buildHTTPResponse(status: 400, body: "error: invalid JSON body", allowedOrigin: allowedOrigin)
             }
-
             guard let aStr = (json["a"] as? String) ?? (json["terminalIdA"] as? String),
                   let idA = UUID(uuidString: aStr),
                   let bStr = (json["b"] as? String) ?? (json["terminalIdB"] as? String),
                   let idB = UUID(uuidString: bStr) else {
                 return Self.buildHTTPResponse(status: 400, body: "error: missing or invalid node IDs 'a' and 'b'", allowedOrigin: allowedOrigin)
             }
-
             let rawPoints = (json["ropePoints"] as? [[Double]]) ?? []
-            let ropePoints: [[Double]] = {
-                if rawPoints.count == Constants.ropeControlPointCount { return rawPoints }
-                if rawPoints.count == 2 {
-                    let p0 = rawPoints[0]
-                    let p1 = rawPoints[1]
-                    if p0.count == 2 && p1.count == 2 {
-                        return (0..<Constants.ropeControlPointCount).map { i in
-                            let t = Double(i) / Double(Constants.ropeControlPointCount - 1)
-                            return [p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t]
-                        }
-                    }
-                }
-                return Array(repeating: [0.0, 0.0], count: Constants.ropeControlPointCount)
-            }()
-
-            let connId = (json["id"] as? String).flatMap(UUID.init) ?? UUID()
-            let rawKind = (json["kind"] as? String) ?? (json["type"] as? String)
-
+            let connId = (json["id"] as? String).flatMap(UUID.init)
+            let rawKind = ((json["kind"] as? String) ?? (json["type"] as? String)).flatMap(ConnectionType.init(wireName:))
             let pm = PersistenceManager.shared
-            var targetWorkspaceId: UUID? = nil
-            if pathParts.count > 1 {
-                for pair in pathParts[1].components(separatedBy: "&") {
-                    let kv = pair.components(separatedBy: "=")
-                    if kv.count == 2 && kv[0] == "workspace" {
-                        targetWorkspaceId = UUID(uuidString: kv[1])
-                    }
-                }
-            }
-
-            if targetWorkspaceId == nil {
-                let appState = try? pm.loadAppState()
-                targetWorkspaceId = appState?.activeWorkspaceId
-            }
-
-            guard let wsId = targetWorkspaceId else {
+            guard let wsId = Self.resolveWorkspaceId(pathParts: pathParts, pm: pm)
+                    ?? (json["workspaceId"] as? String).flatMap(UUID.init) else {
                 return Self.buildHTTPResponse(status: 400, body: "error: active workspace not found", allowedOrigin: allowedOrigin)
             }
-
-            let fileURL = pm.workspaceURL(id: wsId)
-            guard var doc = try? pm.loadWorkspace(id: wsId) else {
-                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found", allowedOrigin: allowedOrigin)
-            }
-
-            // 检查节点类型
-            let nodeA = doc.payload.nodes.first { $0.id == idA }
-            let nodeB = doc.payload.nodes.first { $0.id == idB }
-
-            let isNoteA: Bool
-            let isNoteB: Bool
-            let isPortalA: Bool
-            let isPortalB: Bool
-
-            if let nA = nodeA {
-                switch nA.content {
-                case .stickyNote: isNoteA = true; isPortalA = false
-                case .portal:     isPortalA = true; isNoteA = false
-                default:          isNoteA = false; isPortalA = false
-                }
-            } else {
-                isNoteA = false; isPortalA = false
-            }
-
-            if let nB = nodeB {
-                switch nB.content {
-                case .stickyNote: isNoteB = true; isPortalB = false
-                case .portal:     isPortalB = true; isNoteB = false
-                default:          isNoteB = false; isPortalB = false
-                }
-            } else {
-                isNoteB = false; isPortalB = false
-            }
-
-            let resolvedKind: String
-            if let rawKind, !rawKind.isEmpty {
-                resolvedKind = rawKind
-            } else if isNoteA && isNoteB {
-                resolvedKind = "noteToNote"
-            } else if isNoteA || isNoteB {
-                resolvedKind = "terminalToNote"
-            } else if isPortalA && isPortalB {
-                resolvedKind = "portalToPortal"
-            } else if isPortalA || isPortalB {
-                resolvedKind = "terminalToPortal"
-            } else {
-                resolvedKind = "terminalToTerminal"
-            }
-
-            Task { @MainActor in
-                let cm = ConnectionManager.shared
-                switch resolvedKind {
-                case "noteToNote":
-                    _ = cm.connectNoteToNote(noteNodeIdA: idA, noteNodeIdB: idB, ropePoints: ropePoints)
-                case "terminalToNote":
-                    let termId = (isNoteA && !isNoteB) ? idB : idA
-                    let noteId = (isNoteA && !isNoteB) ? idA : idB
-                    _ = cm.connectTerminalToNote(terminalId: termId, noteNodeId: noteId, ropePoints: ropePoints)
-                case "terminalToPortal":
-                    let termId = (isPortalA && !isPortalB) ? idB : idA
-                    let portalId = (isPortalA && !isPortalB) ? idA : idB
-                    _ = cm.connectTerminalToPortal(terminalId: termId, portalNodeId: portalId, ropePoints: ropePoints)
-                case "portalToPortal":
-                    _ = cm.connectPortalToPortal(portalIdA: idA, portalIdB: idB, ropePoints: ropePoints)
-                default:
-                    _ = cm.connectTerminals(idA: idA, idB: idB, serverPort: PlatformHooks.serverPort(), ropePoints: ropePoints)
-                }
-            }
-
-            switch resolvedKind {
-            case "noteToNote":
-                let conn = NoteToNoteConnection(id: connId, noteNodeIdA: idA, noteNodeIdB: idB, ropePoints: ropePoints)
-                doc.payload.noteToNoteConnections.append(conn)
-            case "terminalToNote":
-                let termId = (isNoteA && !isNoteB) ? idB : idA
-                let noteId = (isNoteA && !isNoteB) ? idA : idB
-                let conn = NoteConnection(id: connId, terminalId: termId, noteNodeId: noteId, ropePoints: ropePoints)
-                doc.payload.noteConnections.append(conn)
-            case "terminalToPortal":
-                let termId = (isPortalA && !isPortalB) ? idB : idA
-                let portalId = (isPortalA && !isPortalB) ? idA : idB
-                let conn = PortalConnection(id: connId, terminalId: termId, portalNodeId: portalId, ropePoints: ropePoints)
-                doc.payload.portalConnections.append(conn)
-            case "portalToPortal":
-                let conn = PortalToPortalConnection(id: connId, portalIdA: idA, portalIdB: idB, ropePoints: ropePoints)
-                doc.payload.portalToPortalConnections.append(conn)
-            default:
-                let conn = TerminalConnection(id: connId, terminalIdA: idA, terminalIdB: idB, ropePoints: ropePoints)
-                doc.payload.connections.append(conn)
-            }
-
-            doc.payload.lastModifiedAt = Date()
             do {
-                try pm.saveSync(doc, to: fileURL)
-                EventBroadcaster.shared.publish(
-                    type: "connectionCreated",
-                    workspaceId: wsId,
-                    payload: [
-                        "connectionId": connId.uuidString,
-                        "kind": resolvedKind,
-                        "a": idA.uuidString,
-                        "b": idB.uuidString,
-                        "ropePoints": ropePoints,
-                    ]
-                )
-                Self.publishWorkspaceSaved(wsId)
-                let resp = "{\"id\":\"\(connId.uuidString)\",\"status\":\"ok\"}"
+                let created = try await MainActor.run { () throws -> ServerWorkspace.CreatedConnection in
+                    // the node types decide the kind when both endpoints are on the canvas (the GUI may send "terminal")
+                    let graph = WorkspaceGraph.load(wsId)
+                    let known = graph.map { g in [idA, idB].allSatisfy { g.node($0) != nil || g.terminalNode($0) != nil } } ?? false
+                    return try ServerWorkspace.addConnection(in: wsId, a: idA, b: idB, kind: known ? nil : rawKind,
+                                                             id: connId, ropePoints: rawPoints)
+                }
+                let resp = "{\"id\":\"\(created.id.uuidString)\",\"kind\":\"\(created.kind.wireName)\",\"status\":\"ok\"}"
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp, allowedOrigin: allowedOrigin)
+            } catch ServerWorkspace.Failure.workspaceNotFound {
+                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found", allowedOrigin: allowedOrigin)
             } catch {
-                return Self.buildHTTPResponse(status: 500, body: "error: failed to save connection to workspace: \(error.localizedDescription)", allowedOrigin: allowedOrigin)
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save connection to workspace: \(error)", allowedOrigin: allowedOrigin)
             }
         }
 
-        // 11. DELETE /api/connections/:id
+        // 11. DELETE /api/connections/:id  (K6: removing it from workspace.json revokes the runtime permission too)
         if method == "DELETE" && cleanPath.hasPrefix("/api/connections/") {
             let rawId = String(cleanPath.dropFirst("/api/connections/".count))
             guard let connId = UUID(uuidString: rawId) else {
                 return Self.buildHTTPResponse(status: 400, body: "error: invalid connection ID", allowedOrigin: allowedOrigin)
             }
-
-            Task { @MainActor in
-                ConnectionManager.shared.disconnect(id: connId)
-            }
-
-            let pm = PersistenceManager.shared
-            var targetWorkspaceId: UUID? = nil
-            if pathParts.count > 1 {
-                for pair in pathParts[1].components(separatedBy: "&") {
-                    let kv = pair.components(separatedBy: "=")
-                    if kv.count == 2 && kv[0] == "workspace" {
-                        targetWorkspaceId = UUID(uuidString: kv[1])
+            let hint = Self.resolveWorkspaceId(pathParts: pathParts, pm: PersistenceManager.shared)
+            do {
+                try await MainActor.run {
+                    if let wsId = ServerWorkspace.workspace(holdingConnection: connId, hint: hint) {
+                        try ServerWorkspace.removeConnection(connId, from: wsId)
+                    } else {
+                        ConnectionManager.shared.disconnect(id: connId)   // in-memory leftover only; idempotent
                     }
                 }
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to remove connection: \(error)", allowedOrigin: allowedOrigin)
             }
-
-            if targetWorkspaceId == nil {
-                let appState = try? pm.loadAppState()
-                targetWorkspaceId = appState?.activeWorkspaceId
-            }
-
-            if let wsId = targetWorkspaceId {
-                let fileURL = pm.workspaceURL(id: wsId)
-                if var doc = try? pm.loadWorkspace(id: wsId) {
-                    // 删除前记录连接种类与端点，用于广播 connectionRemoved
-                    var removedInfo: [String: Any]? = nil
-                    if let c = doc.payload.connections.first(where: { $0.id == connId }) {
-                        removedInfo = ["kind": "terminalToTerminal", "a": c.terminalIdA.uuidString, "b": c.terminalIdB.uuidString]
-                    } else if let c = doc.payload.noteConnections.first(where: { $0.id == connId }) {
-                        removedInfo = ["kind": "terminalToNote", "a": c.terminalId.uuidString, "b": c.noteNodeId.uuidString]
-                    } else if let c = doc.payload.portalConnections.first(where: { $0.id == connId }) {
-                        removedInfo = ["kind": "terminalToPortal", "a": c.terminalId.uuidString, "b": c.portalNodeId.uuidString]
-                    } else if let c = doc.payload.portalToPortalConnections.first(where: { $0.id == connId }) {
-                        removedInfo = ["kind": "portalToPortal", "a": c.portalIdA.uuidString, "b": c.portalIdB.uuidString]
-                    } else if let c = doc.payload.noteToNoteConnections.first(where: { $0.id == connId }) {
-                        removedInfo = ["kind": "noteToNote", "a": c.noteNodeIdA.uuidString, "b": c.noteNodeIdB.uuidString]
-                    }
-                    doc.payload.connections.removeAll { $0.id == connId }
-                    doc.payload.noteConnections.removeAll { $0.id == connId }
-                    doc.payload.portalConnections.removeAll { $0.id == connId }
-                    doc.payload.portalToPortalConnections.removeAll { $0.id == connId }
-                    doc.payload.noteToNoteConnections.removeAll { $0.id == connId }
-                    doc.payload.lastModifiedAt = Date()
-                    try? pm.saveSync(doc, to: fileURL)
-                    if var info = removedInfo {
-                        info["connectionId"] = connId.uuidString
-                        EventBroadcaster.shared.publish(type: "connectionRemoved", workspaceId: wsId, payload: info)
-                    }
-                    Self.publishWorkspaceSaved(wsId)
-                }
-            }
-
-            let resp = "{\"status\":\"ok\"}"
-            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: resp, allowedOrigin: allowedOrigin)
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
         }
 
         // PUT /api/connections/:id  body: {"ropePoints": [[x,y],...]} -> 广播 connectionChanged
@@ -1613,6 +1449,7 @@ public final class InterAgentServer {
             // Remove workspace directory on disk if it exists
             let wsDir = pm.appDataURL.appendingPathComponent("workspaces").appendingPathComponent(wsId.uuidString)
             try? FileManager.default.removeItem(at: wsDir)
+            await MainActor.run { ConnectionManager.shared.forgetWorkspace(wsId) }
 
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
         }
@@ -2217,78 +2054,35 @@ public final class InterAgentServer {
                 }
             }
 
-            let maxZ = doc.payload.nodes.map(\.zIndex).max() ?? 0
-            let node = CanvasNode(id: nodeId, frame: frame, content: content!, zIndex: maxZ + 1)
-            doc.payload.nodes.append(node)
-            doc.payload.lastModifiedAt = Date()
-            let fileURL = pm.workspaceURL(id: wsId)
-            try? pm.saveSync(doc, to: fileURL)
-
-            var nodePayload: [String: Any] = ["nodeId": nodeId.uuidString, "nodeType": nodeType,
-                                              "terminalCount": doc.payload.terminalCount]
-            if let enc = try? pm.encoder.encode(node),
-               let obj = try? JSONSerialization.jsonObject(with: enc) {
-                nodePayload["node"] = obj
+            let node = CanvasNode(id: nodeId, frame: frame, content: content!, zIndex: 0)
+            _ = doc
+            do {
+                let added = try await MainActor.run { try ServerWorkspace.addNode(node, to: wsId) }
+                if let encoded = try? pm.encoder.encode(added) {
+                    return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: encoded, allowedOrigin: allowedOrigin)
+                }
+                return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", body: "{\"id\":\"\(nodeId.uuidString)\"}", allowedOrigin: allowedOrigin)
+            } catch {
+                return Self.buildHTTPResponse(status: 500, body: "error: failed to save node: \(error)", allowedOrigin: allowedOrigin)
             }
-            EventBroadcaster.shared.publish(type: "nodeAdded", workspaceId: wsId, payload: nodePayload)
-
-            if let encoded = try? pm.encoder.encode(node) {
-                return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: encoded, allowedOrigin: allowedOrigin)
-            }
-            return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", body: "{\"id\":\"\(nodeId.uuidString)\"}", allowedOrigin: allowedOrigin)
         }
 
-        // 21. DELETE /api/nodes/:id  (?workspace=UUID 可选)
+        // 21. DELETE /api/nodes/:id  (?workspace=UUID 可选; K2/K6: prunes its connections, events, runtime revoke)
         if method == "DELETE" && cleanPath.hasPrefix("/api/nodes/") {
             let rawId = String(cleanPath.dropFirst("/api/nodes/".count))
             guard let nodeId = UUID(uuidString: rawId) else {
                 return Self.buildHTTPResponse(status: 400, body: "error: invalid node ID", allowedOrigin: allowedOrigin)
             }
-            let pm = PersistenceManager.shared
-            var wsId: UUID? = nil
-            if pathParts.count > 1 {
-                for pair in pathParts[1].components(separatedBy: "&") {
-                    let kv = pair.components(separatedBy: "=")
-                    if kv.count == 2 && kv[0] == "workspace" { wsId = UUID(uuidString: kv[1]) }
-                }
-            }
-            if wsId == nil {
-                wsId = (try? pm.loadAppState())?.activeWorkspaceId ?? (try? pm.loadManifest())?.workspaces.first?.id
-            }
-            guard let wsId, var doc = try? pm.loadWorkspace(id: wsId),
-                  let idx = doc.payload.nodes.firstIndex(where: { $0.id == nodeId }) else {
+            guard let wsId = Self.resolveWorkspaceId(pathParts: pathParts, pm: PersistenceManager.shared) else {
                 return Self.buildHTTPResponse(status: 404, body: "error: node not found", allowedOrigin: allowedOrigin)
             }
-            let removed = doc.payload.nodes.remove(at: idx)
-            var ids: Set<UUID> = [nodeId]
-            if case .terminal(let t) = removed.content { ids.insert(t.id) }
-            var prunedEvents: [[String: Any]] = []
-            func pruned(_ cid: UUID, _ kind: String, _ a: UUID, _ b: UUID) {
-                prunedEvents.append(["connectionId": cid.uuidString, "kind": kind, "a": a.uuidString, "b": b.uuidString])
-            }
-            doc.payload.connections.forEach { if ids.contains($0.terminalIdA) || ids.contains($0.terminalIdB) { pruned($0.id, "terminalToTerminal", $0.terminalIdA, $0.terminalIdB) } }
-            doc.payload.noteConnections.forEach { if ids.contains($0.terminalId) || ids.contains($0.noteNodeId) { pruned($0.id, "terminalToNote", $0.terminalId, $0.noteNodeId) } }
-            doc.payload.portalConnections.forEach { if ids.contains($0.terminalId) || ids.contains($0.portalNodeId) { pruned($0.id, "terminalToPortal", $0.terminalId, $0.portalNodeId) } }
-            doc.payload.portalToPortalConnections.forEach { if ids.contains($0.portalIdA) || ids.contains($0.portalIdB) { pruned($0.id, "portalToPortal", $0.portalIdA, $0.portalIdB) } }
-            doc.payload.noteToNoteConnections.forEach { if ids.contains($0.noteNodeIdA) || ids.contains($0.noteNodeIdB) { pruned($0.id, "noteToNote", $0.noteNodeIdA, $0.noteNodeIdB) } }
-            doc.payload.crossFloorConnections.forEach { if ids.contains($0.nodeIdA) || ids.contains($0.nodeIdB) { pruned($0.id, "crossFloor", $0.nodeIdA, $0.nodeIdB) } }
-            doc.payload.connections.removeAll { ids.contains($0.terminalIdA) || ids.contains($0.terminalIdB) }
-            doc.payload.noteConnections.removeAll { ids.contains($0.terminalId) || ids.contains($0.noteNodeId) }
-            doc.payload.portalConnections.removeAll { ids.contains($0.terminalId) || ids.contains($0.portalNodeId) }
-            doc.payload.portalToPortalConnections.removeAll { ids.contains($0.portalIdA) || ids.contains($0.portalIdB) }
-            doc.payload.noteToNoteConnections.removeAll { ids.contains($0.noteNodeIdA) || ids.contains($0.noteNodeIdB) }
-            doc.payload.crossFloorConnections.removeAll { ids.contains($0.nodeIdA) || ids.contains($0.nodeIdB) }
-            doc.payload.lastModifiedAt = Date()
             do {
-                try pm.saveSync(doc, to: pm.workspaceURL(id: wsId))
+                _ = try await MainActor.run { try ServerWorkspace.removeNode(nodeId, from: wsId) }
+            } catch ServerWorkspace.Failure.nodeNotFound, ServerWorkspace.Failure.workspaceNotFound {
+                return Self.buildHTTPResponse(status: 404, body: "error: node not found", allowedOrigin: allowedOrigin)
             } catch {
                 return Self.buildHTTPResponse(status: 500, body: "error: failed to save workspace", allowedOrigin: allowedOrigin)
             }
-            for ev in prunedEvents {
-                EventBroadcaster.shared.publish(type: "connectionRemoved", workspaceId: wsId, payload: ev)
-            }
-            EventBroadcaster.shared.publish(type: "nodeRemoved", workspaceId: wsId,
-                                            payload: ["nodeId": nodeId.uuidString, "terminalCount": doc.payload.terminalCount])
             return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
         }
 
@@ -2309,6 +2103,20 @@ public final class InterAgentServer {
     }
 
     /// 解析目标 workspace：?workspace=UUID > activeWorkspaceId > manifest 首项。
+    /// Maestri agentType for a terminal command (K4): claude -> claude_code, codex, gemini -> gemini_cli,
+    /// opencode -> open_code, anything else a plain shell.
+    static func agentType(forCommand command: String) -> String {
+        let exe = (command.split(separator: " ").first.map(String.init) ?? "")
+        let name = (exe as NSString).lastPathComponent.lowercased()
+        switch name {
+        case "claude": return "claude_code"
+        case "codex": return "codex"
+        case "gemini": return "gemini_cli"
+        case "opencode": return "open_code"
+        default: return "generic_shell"
+        }
+    }
+
     static func resolveWorkspaceId(pathParts: [String], pm: PersistenceManager) -> UUID? {
         if pathParts.count > 1 {
             for pair in pathParts[1].components(separatedBy: "&") {
