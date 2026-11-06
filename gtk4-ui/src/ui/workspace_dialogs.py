@@ -212,11 +212,11 @@ class CreateWorkspaceDialog(Gtk.Window):
 
     def _close_dialog(self) -> None:
         try:
+            self.set_visible(False)
             self.set_modal(False)
             self.set_transient_for(None)
         except Exception:
             pass
-        self.close()
 
     def destroy(self) -> None:
         self._close_dialog()
@@ -409,11 +409,11 @@ class EditWorkspaceDialog(Gtk.Window):
 
     def _close_dialog(self) -> None:
         try:
+            self.set_visible(False)
             self.set_modal(False)
             self.set_transient_for(None)
         except Exception:
             pass
-        self.close()
 
     def destroy(self) -> None:
         self._close_dialog()
@@ -479,11 +479,11 @@ class DeleteWorkspaceDialog(Gtk.Window):
 
     def _close_dialog(self) -> None:
         try:
+            self.set_visible(False)
             self.set_modal(False)
             self.set_transient_for(None)
         except Exception:
             pass
-        self.close()
 
     def destroy(self) -> None:
         self._close_dialog()
@@ -539,11 +539,11 @@ class GroupDialog(Gtk.Window):
 
     def _close_dialog(self) -> None:
         try:
+            self.set_visible(False)
             self.set_modal(False)
             self.set_transient_for(None)
         except Exception:
             pass
-        self.close()
 
     def destroy(self) -> None:
         self._close_dialog()

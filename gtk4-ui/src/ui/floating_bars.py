@@ -38,18 +38,21 @@ class CanvasTopToolbar(Gtk.Box):
         self.tool_buttons: dict[str, Gtk.Button] = {}
 
         tools = [
-            ("select", "↖", "Select & Move (V)"),
-            ("terminal", ">_", "New Terminal (T)"),
-            ("stickyNote", "📝", "New Sticky Note (N)"),
-            ("file", "📎", "Attach File"),
-            ("fileTree", "📁", "New File Tree (F)"),
-            ("portal", "🌐", "New Web Portal (P)"),
-            ("text", "Aa", "Text Label"),
-            ("draw", "✏️", "Drawing & Shapes"),
+            ("select", "maestri-pointer-symbolic", "Select & Move (V)"),
+            ("terminal", "maestri-terminal-symbolic", "New Terminal (T)"),
+            ("stickyNote", "maestri-note-symbolic", "New Sticky Note (N)"),
+            ("file", "maestri-paperclip-symbolic", "Attach File"),
+            ("fileTree", "maestri-file-tree-symbolic", "New File Tree (F)"),
+            ("portal", "maestri-globe-symbolic", "New Web Portal (P)"),
+            ("text", "maestri-text-symbolic", "Text Label"),
+            ("draw", "maestri-pencil-symbolic", "Drawing & Shapes"),
         ]
 
-        for tid, icon, tooltip in tools:
-            btn = Gtk.Button(label=icon)
+        for tid, icon_name, tooltip in tools:
+            btn = Gtk.Button()
+            img = Gtk.Image.new_from_icon_name(icon_name)
+            img.set_pixel_size(16)
+            btn.set_child(img)
             btn.add_css_class("maestri-island-btn")
             btn.set_tooltip_text(tooltip)
             btn.connect("clicked", lambda _b, t=tid: self._on_tool_clicked(t))
@@ -58,31 +61,43 @@ class CanvasTopToolbar(Gtk.Box):
 
         self.append(pill)
 
-        # 2. Contextual Actions Pill (Edit, Connect, Duplicate, Delete)
+        # 2. Contextual Actions Pill (Sliders, Link, Duplicate, Trash)
         self.context_pill = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.context_pill.add_css_class("maestri-floating-pill")
         self.context_pill.add_css_class("maestri-context-actions-pill")
         self.context_pill.set_halign(Gtk.Align.CENTER)
 
-        btn_edit = Gtk.Button(label="✏️")
+        btn_edit = Gtk.Button()
+        img_edit = Gtk.Image.new_from_icon_name("maestri-sliders-symbolic")
+        img_edit.set_pixel_size(15)
+        btn_edit.set_child(img_edit)
         btn_edit.add_css_class("maestri-island-btn")
         btn_edit.set_tooltip_text("Edit Node Name & Settings")
         btn_edit.connect("clicked", self._on_edit_clicked)
         self.context_pill.append(btn_edit)
 
-        btn_conn = Gtk.Button(label="🔗")
+        btn_conn = Gtk.Button()
+        img_conn = Gtk.Image.new_from_icon_name("maestri-link-symbolic")
+        img_conn.set_pixel_size(15)
+        btn_conn.set_child(img_conn)
         btn_conn.add_css_class("maestri-island-btn")
         btn_conn.set_tooltip_text("Connect Nodes")
         btn_conn.connect("clicked", self._on_connect_clicked)
         self.context_pill.append(btn_conn)
 
-        btn_dup = Gtk.Button(label="📋")
+        btn_dup = Gtk.Button()
+        img_dup = Gtk.Image.new_from_icon_name("maestri-duplicate-symbolic")
+        img_dup.set_pixel_size(15)
+        btn_dup.set_child(img_dup)
         btn_dup.add_css_class("maestri-island-btn")
         btn_dup.set_tooltip_text("Duplicate Selection (Alt+Drag)")
         btn_dup.connect("clicked", self._on_duplicate_clicked)
         self.context_pill.append(btn_dup)
 
-        btn_del = Gtk.Button(label="🗑")
+        btn_del = Gtk.Button()
+        img_del = Gtk.Image.new_from_icon_name("maestri-trash-symbolic")
+        img_del.set_pixel_size(15)
+        btn_del.set_child(img_del)
         btn_del.add_css_class("maestri-island-btn")
         btn_del.add_css_class("danger")
         btn_del.set_tooltip_text("Delete Selection (Del / Cmd+W)")
@@ -205,57 +220,103 @@ class CanvasTopToolbar(Gtk.Box):
 
 
 class AgentActivityRingsWidget(Gtk.DrawingArea):
-    """Draws the 3 macOS agent activity rings matching uploaded_media_0:
-    - Ring 1 (coral/orange): notched active loop with central core.
-    - Ring 2 (teal/green): circular ring with bright active segment.
-    - Ring 3 (royal blue): concentric circular arc spiral.
+    """Draws Apple Activity-style dynamic progress rings representing
+    token and quota usage for active terminal AI models in the workspace:
+    - Ring 1 (Coral / Orange #E07A5F): Claude Code (% context / quota)
+    - Ring 2 (Emerald / Teal #2A9D8F): Codex (% context / quota)
+    - Ring 3 (Royal Blue #3A86FF): Gemini CLI (% context / quota)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, window=None) -> None:
         super().__init__()
-        self.set_content_width(74)
+        self.window = window
+        self.set_content_width(78)
         self.set_content_height(26)
+
+        # Dynamic model quota & token usage states
+        self.models: dict[str, dict[str, Any]] = {
+            "claude": {
+                "name": "Claude Code",
+                "ratio": 0.68,
+                "used": "136k",
+                "max": "200k",
+                "color": (0.94, 0.45, 0.35),       # Coral / Orange
+                "cx": 15,
+            },
+            "codex": {
+                "name": "Codex",
+                "ratio": 0.42,
+                "used": "54k",
+                "max": "128k",
+                "color": (0.18, 0.76, 0.62),       # Emerald / Teal
+                "cx": 39,
+            },
+            "gemini": {
+                "name": "Gemini CLI",
+                "ratio": 0.25,
+                "used": "250k",
+                "max": "1.0M",
+                "color": (0.23, 0.58, 1.00),       # Royal Blue
+                "cx": 63,
+            },
+        }
+
         self.set_draw_func(self._draw_func)
+        self.update_tooltip()
+
+    def set_model_usage(self, model_id: str, ratio: float, used: str, max_tokens: str) -> None:
+        if model_id in self.models:
+            self.models[model_id]["ratio"] = max(0.0, min(1.0, ratio))
+            self.models[model_id]["used"] = used
+            self.models[model_id]["max"] = max_tokens
+            self.update_tooltip()
+            self.queue_draw()
+
+    def update_tooltip(self) -> None:
+        lines = ["Model Quotas & Context Usage:"]
+        for m in self.models.values():
+            pct = int(round(m["ratio"] * 100))
+            lines.append(f"• {m['name']}: {pct}% ({m['used']} / {m['max']})")
+        tip = "\n".join(lines)
+        self.set_tooltip_text(tip)
 
     def _draw_func(self, area, cr, width, height) -> None:
+        import cairo
         cy = height / 2.0
+        radius = 8.0
+        line_w = 2.4
 
-        # Ring 1: Coral / Orange (#E07A5F)
-        cr.save()
-        cr.set_line_width(2.2)
-        cr.set_source_rgba(0.88, 0.48, 0.37, 0.35)
-        cr.arc(15, cy, 7.5, 0, 2 * math.pi)
-        cr.stroke()
-        cr.set_source_rgb(0.92, 0.52, 0.40)
-        cr.arc(15, cy, 7.5, -0.75 * math.pi, 0.85 * math.pi)
-        cr.stroke()
-        cr.arc(15, cy, 1.8, 0, 2 * math.pi)
-        cr.fill()
-        cr.restore()
+        cr.set_line_cap(cairo.LINE_CAP_ROUND)
+        cr.set_line_join(cairo.LINE_JOIN_ROUND)
 
-        # Ring 2: Emerald / Teal (#2A9D8F)
-        cr.save()
-        cr.set_line_width(2.2)
-        cr.set_source_rgba(0.16, 0.61, 0.56, 0.35)
-        cr.arc(37, cy, 7.5, 0, 2 * math.pi)
-        cr.stroke()
-        cr.set_source_rgb(0.25, 0.88, 0.68)
-        cr.arc(37, cy, 7.5, -0.6 * math.pi, 0.15 * math.pi)
-        cr.stroke()
-        cr.restore()
+        for m in self.models.values():
+            cx = m["cx"]
+            r, g, b = m["color"]
+            ratio = max(0.02, min(1.0, m["ratio"]))
 
-        # Ring 3: Royal Blue (#3A86FF)
-        cr.save()
-        cr.set_line_width(2.0)
-        cr.set_source_rgba(0.23, 0.53, 1.0, 0.35)
-        cr.arc(59, cy, 7.5, 0, 2 * math.pi)
-        cr.stroke()
-        cr.set_source_rgb(0.28, 0.58, 1.0)
-        cr.arc(59, cy, 7.5, -0.8 * math.pi, 0.45 * math.pi)
-        cr.stroke()
-        cr.arc(59, cy, 4.2, -0.2 * math.pi, 1.25 * math.pi)
-        cr.stroke()
-        cr.restore()
+            # 1. Background ring track (translucent)
+            cr.save()
+            cr.set_line_width(line_w)
+            cr.set_source_rgba(r, g, b, 0.22)
+            cr.arc(cx, cy, radius, 0, 2 * math.pi)
+            cr.stroke()
+            cr.restore()
+
+            # 2. Dynamic progress arc (starting at -pi/2, top of clock)
+            start_angle = -0.5 * math.pi
+            end_angle = start_angle + (ratio * 2 * math.pi)
+
+            cr.save()
+            cr.set_line_width(line_w)
+            cr.set_source_rgb(r, g, b)
+            cr.arc(cx, cy, radius, start_angle, end_angle)
+            cr.stroke()
+
+            # 3. Inner core dot
+            cr.set_source_rgba(r, g, b, 0.8)
+            cr.arc(cx, cy, 1.6, 0, 2 * math.pi)
+            cr.fill()
+            cr.restore()
 
 
 class CanvasBottomRightControls(Gtk.Box):
@@ -273,21 +334,25 @@ class CanvasBottomRightControls(Gtk.Box):
         self.set_margin_bottom(16)
 
         # Retained compatibility button for floors (delegates to window.floor_button)
-        self.btn_floors = Gtk.Button(label="🥞")
+        img_floors = Gtk.Image.new_from_icon_name("maestri-layers-symbolic")
+        img_floors.set_pixel_size(15)
+        self.btn_floors = Gtk.Button(child=img_floors)
         self.btn_floors.connect("clicked", self._on_floors_clicked)
 
         # Pill 2: Agent Activity Rings (Claude Code, Codex, Gemini CLI)
         self.pill_agents = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         self.pill_agents.add_css_class("maestri-bottom-pill")
-        self.pill_agents.set_tooltip_text("Active Canvas Agents (Claude Code, Codex, Gemini CLI)")
-        self.rings_widget = AgentActivityRingsWidget()
+        self.rings_widget = AgentActivityRingsWidget(window)
         self.pill_agents.append(self.rings_widget)
+        self.pill_agents.set_tooltip_text(self.rings_widget.get_tooltip_text())
         self.append(self.pill_agents)
 
         # Pill 3: Minimap Toggle Button Capsule
         self.pill_minimap = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         self.pill_minimap.add_css_class("maestri-bottom-pill")
-        self.btn_minimap = Gtk.Button(label="🗺")
+        img_map = Gtk.Image.new_from_icon_name("maestri-map-symbolic")
+        img_map.set_pixel_size(15)
+        self.btn_minimap = Gtk.Button(child=img_map)
         self.btn_minimap.add_css_class("maestri-island-btn")
         self.btn_minimap.set_tooltip_text("Toggle Mini Map / Reset View")
         self.btn_minimap.connect("clicked", self._on_minimap_clicked)
@@ -299,7 +364,9 @@ class CanvasBottomRightControls(Gtk.Box):
         self.pill_zoom.add_css_class("maestri-bottom-pill")
         self.pill_zoom.add_css_class("maestri-zoom-controls")
 
-        btn_zoom_out = Gtk.Button(label="−")
+        img_out = Gtk.Image.new_from_icon_name("maestri-minus-symbolic")
+        img_out.set_pixel_size(12)
+        btn_zoom_out = Gtk.Button(child=img_out)
         btn_zoom_out.add_css_class("maestri-island-btn")
         btn_zoom_out.set_tooltip_text("Zoom Out (Ctrl+-)")
         btn_zoom_out.connect("clicked", lambda _b: self._zoom_step(0.8))
@@ -309,7 +376,9 @@ class CanvasBottomRightControls(Gtk.Box):
         self.zoom_lbl.add_css_class("maestri-zoom-label")
         self.pill_zoom.append(self.zoom_lbl)
 
-        btn_zoom_in = Gtk.Button(label="+")
+        img_in = Gtk.Image.new_from_icon_name("maestri-plus-symbolic")
+        img_in.set_pixel_size(12)
+        btn_zoom_in = Gtk.Button(child=img_in)
         btn_zoom_in.add_css_class("maestri-island-btn")
         btn_zoom_in.set_tooltip_text("Zoom In (Ctrl++)")
         btn_zoom_in.connect("clicked", lambda _b: self._zoom_step(1.25))

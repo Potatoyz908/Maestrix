@@ -83,8 +83,13 @@ def window(maestri_app):
     assert win.wait_loaded(), "workspace did not load"
     pump_events(0.2)
     yield win
-    win.close()
-    pump_events(0.05)
+    try:
+        if hasattr(win, "sidebar") and win.sidebar:
+            win.sidebar.close_active_popovers()
+        win.close()
+    except Exception:
+        pass
+    pump_events(0.1)
 
 
 @pytest.mark.e2e
@@ -271,6 +276,9 @@ class TestVisualParityMac:
         badges = [c.get_label() for c in card_pinned.get_last_child().observe_children() if hasattr(c, "get_label")]
         assert "📌" in badges
 
+        sidebar.close_active_popovers()
+        pump_events(0.05)
+
     def test_create_and_edit_workspace_sheets(self, window):
         """Tests CreateWorkspaceDialog and EditWorkspaceDialog macOS sheets."""
         created = []
@@ -317,6 +325,7 @@ class TestVisualParityMac:
         d_dlg.present()
         pump_events(0.05)
         d_dlg._on_delete_clicked(d_dlg.get_last_child())
+        pump_events(0.05)
         assert len(deleted) == 1
 
     def test_macos_traffic_lights_and_header(self, window):

@@ -462,9 +462,19 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         }
         .maestri-search-entry {
             border-radius: 8px;
-            background-color: #e5e5ea;
-            border: none;
-            padding: 6px 8px;
+            background-color: rgba(0, 0, 0, 0.06);
+            color: #1c1c1e;
+            border: 1px solid rgba(0, 0, 0, 0.04);
+            padding: 6px 10px;
+        }
+        .maestri-search-entry text {
+            color: #1c1c1e;
+        }
+        .maestri-search-entry placeholder {
+            color: #8e8e93;
+        }
+        .maestri-search-entry image {
+            color: #8e8e93;
         }
         .maestri-sidebar-header {
             font-size: 11px;
@@ -500,16 +510,33 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             font-size: 9px;
             color: #8e8e93;
         }
+        .maestri-workspace-list {
+            background: transparent;
+        }
+        .maestri-workspace-list row {
+            background: transparent;
+            padding: 2px 1px;
+            border: none;
+            margin: 0;
+        }
+        .maestri-workspace-list row:hover {
+            background: transparent;
+        }
+        .maestri-workspace-list row:selected {
+            background: transparent;
+        }
         .maestri-workspace-card {
             background-color: #ffffff;
-            border: 1px solid #e5e5ea;
-            border-radius: 10px;
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            border-radius: 8px;
             padding: 8px 12px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-            margin-bottom: 2px;
+            margin: 1px 0px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+            transition: all 150ms ease;
         }
         .maestri-workspace-card:hover {
             border-color: #007AFF;
+            box-shadow: 0 2px 8px rgba(0, 122, 255, 0.08);
         }
         .maestri-card-title {
             font-size: 13px;
@@ -526,9 +553,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         .maestri-card-badge {
             font-size: 11px;
             color: #636366;
-            background-color: #f2f2f7;
-            padding: 2px 6px;
-            border-radius: 6px;
+            background-color: rgba(0, 0, 0, 0.05);
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+        .maestri-card-badge image {
+            color: #636366;
         }
         .maestri-floor-card, .maestri-agent-card {
             background-color: #ffffff;
@@ -1600,6 +1630,13 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         if self.sync is not None:
             self.sync.close()
             self.sync = None
+        if hasattr(self, "sidebar") and self.sidebar is not None:
+            self.sidebar.close_active_popovers()
+        if hasattr(self, "floor_button") and self.floor_button is not None:
+            try:
+                self.floor_button.popover.popdown()
+            except Exception:
+                pass
         if hasattr(self, "ask_agent") and self.ask_agent is not None:
             self.ask_agent.dispose()
             self.ask_agent = None

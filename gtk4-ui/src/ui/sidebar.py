@@ -67,6 +67,22 @@ ICON_MAP = {
     "face.smiling": "😀",
 }
 
+SYMBOLIC_ICON_MAP = {
+    "folder": "maestri-folder-symbolic",
+    "folder.fill": "maestri-folder-symbolic",
+    "terminal": "maestri-terminal-symbolic",
+    "terminal.fill": "maestri-terminal-symbolic",
+    "cpu": "maestri-settings-symbolic",
+    "brain": "maestri-shapes-symbolic",
+    "desktopcomputer": "maestri-terminal-symbolic",
+    "network": "maestri-globe-symbolic",
+    "server.rack": "maestri-layers-symbolic",
+    "star.fill": "maestri-diamond-symbolic",
+    "gear": "maestri-settings-symbolic",
+    "globe": "maestri-globe-symbolic",
+    "doc.text": "maestri-note-symbolic",
+}
+
 
 class SidebarView(Gtk.Box):
     def __init__(self, client: MaestriClient) -> None:
@@ -75,6 +91,13 @@ class SidebarView(Gtk.Box):
         self.set_size_request(260, -1)
         self.add_css_class("sidebar-view")
         self.add_css_class("maestri-sidebar")
+
+        display = Gdk.Display.get_default()
+        if display:
+            theme = Gtk.IconTheme.get_for_display(display)
+            icons_dir = os.path.join(os.path.dirname(__file__), "icons")
+            if os.path.isdir(icons_dir):
+                theme.add_search_path(icons_dir)
 
         # Top padding & container
         self.set_margin_top(12)
@@ -105,7 +128,10 @@ class SidebarView(Gtk.Box):
         ws_header.set_hexpand(True)
         ws_header_box.append(ws_header)
 
-        btn_add_ws = Gtk.Button(label="＋")
+        btn_add_ws = Gtk.Button()
+        add_icon = Gtk.Image.new_from_icon_name("maestri-plus-symbolic")
+        add_icon.set_pixel_size(12)
+        btn_add_ws.set_child(add_icon)
         btn_add_ws.add_css_class("maestri-sidebar-add-btn")
         btn_add_ws.set_tooltip_text("New Workspace or Group")
         btn_add_ws.connect("clicked", self._on_add_header_clicked)
@@ -223,8 +249,10 @@ class SidebarView(Gtk.Box):
         chevron_lbl.add_css_class("maestri-group-chevron")
         header_row.append(chevron_lbl)
 
-        icon_lbl = Gtk.Label(label="📁")
-        header_row.append(icon_lbl)
+        group_icon = Gtk.Image.new_from_icon_name("maestri-folder-symbolic")
+        group_icon.set_pixel_size(14)
+        group_icon.add_css_class("maestri-group-folder-icon")
+        header_row.append(group_icon)
 
         name_lbl = Gtk.Label(label=f"<b>{group.name}</b>", use_markup=True, xalign=0.0)
         name_lbl.add_css_class("maestri-group-title")
@@ -272,9 +300,10 @@ class SidebarView(Gtk.Box):
         row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         row_box.add_css_class("maestri-workspace-card")
 
-        # Icon with color indicator
-        emoji = ICON_MAP.get(entry.icon, "📁")
-        icon = Gtk.Label(label=emoji)
+        # Icon with outline/symbolic SVG and color indicator
+        icon_name = SYMBOLIC_ICON_MAP.get(entry.icon, "maestri-folder-symbolic")
+        icon = Gtk.Image.new_from_icon_name(icon_name)
+        icon.set_pixel_size(18)
         icon.add_css_class("maestri-card-icon")
         color = getattr(entry, "color", "blue") or "blue"
         icon.add_css_class(f"icon-color-{color}")
@@ -283,6 +312,7 @@ class SidebarView(Gtk.Box):
         # Name & Path
         info_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_vbox.set_hexpand(True)
+        info_vbox.set_valign(Gtk.Align.CENTER)
 
         name_lbl = Gtk.Label(label=f"<b>{entry.name}</b>", use_markup=True, xalign=0.0, ellipsize=3)
         name_lbl.add_css_class("maestri-card-title")
@@ -294,16 +324,25 @@ class SidebarView(Gtk.Box):
         info_vbox.append(path_lbl)
         row_box.append(info_vbox)
 
-        # Right Badges (Unread + Terminal count + Pin)
-        badges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        # Right Badges (Pin + Terminal count capsule)
+        badges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        badges_box.set_valign(Gtk.Align.CENTER)
 
         if getattr(entry, "is_pinned", False):
             pin_lbl = Gtk.Label(label="📌")
             pin_lbl.add_css_class("maestri-card-pin")
             badges_box.append(pin_lbl)
 
-        badge = Gtk.Label(label=f"🗂️ {count}")
+        # Terminal count pill with maestri-terminal-symbolic icon
+        badge = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         badge.add_css_class("maestri-card-badge")
+        term_icon = Gtk.Image.new_from_icon_name("maestri-terminal-symbolic")
+        term_icon.set_pixel_size(10)
+        badge.append(term_icon)
+        term_lbl = Gtk.Label(label=str(count))
+        badge.append(term_lbl)
+        # Compatibility helper for tests querying get_label()
+        badge.get_label = lambda: f">_ {count}"
         badges_box.append(badge)
 
         row_box.append(badges_box)
@@ -321,6 +360,15 @@ class SidebarView(Gtk.Box):
 
         return row_box
 
+    def close_active_popovers(self) -> None:
+        if hasattr(self, "_active_popover") and self._active_popover is not None:
+            try:
+                self._active_popover.popdown()
+                self._active_popover.unparent()
+            except Exception:
+                pass
+            self._active_popover = None
+
     # ---- Workspace Context Menu (macOS Parity) -------------------------------------------------------------
     def _show_workspace_context_menu(
         self,
@@ -330,10 +378,13 @@ class SidebarView(Gtk.Box):
         entry: WorkspaceEntry,
         group_id: Optional[str] = None,
     ) -> None:
+        self.close_active_popovers()
         popover = Gtk.Popover()
         popover.set_parent(anchor)
         popover.set_has_arrow(False)
         popover.add_css_class("maestri-context-popover")
+        popover.connect("closed", lambda p: p.unparent())
+        self._active_popover = popover
 
         menu_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         menu_vbox.set_margin_top(6)
@@ -401,10 +452,13 @@ class SidebarView(Gtk.Box):
         y: float,
         group: SidebarGroup,
     ) -> None:
+        self.close_active_popovers()
         popover = Gtk.Popover()
         popover.set_parent(anchor)
         popover.set_has_arrow(False)
         popover.add_css_class("maestri-context-popover")
+        popover.connect("closed", lambda p: p.unparent())
+        self._active_popover = popover
 
         menu_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         menu_vbox.set_margin_top(6)

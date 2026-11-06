@@ -537,6 +537,15 @@ class NewFloorDialog(Gtk.Window):
             self.on_created(floor)
         self.close()
 
+    def close(self) -> None:
+        try:
+            self.set_visible(False)
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        super().close()
+
     def _failed(self, message: str) -> None:
         self.spinner.stop()
         self.spinner.set_visible(False)
@@ -561,7 +570,10 @@ class LandFloorDialog(Gtk.Window):
 
         route = Gtk.Box(spacing=12, halign=Gtk.Align.CENTER, margin_top=16)
         route.append(Gtk.Label(label=floor.get("branchName", "?"), css_classes=["floor-branch"]))
-        route.append(Gtk.Label(label="✈", css_classes=["floor-plane"]))
+        plane_icon = Gtk.Image.new_from_icon_name("maestri-send-symbolic")
+        plane_icon.set_pixel_size(16)
+        plane_icon.add_css_class("floor-plane")
+        route.append(plane_icon)
         self.target_model = Gtk.StringList.new([])
         self.target = Gtk.DropDown(model=self.target_model, sensitive=False)
         route.append(self.target)
@@ -672,6 +684,15 @@ class LandFloorDialog(Gtk.Window):
             self.on_landed(res)
         self.close()
 
+    def close(self) -> None:
+        try:
+            self.set_visible(False)
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        super().close()
+
     def _failed_land(self, message: str) -> None:
         self.spinner.set_visible(False)
         self.target.set_sensitive(True)
@@ -727,10 +748,25 @@ class FloorButton(Gtk.MenuButton):
         self.list_box.connect("row-activated", lambda _lb, row: self._row_activated(row))
         self.status = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, margin_start=8, margin_end=8)
         self.status.set_visible(False)
-        self.new_btn = Gtk.Button(label="＋ Novo floor…", has_frame=False)
+
+        new_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        new_icon = Gtk.Image.new_from_icon_name("maestri-plus-symbolic")
+        new_icon.set_pixel_size(14)
+        new_box.append(new_icon)
+        new_box.append(Gtk.Label(label="Novo floor…"))
+        self.new_btn = Gtk.Button(child=new_box, has_frame=False)
+        self.new_btn.get_label = lambda: "＋ Novo floor…"
         self.new_btn.connect("clicked", lambda _b: self.open_new())
-        self.land_btn = Gtk.Button(label="✈ Land…", has_frame=False)
+
+        land_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        land_icon = Gtk.Image.new_from_icon_name("maestri-send-symbolic")
+        land_icon.set_pixel_size(14)
+        land_box.append(land_icon)
+        land_box.append(Gtk.Label(label="Land…"))
+        self.land_btn = Gtk.Button(child=land_box, has_frame=False)
+        self.land_btn.get_label = lambda: "✈ Land…"
         self.land_btn.connect("clicked", lambda _b: self.controller.active_floor and self.open_land(self.controller.active_floor))
+
         actions = Gtk.Box(spacing=4)
         actions.append(self.new_btn)
         actions.append(self.land_btn)
@@ -748,6 +784,16 @@ class FloorButton(Gtk.MenuButton):
         self.set_popover(self.popover)
         self.popover.connect("show", lambda _p: controller.refresh())
 
+        # Main button content: symbolic icon + floor title
+        self.btn_icon = Gtk.Image.new_from_icon_name("maestri-layers-symbolic")
+        self.btn_icon.set_pixel_size(15)
+        self.btn_label = Gtk.Label(label="Ground")
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        btn_box.append(self.btn_icon)
+        btn_box.append(self.btn_label)
+        self.set_child(btn_box)
+        self.get_label = lambda: f"🏢 {self.btn_label.get_text()}"
+
         controller.listeners.append(self.rebuild)
         controller.on_status = self.show_status
         self.rebuild()
@@ -755,7 +801,8 @@ class FloorButton(Gtk.MenuButton):
     def rebuild(self) -> None:
         c = self.controller
         active = c.active_floor
-        self.set_label(f"🏢 {active.get('name') if active else 'Ground'}")
+        name = active.get('name') if active else 'Ground'
+        self.btn_label.set_text(name)
         self.set_sensitive(c.available)
         self.set_tooltip_text("Floors: worktrees git isolados deste workspace" if c.available
                               else "Floors precisam do core do Open Maestri (desconectado)")
