@@ -109,6 +109,26 @@ enum ServerWorkspace {
         return node
     }
 
+    /// Change a node in place (position, name, role, look…) and publish `nodeChanged {nodeId, node}`.
+    @discardableResult
+    static func updateNode(_ id: UUID, in wsId: UUID, _ mutate: (inout CanvasNode) -> Void) throws -> CanvasNode {
+        var doc = try load(wsId)
+        let graph = WorkspaceGraph(workspaceId: wsId, payload: doc.payload)
+        guard let found = graph.node(id) ?? graph.terminalNode(id),
+              let idx = doc.payload.nodes.firstIndex(where: { $0.id == found.id }) else {
+            throw Failure.nodeNotFound(id)
+        }
+        mutate(&doc.payload.nodes[idx])
+        doc.payload.nodes[idx].lastModifiedAt = Date()
+        let node = doc.payload.nodes[idx]
+        try save(doc)
+        var payload: [String: Any] = ["nodeId": node.id.uuidString, "nodeType": nodeType(of: node)]
+        if let obj = jsonObject(node) { payload["node"] = obj }
+        EventBroadcaster.shared.publish(type: "nodeChanged", workspaceId: wsId, payload: payload)
+        InterAgentServer.publishWorkspaceSaved(wsId)
+        return node
+    }
+
     // MARK: - Connections
 
     struct CreatedConnection {

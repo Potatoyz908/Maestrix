@@ -190,6 +190,82 @@ final class CollaborationTests: IsolatedDataDirTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: specPath), "managed note file removed")
     }
 
+    // MARK: - K8
+
+    func testMaestroRecruitConnectRoleAssignAndDismiss() async throws {
+        let (port, token) = try await startServer()
+        defer { Task { @MainActor in InterAgentServer.shared.stop() } }
+        let ws = UUID(), maestro = UUID(), plain = UUID(), roadmap = UUID()
+        var p = WorkspacePayload(id: ws, name: "Maestro", workingDirectory: "/tmp")
+        p.nodes = [terminalNode(nodeId: maestro, terminalId: maestro, name: "Maestro Lead", x: 9900, manager: true),
+                   terminalNode(nodeId: plain, terminalId: plain, name: "Plain", x: 11000),
+                   noteNode(roadmap, name: "Roadmap")]
+        try save(p)
+        await MainActor.run { ConnectionManager.shared.reloadWorkspace(ws) }
+        await spawn(maestro, name: "Maestro Lead", ws: ws)
+        defer { Task { await self.kill([maestro, plain]) } }
+
+        let denied = try await cli(port, token, ["recruit", "X", "--command", "bash"], as: plain)
+        XCTAssertTrue(denied.contains("not in Maestro mode"), denied)
+
+        let role = try await cli(port, token, ["role", "create", "Reviewer", "Audit every diff."], as: maestro)
+        XCTAssertTrue(role.lowercased().contains("created"), role)
+        let rec = try await cli(port, token, ["recruit", "BuilderBot", "--command", "bash --norc", "--role", "Reviewer",
+                                              "--color", "#FF9500"], as: maestro)
+        XCTAssertTrue(rec.hasPrefix("Recruited 'BuilderBot'"), rec)
+
+        var doc = try PersistenceManager.shared.loadWorkspace(id: ws).payload
+        let bot = try XCTUnwrap(doc.nodes.first { $0.content.terminalContent?.name == "BuilderBot" })
+        let botTc = try XCTUnwrap(bot.content.terminalContent)
+        XCTAssertEqual(bot.id, botTc.id, "K1: node id == terminal id")
+        XCTAssertEqual(bot.frame.minX, 9900)
+        XCTAssertEqual(bot.frame.minY, 8600 + 280 + 48, "first slot below the Maestro")
+        XCTAssertEqual(botTc.color, "#FF9500")
+        XCTAssertNotNil(botTc.assignedRoleId)
+        XCTAssertTrue(doc.connections.contains { Set([$0.terminalIdA, $0.terminalIdB]) == Set([maestro, bot.id]) })
+        let runningDir = await MainActor.run { PlatformHooks.terminals.terminals[bot.id]?.workingDirectory }
+        XCTAssertTrue(runningDir?.contains("/.open-maestri/roles/") == true, "starts in the role directory: \(String(describing: runningDir))")
+        let list = try await cli(port, token, ["list"], as: maestro)
+        XCTAssertTrue(list.contains("\"BuilderBot\" - role: Reviewer"), list)
+
+        let dup = try await cli(port, token, ["recruit", "BuilderBot", "--command", "bash"], as: maestro)
+        XCTAssertTrue(dup.contains("--replace"), dup)
+
+        let con = try await cli(port, token, ["connect", "BuilderBot", "Roadmap"], as: maestro)
+        XCTAssertTrue(con.hasPrefix("Connected"), con)
+        doc = try PersistenceManager.shared.loadWorkspace(id: ws).payload
+        XCTAssertTrue(doc.noteConnections.contains { $0.terminalId == bot.id && $0.noteNodeId == roadmap })
+
+        let cleared = try await cli(port, token, ["role", "assign", "BuilderBot", "--none"], as: maestro)
+        XCTAssertTrue(cleared.contains("restarted"), cleared)
+        doc = try PersistenceManager.shared.loadWorkspace(id: ws).payload
+        let after = try XCTUnwrap(doc.nodes.first { $0.id == bot.id })
+        XCTAssertEqual(after.frame, bot.frame, "position kept")
+        XCTAssertNil(after.content.terminalContent?.assignedRoleId)
+        XCTAssertTrue(doc.connections.contains { Set([$0.terminalIdA, $0.terminalIdB]) == Set([maestro, bot.id]) }, "connections kept")
+        let restartedDir = await MainActor.run { PlatformHooks.terminals.terminals[bot.id]?.workingDirectory }
+        XCTAssertEqual(restartedDir, "/tmp", "back to the original directory")
+
+        let dis = try await cli(port, token, ["dismiss", "BuilderBot"], as: maestro)
+        XCTAssertEqual(dis, "Dismissed 'BuilderBot'")
+        doc = try PersistenceManager.shared.loadWorkspace(id: ws).payload
+        XCTAssertFalse(doc.nodes.contains { $0.id == bot.id })
+        XCTAssertFalse(doc.connections.contains { $0.terminalIdA == bot.id || $0.terminalIdB == bot.id })
+        XCTAssertFalse(doc.noteConnections.contains { $0.terminalId == bot.id })
+        let gone = await MainActor.run { PlatformHooks.terminals.terminals[bot.id] == nil }
+        XCTAssertTrue(gone)
+    }
+
+    func testRecruitGridSlots() {
+        let m = CGRect(x: 100, y: 200, width: 400, height: 300)
+        XCTAssertEqual(MaestroHandlers.recruitFrame(below: m, index: 0), CGRect(x: 100, y: 548, width: 400, height: 300))
+        XCTAssertEqual(MaestroHandlers.recruitFrame(below: m, index: 2), CGRect(x: 948, y: 548, width: 400, height: 300))
+        let o = MaestroHandlers.parseRecruit(["recruit", "Bot", "--dir", "~/x", "--replace", "--floor", "F", "--icon", "star"])
+        XCTAssertEqual(o?.name, "Bot"); XCTAssertEqual(o?.dir, "~/x"); XCTAssertEqual(o?.floor, "F")
+        XCTAssertEqual(o?.icon, "star"); XCTAssertEqual(o?.replace, true)
+        XCTAssertNil(MaestroHandlers.parseRecruit(["recruit", "--replace"]))
+    }
+
     // MARK: - HTTP helpers (blocking sockets, off the main actor)
 
     private func cli(_ port: UInt16, _ token: String, _ args: [String], as terminal: UUID) async throws -> String {

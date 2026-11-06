@@ -175,6 +175,7 @@ public final class InterAgentServer {
             throw NSError(domain: "InterAgentServer", code: Int(errno),
                           userInfo: [NSLocalizedDescriptionKey: "socket(AF_INET) failed: \(String(cString: strerror(errno)))"])
         }
+        Self.setCloseOnExec(fd)
         var opt: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, socklen_t(MemoryLayout<Int32>.size))
 
@@ -237,6 +238,7 @@ public final class InterAgentServer {
                 }
             }
             guard clientFd >= 0 else { break }
+            Self.setCloseOnExec(clientFd)
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 self?.handleClient(fd: clientFd, isUnix: false)
             }
@@ -427,6 +429,7 @@ public final class InterAgentServer {
             throw NSError(domain: "InterAgentServer", code: Int(errno),
                           userInfo: [NSLocalizedDescriptionKey: "socket() failed: \(String(cString: strerror(errno)))"])
         }
+        Self.setCloseOnExec(fd)
         unixSocketFd = fd
 
         var addr = sockaddr_un()
@@ -478,6 +481,7 @@ public final class InterAgentServer {
         while true {
             let clientFd = accept(serverFd, nil, nil)
             guard clientFd >= 0 else { break }
+            Self.setCloseOnExec(clientFd)
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 self?.handleClient(fd: clientFd, isUnix: true)
             }
@@ -2117,6 +2121,13 @@ public final class InterAgentServer {
         case "opencode": return "open_code"
         default: return "generic_shell"
         }
+    }
+
+    /// Server sockets must not leak into PTY children (fork + exec of bash/claude): an inherited client socket keeps
+    /// the HTTP connection open until the child exits, so `omaestri recruit` / `role assign` never returned.
+    static func setCloseOnExec(_ fd: Int32) {
+        let flags = fcntl(fd, F_GETFD)
+        if flags >= 0 { _ = fcntl(fd, F_SETFD, flags | FD_CLOEXEC) }
     }
 
     static func resolveWorkspaceId(pathParts: [String], pm: PersistenceManager) -> UUID? {
