@@ -36,6 +36,11 @@ class SignalBus(GObject.Object):
         # Viewport events
         "viewport-changed": (GObject.SignalFlags.RUN_FIRST, None, (float, float, float)),
 
+        # Agent collaboration: "Ask agent" from a FileTree diff -> (source node id, question + quoted diff)
+        "ask-agent": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
+        # Delivery result of an ask-agent request -> (source node id, target terminal node id or "", ok, message)
+        "ask-agent-done": (GObject.SignalFlags.RUN_FIRST, None, (str, str, bool, str)),
+
         # Backend status
         "status-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),
     }

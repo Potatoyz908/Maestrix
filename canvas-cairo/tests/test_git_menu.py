@@ -229,5 +229,15 @@ def test_diff_view_clean_tree_and_ask_selection(repo, window):
     assert v.btn_ask.get_sensitive()
     asked = []
     v.connect("ask-requested", lambda _v, q: asked.append(q))
+    v.btn_ask.emit("clicked")                          # opens the question popover, nothing sent yet
+    assert asked == [] and v.ask_popover.get_visible()
+    assert v.ask_preview.get_label() == "-old  (+1 lines)"
+    v.ask_entry.set_text("Why was this renamed?")
+    v.ask_entry.emit("activate")
+    assert asked == ["Why was this renamed?\n\n```diff\n-old\n+new\n```"]
+    assert not v.ask_popover.get_visible()
     v.btn_ask.emit("clicked")
-    assert asked == ["```diff\n-old\n+new\n```"]
+    v.ask_send.emit("clicked")                         # empty question -> default prompt
+    assert asked[-1].startswith("Explain this change:\n\n```diff")
+    v.set_ask_status("Sent to Claude.", True)
+    assert v.ask_status.get_visible() and v.ask_status.has_css_class("success")

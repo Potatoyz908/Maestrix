@@ -4,8 +4,10 @@ A read-only monospace Gtk.TextView: file headers bold on a tinted band, hunk hea
 removed lines red, context dimmed. Lines are classified by `maestri_core.diffparse.classify` (hunk-aware, so content lines
 starting with "+++"/"---" are not mistaken for headers).
 
-Selecting text inside the diff enables "Ask agent": it emits `ask-requested(quote)` with the selection as a fenced block,
-for the host to hand to a connected agent (reference: "select a code block -> chat icon -> ask an agent").
+Selecting text inside the diff enables "Ask agent" (reference: "select a code block -> chat icon -> popover -> ask an
+agent"): a popover takes the question (default DEFAULT_QUESTION) and `ask-requested(text)` carries the question followed
+by the selection as a ```diff block. The host delivers it (window: bus "ask-agent" -> active terminal) and reports back
+with `set_ask_status(text, ok)`.
 """
 from __future__ import annotations
 
@@ -26,6 +28,13 @@ TAG_STYLE = {
     "del": ("#f14c4c", "rgba(241,76,76,0.14)", Pango.Weight.NORMAL),
     "context": (None, None, Pango.Weight.NORMAL),
 }
+DEFAULT_QUESTION = "Explain this change:"
+
+
+def ask_text(question: str, selection: str) -> str:
+    """The message sent to the agent: the question, then the quoted diff lines."""
+    q = question.strip() or DEFAULT_QUESTION
+    return f"{q}\n\n```diff\n{selection.strip(chr(10))}\n```"
 
 
 class DiffView(Gtk.Box):
@@ -54,7 +63,7 @@ class DiffView(Gtk.Box):
         self.btn_ask = Gtk.Button(icon_name="chat-message-new-symbolic", tooltip_text="Ask an agent about the selection",
                                   sensitive=False)
         self.btn_ask.add_css_class("flat")
-        self.btn_ask.connect("clicked", lambda _b: self._ask())
+        self.btn_ask.connect("clicked", lambda _b: self.open_ask())
         btn_reload = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Reload diff")
         btn_reload.add_css_class("flat")
         btn_reload.connect("clicked", lambda _b: self.reload())
@@ -78,7 +87,33 @@ class DiffView(Gtk.Box):
         scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
         scroller.set_child(self.text)
 
+        # "Ask agent" popover: question entry + Send
+        self.ask_popover = Gtk.Popover()
+        self.ask_popover.set_parent(self.btn_ask)
+        abox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_start=8, margin_end=8, margin_top=8,
+                       margin_bottom=8)
+        self.ask_preview = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, max_width_chars=40)
+        self.ask_preview.add_css_class("dim-label")
+        self.ask_preview.add_css_class("monospace")
+        row = Gtk.Box(spacing=6)
+        self.ask_entry = Gtk.Entry(width_chars=32, placeholder_text=DEFAULT_QUESTION, hexpand=True)
+        self.ask_entry.connect("activate", lambda _e: self._ask())
+        self.ask_send = Gtk.Button(label="Ask")
+        self.ask_send.add_css_class("suggested-action")
+        self.ask_send.connect("clicked", lambda _b: self._ask())
+        row.append(self.ask_entry)
+        row.append(self.ask_send)
+        abox.append(self.ask_preview)
+        abox.append(row)
+        self.ask_popover.set_child(abox)
+        self._ask_selection = ""
+        self.connect("destroy", lambda _w: self.ask_popover.unparent())
+
+        self.ask_status = Gtk.Label(xalign=0, visible=False, wrap=True, margin_start=8, margin_end=8)
+        self.ask_status.add_css_class("caption")
+
         self.append(bar)
+        self.append(self.ask_status)
         self.append(Gtk.Separator())
         self.append(scroller)
 
@@ -130,7 +165,28 @@ class DiffView(Gtk.Box):
         else:
             self.emit("loaded")
 
+    def open_ask(self) -> None:
+        """Freeze the current selection and ask for the question (the popover takes the focus, the selection stays)."""
+        self._ask_selection = self.selected_text().strip("\n")
+        if not self._ask_selection:
+            return
+        first = self._ask_selection.splitlines()[0]
+        n = len(self._ask_selection.splitlines())
+        self.ask_preview.set_label(first + (f"  (+{n - 1} lines)" if n > 1 else ""))
+        self.ask_entry.set_text("")
+        self.ask_popover.popup()
+        self.ask_entry.grab_focus()
+
+    def set_ask_status(self, text: str, ok: bool) -> None:
+        self.ask_status.set_label(text)
+        for c in ("success", "error"):
+            self.ask_status.remove_css_class(c)
+        self.ask_status.add_css_class("success" if ok else "error")
+        self.ask_status.set_visible(bool(text))
+
     def _ask(self) -> None:
-        text = self.selected_text().strip("\n")
-        if text:
-            self.emit("ask-requested", f"```diff\n{text}\n```")
+        if not self._ask_selection:
+            return
+        question = self.ask_entry.get_text()
+        self.ask_popover.popdown()
+        self.emit("ask-requested", ask_text(question, self._ask_selection))

@@ -460,6 +460,38 @@ class RoutinesWindow(Gtk.Window):
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# terminal header badge
+# ---------------------------------------------------------------------------------------------------------------------
+BADGE_KEY = "routine"
+
+
+def routine_badges(routines: List[Routine], terminals: List[TerminalInfo],
+                   is_running: Callable[[str], bool]) -> Dict[str, Optional[Tuple[str, str, Tuple[str, ...]]]]:
+    """node id -> (text, tooltip, css) for every terminal: "⏱" (or "⏱ N") when at least one ACTIVE routine targets it,
+    pulsing while one of them runs; None (no badge) when it has none or only paused ones."""
+    out: Dict[str, Optional[Tuple[str, str, Tuple[str, ...]]]] = {}
+    for tid, _name, nid in terminals:
+        keys = {tid.upper(), nid.upper()}
+        mine = [r for r in routines if r.is_active and r.target_terminal_id.upper() in keys]
+        if not mine:
+            out[nid] = None
+            continue
+        running = [r for r in mine if is_running(r.id)]
+        text = "⏱" if len(mine) == 1 else f"⏱ {len(mine)}"
+        lines = [f"{'▶ ' if is_running(r.id) else ''}{r.name} — {describe_interval(r.interval_seconds)}" for r in mine]
+        out[nid] = (text, "Routines:\n" + "\n".join(lines), ("routine-running",) if running else ())
+    return out
+
+
+def apply_routine_badges(canvas, controller: "RoutinesController", terminals: Callable[[], List[TerminalInfo]]) -> None:
+    for nid, badge in routine_badges(controller.routines, terminals(), controller.is_running).items():
+        if badge is None:
+            canvas.set_node_badge(nid, BADGE_KEY, None)
+        else:
+            canvas.set_node_badge(nid, BADGE_KEY, *badge)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # window hook
 # ---------------------------------------------------------------------------------------------------------------------
 def install_routines(window) -> RoutinesController:
@@ -498,6 +530,19 @@ def install_routines(window) -> RoutinesController:
     if app is not None:
         app.set_accels_for_action("win.routines", ["<Control><Shift>r"])
     window.connect("close-request", lambda *_: controller.stop() or False)
+
+    # ⏱ badge on the header of every terminal targeted by an active routine. Terminals can appear after the routines
+    # (async workspace load, new node, workspace switch), so node lifecycle events re-apply it too.
+    def badges() -> bool:
+        if hasattr(window.canvas_widget, "set_node_badge"):
+            apply_routine_badges(window.canvas_widget, controller, terminals)
+        return GLib.SOURCE_REMOVE
+
+    controller.listeners.append(badges)
+    from maestri_core.signals.bus import bus
+    hids = [bus.connect(sig, lambda *_: GLib.idle_add(badges) and None)
+            for sig in ("workspace-loaded", "workspace-switched", "node-added")]
+    window.connect("close-request", lambda *_: [bus.disconnect(h) for h in hids if bus.handler_is_connected(h)] and False)
     if store is not None:
         controller.refresh()     # start the active routines without waiting for the window to open
     return controller

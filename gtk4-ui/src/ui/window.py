@@ -36,6 +36,7 @@ from maestri_canvas.terminal_themes import apply_terminal_style
 from maestri_canvas.viewport import Viewport
 from maestri_canvas.widget import CanvasWidget, is_terminal, load_vte, terminal_of, terminate_terminal
 from .drawing import DrawingTools
+from .ask_agent import install_ask_agent
 from .routines_window import install_routines
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
@@ -104,6 +105,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         # 4. Setup Shortcuts
         self._setup_shortcuts()
         self.routines = install_routines(self)   # File → Routines (Ctrl+Shift+R), scheduler on the main loop
+        self.ask_agent = install_ask_agent(self)  # DiffView 'Ask agent' -> bus 'ask-agent' -> active terminal
 
         bus.connect("workspace-switched", self._on_workspace_switched)
         self.connect("close-request", self._on_close_request)

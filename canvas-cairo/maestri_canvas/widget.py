@@ -247,6 +247,12 @@ class NodeFrame(Gtk.Overlay):
         for w in getattr(content, "header_right", ()):
             setattr(w, _ROLE, ("content", item.id))
             header.append(w)
+        # Dynamic status badges (e.g. ⏱ active routine): set_badge(key, text) adds / updates / removes one.
+        self.badges = Gtk.Box(spacing=4)
+        self.badges.add_css_class("maestri-node-badges")
+        setattr(self.badges, _ROLE, ("header", item.id))   # dragging over a badge still moves the node
+        self._badges: dict[str, Gtk.Label] = {}
+        header.append(self.badges)
         header.append(close)
         content.set_vexpand(True)
         content.set_hexpand(True)
@@ -263,6 +269,32 @@ class NodeFrame(Gtk.Overlay):
         attach = getattr(content, "frame_attached", None)
         if attach is not None:
             attach(self)   # lets a content widget style the card and retag its header widgets
+
+    def set_badge(self, key: str, text: str | None, tooltip: str = "", css: tuple[str, ...] = ()) -> None:
+        """Show `text` as the header badge `key`; None removes it. `css` replaces the badge's extra style classes."""
+        lbl = self._badges.get(key)
+        if text is None:
+            if lbl is not None:
+                self.badges.remove(lbl)
+                del self._badges[key]
+            return
+        if lbl is None:
+            lbl = Gtk.Label()
+            lbl.add_css_class("maestri-node-badge")
+            setattr(lbl, _ROLE, ("header", self.node_id))
+            lbl.maestri_css = ()
+            self._badges[key] = lbl
+            self.badges.append(lbl)
+        lbl.set_label(text)
+        lbl.set_tooltip_text(tooltip or None)
+        for c in lbl.maestri_css:
+            lbl.remove_css_class(c)
+        for c in css:
+            lbl.add_css_class(c)
+        lbl.maestri_css = tuple(css)
+
+    def badge(self, key: str) -> Gtk.Label | None:
+        return self._badges.get(key)
 
     def tag(self, widget: Gtk.Widget, kind: str) -> None:
         """Set a widget's canvas role ("header" = drags the node, "content" = keeps its own pointer events)."""
@@ -310,6 +342,10 @@ CSS = b"""
 .maestri-toast { background: #ef4444; color: white; padding: 6px 14px; border-radius: 14px; }
 .maestri-node.selected { border: 2px dashed #3b82f6; }
 .maestri-node-header { background: alpha(currentColor, .06); padding: 0 8px; border-radius: 7px 7px 0 0; }
+.maestri-node-badge { font-size: 12px; padding: 0 5px; border-radius: 8px; background: alpha(currentColor, .10); }
+.maestri-node-badge.routine-paused { opacity: .45; }
+.maestri-node-badge.routine-running { color: #23d18b; animation: maestri-badge-pulse 1s ease-in-out infinite alternate; }
+@keyframes maestri-badge-pulse { from { opacity: 1; } to { opacity: .35; } }
 .maestri-pin { background: #3b82f6; border: 2px solid white; border-radius: 50%; opacity: 0; transition: opacity 120ms; }
 .maestri-file-tree-list > row { padding: 2px 6px; min-height: 22px; }
 .maestri-drop-hover { box-shadow: inset 0 0 0 2px #3b82f6; }
@@ -344,6 +380,7 @@ class CanvasWidget(Gtk.Overlay):
         "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
         "file-activated": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                             # fileTree id, path
         "file-tree-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                       # fileTree id, {rootPath, viewMode}
+        "ask-requested": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                              # fileTree id, question + quoted diff
         "files-dropped": (GObject.SignalFlags.RUN_FIRST, None, (object, float, float)),                  # [paths], canvas x, y
         "note-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                       # stickyNote id, StickyNoteContent dict
         "portal-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                     # portal id, PortalContent dict
@@ -365,6 +402,7 @@ class CanvasWidget(Gtk.Overlay):
         self.controller.on_event = self._on_event
         self.renderer = CairoRenderer()
         self.frames: dict[str, NodeFrame] = {}
+        self.active_terminal_id: str | None = None   # last focused / solely selected terminal node
         self._pointer = Point(0, 0)
         self._last_applied: dict[str, tuple] = {}
         self._pinch_prev = 1.0
@@ -434,6 +472,7 @@ class CanvasWidget(Gtk.Overlay):
             nid = item.id
             content = FileTreeView(cwd, view_mode=(file_tree or {}).get("viewMode", "list"))
             content.connect("file-activated", lambda _v, path: self.emit("file-activated", nid, path))
+            content.connect("ask-requested", lambda _v, text: self.emit("ask-requested", nid, text))
             content.connect("root-changed", lambda v, _p: self.emit("file-tree-changed", nid, {"rootPath": v.root, "viewMode": v.view_mode}))
             content.connect("view-mode-changed", lambda v, _m: self.emit("file-tree-changed", nid, {"rootPath": v.root, "viewMode": v.view_mode}))
         elif item.kind == "stickyNote" and content is None:
@@ -463,11 +502,27 @@ class CanvasWidget(Gtk.Overlay):
             frame = NodeFrame(item, content, on_close=lambda i: self.emit("delete-requested", (i,)))
             self.frames[item.id] = frame
             self.fixed.put(frame, 0, 0)
+            if item.kind == "terminal":
+                # "Active terminal" = the last terminal that held the keyboard (or was selected alone): the target of
+                # "Ask agent" from a diff. The focus controller fires when focus enters the content or any descendant.
+                focus_ctl = Gtk.EventControllerFocus()
+                focus_ctl.connect("enter", lambda _c, i=item.id: setattr(self, "active_terminal_id", i))
+                content.add_controller(focus_ctl)
             if focus:
                 GLib.idle_add(lambda: (content.grab_focus(), False)[1])
 
+    def set_node_badge(self, node_id: str, key: str, text: str | None, tooltip: str = "", css: tuple[str, ...] = ()) -> bool:
+        """Header badge on a widget node (see NodeFrame.set_badge). False when the node has no frame."""
+        frame = self.frames.get(norm(node_id))
+        if frame is None:
+            return False
+        frame.set_badge(key, text, tooltip, css)
+        return True
+
     def remove_node(self, node_id: str) -> None:
         k = norm(node_id)
+        if self.active_terminal_id == k:
+            self.active_terminal_id = None
         frame = self.frames.pop(k, None)
         if frame is not None:
             if is_terminal(frame.content):
@@ -670,6 +725,10 @@ class CanvasWidget(Gtk.Overlay):
             self.emit("node-resized", e.id, e.frame.x, e.frame.y, e.frame.w, e.frame.h, e.final)
         elif isinstance(e, SelectionChanged):
             self._sync_selection_css()
+            if len(e.ids) == 1:
+                node = self.scene.nodes.get(norm(next(iter(e.ids))))
+                if node is not None and node.kind == "terminal":
+                    self.active_terminal_id = node.id
             self.emit("selection-changed", e.ids)
         elif isinstance(e, ConnectRequested):
             na, nb = self.scene.nodes.get(norm(e.a)), self.scene.nodes.get(norm(e.b))
