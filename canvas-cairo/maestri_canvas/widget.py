@@ -244,6 +244,10 @@ class NodeFrame(Gtk.Overlay):
             header.append(title_widget)
         else:
             header.append(self.title)
+            title_click = Gtk.GestureClick()
+            title_click.set_button(1)
+            title_click.connect("pressed", lambda _g, n_press, _x, _y, it=item, h=header: self._on_title_clicked(it, h, n_press))
+            self.title.add_controller(title_click)
         for w in getattr(content, "header_right", ()):
             setattr(w, _ROLE, ("content", item.id))
             header.append(w)
@@ -269,6 +273,38 @@ class NodeFrame(Gtk.Overlay):
         attach = getattr(content, "frame_attached", None)
         if attach is not None:
             attach(self)   # lets a content widget style the card and retag its header widgets
+
+    def _on_title_clicked(self, item: NodeItem, header: Gtk.Box, n_press: int) -> None:
+        if n_press == 2:
+            entry = Gtk.Entry(text=self.title.get_label())
+            entry.set_hexpand(True)
+            entry.add_css_class("maestri-title-entry")
+            setattr(entry, _ROLE, ("content", item.id))
+
+            try:
+                header.remove(self.title)
+                header.prepend(entry)
+                entry.grab_focus()
+            except Exception:
+                return
+
+            def finish_rename(_w):
+                new_val = entry.get_text().strip()
+                if new_val:
+                    self.title.set_label(new_val)
+                    item.title = new_val
+                    canvas = self.get_ancestor(CanvasWidget)
+                    if canvas is not None:
+                        canvas.controller.dirty = True
+                        canvas.emit("node-title-changed", item.id, new_val)
+                if entry.get_parent() == header:
+                    header.remove(entry)
+                    header.prepend(self.title)
+
+            entry.connect("activate", finish_rename)
+            focus_c = Gtk.EventControllerFocus()
+            focus_c.connect("leave", lambda _c: finish_rename(entry))
+            entry.add_controller(focus_c)
 
     def set_badge(self, key: str, text: str | None, tooltip: str = "", css: tuple[str, ...] = ()) -> None:
         """Show `text` as the header badge `key`; None removes it. `css` replaces the badge's extra style classes."""
@@ -386,6 +422,7 @@ class CanvasWidget(Gtk.Overlay):
         "portal-meta-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                     # portal id, PortalContent dict
         "portal-popup": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                               # portal id, url (target=_blank)
         "snapping-changed": (GObject.SignalFlags.RUN_FIRST, None, (bool,)),                              # alignment guides on/off
+        "node-title-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                         # node id, new title
         "connection-refused": (GObject.SignalFlags.RUN_FIRST, None, (str, str, str)),                    # a, b, human reason
     }
 

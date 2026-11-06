@@ -58,23 +58,29 @@ class CanvasTopToolbar(Gtk.Box):
 
         self.append(pill)
 
-        # 2. Contextual Actions Pill (Duplicate, Connect, Delete)
+        # 2. Contextual Actions Pill (Edit, Connect, Duplicate, Delete)
         self.context_pill = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.context_pill.add_css_class("maestri-floating-pill")
         self.context_pill.add_css_class("maestri-context-actions-pill")
         self.context_pill.set_halign(Gtk.Align.CENTER)
 
-        btn_dup = Gtk.Button(label="📋")
-        btn_dup.add_css_class("maestri-island-btn")
-        btn_dup.set_tooltip_text("Duplicate Selection (Alt+Drag)")
-        btn_dup.connect("clicked", self._on_duplicate_clicked)
-        self.context_pill.append(btn_dup)
+        btn_edit = Gtk.Button(label="✏️")
+        btn_edit.add_css_class("maestri-island-btn")
+        btn_edit.set_tooltip_text("Edit Node Name & Settings")
+        btn_edit.connect("clicked", self._on_edit_clicked)
+        self.context_pill.append(btn_edit)
 
         btn_conn = Gtk.Button(label="🔗")
         btn_conn.add_css_class("maestri-island-btn")
         btn_conn.set_tooltip_text("Connect Nodes")
         btn_conn.connect("clicked", self._on_connect_clicked)
         self.context_pill.append(btn_conn)
+
+        btn_dup = Gtk.Button(label="📋")
+        btn_dup.add_css_class("maestri-island-btn")
+        btn_dup.set_tooltip_text("Duplicate Selection (Alt+Drag)")
+        btn_dup.connect("clicked", self._on_duplicate_clicked)
+        self.context_pill.append(btn_dup)
 
         btn_del = Gtk.Button(label="🗑")
         btn_del.add_css_class("maestri-island-btn")
@@ -105,7 +111,7 @@ class CanvasTopToolbar(Gtk.Box):
         if tool_id == "select":
             self.cw.set_tool("select")
         elif tool_id == "terminal":
-            self.window.open_new_terminal_dialog()
+            self.window._create_node("terminal")
             self._set_active_tool_btn("select")
         elif tool_id == "stickyNote":
             self.window._create_node("stickyNote")
@@ -146,10 +152,27 @@ class CanvasTopToolbar(Gtk.Box):
         if mapping:
             self.cw.emit("duplicate-requested", mapping)
 
+    def _on_edit_clicked(self, _btn) -> None:
+        if hasattr(self.window, "edit_selected_node"):
+            self.window.edit_selected_node()
+
     def _on_connect_clicked(self, _btn) -> None:
         sel = list(self.cw.scene.selection)
-        if len(sel) == 2:
+        if len(sel) >= 2:
             self.cw.emit("connect-requested", sel[0], "right", sel[1], "left")
+        elif len(sel) == 1:
+            all_other = [n.id for n in self.cw.scene.nodes if n.id != sel[0]]
+            if all_other:
+                self.cw.emit("connect-requested", sel[0], "right", all_other[0], "left")
+            else:
+                self.window._create_node("terminal")
+                nodes = [n.id for n in self.cw.scene.nodes if n.id != sel[0]]
+                if nodes:
+                    self.cw.emit("connect-requested", sel[0], "right", nodes[-1], "left")
+        else:
+            nodes = [n.id for n in self.cw.scene.nodes]
+            if len(nodes) >= 2:
+                self.cw.emit("connect-requested", nodes[0], "right", nodes[1], "left")
 
     def _on_delete_clicked(self, _btn) -> None:
         sel = tuple(self.cw.scene.selection)

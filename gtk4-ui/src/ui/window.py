@@ -42,7 +42,7 @@ from .floors import install_floors
 from .core_link import CoreReconnector
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
-from .terminal_dialog import NewTerminalDialog
+from .terminal_dialog import EditTerminalDialog, NewTerminalDialog
 from .workspace_dialogs import CreateWorkspaceDialog, GroupDialog
 from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
 
@@ -91,9 +91,9 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         self.canvas_widget.connect("file-activated", self._on_file_activated)
         self.canvas_widget.connect("file-tree-changed", self._on_file_tree_changed)
         self.canvas_widget.connect("files-dropped", self._on_files_dropped)
+        self.canvas_widget.connect("node-title-changed", self._on_node_title_changed)
         self._setup_context_menu()
         self.drawing = DrawingTools(self)   # text / shape / freehand tools + P-tool frames (ui/drawing.py)
-        self._header.pack_start(self.drawing.button)
 
         self.paned.set_start_child(self.sidebar)
         self.canvas_stack = canvas_stack = Gtk.Overlay()
@@ -385,22 +385,22 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             color: #1d1d1f;
         }
         headerbar {
-            background-color: #f6f6f8;
-            border-bottom: 1px solid #e0e0e4;
+            background-color: #f5f5f7;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.08);
             color: #1d1d1f;
-            min-height: 42px;
-            padding: 0 10px;
+            min-height: 44px;
+            padding: 0 12px;
         }
         .maestri-traffic-lights {
-            margin-right: 12px;
+            margin-right: 14px;
         }
         .maestri-traffic-dot {
             min-width: 12px;
             min-height: 12px;
             border-radius: 50%;
-            border: none;
+            border: 0.5px solid rgba(0, 0, 0, 0.15);
             padding: 0;
-            margin: 0 2px;
+            margin: 0 3px;
         }
         .dot-close {
             background-color: #FF5F56;
@@ -421,16 +421,26 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             background-color: #1AAB29;
         }
         .maestri-header-btn {
-            background-color: #ffffff;
-            border: 1px solid #d1d1d6;
-            border-radius: 7px;
-            padding: 3px 8px;
+            background-color: transparent;
+            border: none;
+            border-radius: 6px;
+            padding: 4px 8px;
             font-size: 13px;
-            color: #333336;
-            margin: 0 3px;
+            font-weight: 500;
+            color: #48484a;
+            margin: 0 2px;
         }
         .maestri-header-btn:hover {
-            background-color: #f2f2f7;
+            background-color: rgba(0, 0, 0, 0.06);
+        }
+        .maestri-title-entry {
+            border: 1px solid #007AFF;
+            border-radius: 4px;
+            background: #ffffff;
+            color: #1d1d1f;
+            font-size: 12px;
+            padding: 1px 4px;
+            min-height: 20px;
         }
         .maestri-loading {
             font-size: 18px;
@@ -1128,6 +1138,20 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         node.last_modified_at = current_iso8601()
         bus.emit("node-updated", node.id)
 
+    def _on_node_title_changed(self, _canvas, node_id, new_title):
+        """Title renamed directly on node header via inline entry."""
+        node = self._find_node(node_id)
+        if node is None:
+            return
+        if hasattr(node.content, "name"):
+            node.content.name = new_title
+        elif isinstance(node.content, dict):
+            node.content["name"] = new_title
+        node.last_modified_at = current_iso8601()
+        bus.emit("node-updated", node.id)
+        if self.sync is not None:
+            self.sync.flush()
+
     def _on_files_dropped(self, _canvas, paths, x, y):
         """Files dropped on the empty canvas (FileTree rows, file managers) become preview nodes, stacked from the drop point
         (macOS Maestri: WorkspaceCanvasView+FileDrop). Text -> sticky note editing that file (storageMode custom); folder -> File
@@ -1276,9 +1300,17 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             target_list.append(conn)
             bus.emit("connection-created", conn)
         else:
-            cw.remove_connection(temp_cid)   # POST failed: no orphan optimistic rope
-            cw.refuse_connection(a, b, "Could not create the connection")
-            bus.emit("connection-failed", temp_cid)
+            # Standalone/offline fallback: create and register locally in document payload
+            import uuid
+            from maestri_core.models.connection import Connection
+            local_id = str(uuid.uuid4()).upper()
+            local_conn = Connection(id=local_id, a=a, b=b, kind=kind, side_a=side_a, side_b=side_b)
+            if not cw.replace_connection_id(temp_cid, local_conn.id):
+                return GLib.SOURCE_REMOVE
+            target_list.append(local_conn)
+            bus.emit("connection-created", local_conn)
+            cw.controller.dirty = True
+            cw.queue_draw()
         return GLib.SOURCE_REMOVE
 
     def reset_zoom(self):
@@ -1293,7 +1325,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         """Opens the macOS-matching 'New Terminal' modal dialog with Quick Start presets."""
         def on_create(data: dict):
             import uuid
-            cwd = data.get("cwd") or os.path.expanduser("~")
+            cwd = data.get("cwd") or self.floors.terminal_cwd() or os.path.expanduser("~")
             name = data.get("name") or "Terminal"
             cmd = data.get("command") or "bash"
             spawn_at = at or Point(
@@ -1302,17 +1334,47 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             )
             node_id = str(uuid.uuid4()).upper()
             frame = NodeFrame(x=spawn_at.x, y=spawn_at.y, width=420, height=300)
-            content = TerminalContent(name=name, command=cmd)
+            content = TerminalContent(name=name, command=cmd, working_directory=cwd)
             node = CanvasNode(id=node_id, frame=frame, node_type="terminal", content=content, z_index=len(self.document.payload.nodes) + 1)
             self.document.payload.nodes.append(node)
-            self._add_node_to_canvas(node, cwd=cwd)
+            self._add_node_to_canvas(node)
             self.canvas_widget.controller.dirty = True
-            bus.emit("node-added", node_id)
+            bus.emit("node-added", node)
             if self.sync is not None:
                 self.sync.flush()
 
         dlg = NewTerminalDialog(self, on_create=on_create, default_cwd=self.document.payload.working_directory)
         dlg.present()
+
+    def edit_selected_node(self) -> None:
+        """Edits the currently selected node (rename, settings, etc.)."""
+        sel = list(self.canvas_widget.scene.selection)
+        if not sel:
+            return
+        node_id = sel[0]
+        node = self._find_node(node_id)
+        if node is None:
+            return
+        if node.node_type == "terminal":
+            def on_save(data: dict):
+                node.content.name = data["name"]
+                node.content.command = data["command"]
+                node.content.working_directory = data["cwd"]
+                frame = self.canvas_widget.frames.get(norm(node.id))
+                if frame and hasattr(frame, "title"):
+                    frame.title.set_label(data["name"])
+                self.canvas_widget.controller.dirty = True
+                self.canvas_widget.queue_draw()
+                bus.emit("node-updated", node.id)
+                if self.sync is not None:
+                    self.sync.flush()
+
+            dlg = EditTerminalDialog(self, node, on_save)
+            dlg.present()
+        elif node.node_type == "stickyNote":
+            frame = self.canvas_widget.frames.get(norm(node.id))
+            if frame and hasattr(frame.content, "edit_button"):
+                frame.content.edit_button.emit("clicked")
 
     def _on_new_workspace(self) -> None:
         """Opens macOS-matching 'New Workspace' modal sheet."""

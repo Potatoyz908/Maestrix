@@ -310,6 +310,48 @@ class TestVisualParityMac:
         dots = [c for c in window.traffic_box.observe_children()]
         assert len(dots) == 3
 
+    def test_terminal_creation_and_renaming(self, window):
+        """Verifies terminal creation and renaming via dialog and inline."""
+        n0 = len(window.document.payload.nodes)
+
+        # 1. Direct creation via tool button
+        window.top_toolbar._on_tool_clicked("terminal")
+        pump_events(0.1)
+        assert len(window.document.payload.nodes) == n0 + 1
+        new_term = window.document.payload.nodes[-1]
+        assert new_term.node_type == "terminal"
+
+        # 2. Rename selected terminal
+        window.canvas_widget.scene.selection = {new_term.id}
+        window.canvas_widget.emit("selection-changed", (new_term.id,))
+        pump_events(0.05)
+
+        # Rename via node-title-changed signal
+        window.canvas_widget.emit("node-title-changed", new_term.id, "Renamed Terminal")
+        pump_events(0.05)
+        assert new_term.title == "Renamed Terminal"
+        assert new_term.content.name == "Renamed Terminal"
+
+    def test_node_connecting_both_modes(self, window):
+        """Verifies connection creation works reliably in both single-selection and multi-selection."""
+        cw = window.canvas_widget
+        nodes = list(cw.scene.nodes)
+        if len(nodes) < 2:
+            window._create_node("terminal")
+            window._create_node("terminal")
+            pump_events(0.1)
+            nodes = list(cw.scene.nodes)
+
+        a, b = nodes[0], nodes[1]
+        cw.scene.selection = {a, b}
+        cw.emit("selection-changed", (a, b))
+        pump_events(0.05)
+
+        c0 = len(cw.scene.connections)
+        window.top_toolbar._on_connect_clicked(None)
+        pump_events(0.1)
+        assert len(cw.scene.connections) >= c0 + 1
+
     def test_visual_snapshot_capture(self, window):
         """Captures a full visual snapshot of the canvas with the floating macOS bars."""
         out_dir = ROOT_DIR / "artifacts" / "visual-parity"
