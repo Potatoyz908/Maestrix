@@ -18,7 +18,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(ROOT_DIR / "canvas-cairo"))  # provides the canonical `maestri_canvas` package
 sys.path.insert(0, str(ROOT_DIR))
 
-from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload
+from maestri_core.models.workspace import SidebarGroup, WorkspaceDocument, WorkspacePayload
 from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent, current_iso8601
 from maestri_core.client.api import MaestriClient, AuthenticationError
 from maestri_core.preferences import PreferencesStore
@@ -43,6 +43,7 @@ from .core_link import CoreReconnector
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
 from .terminal_dialog import NewTerminalDialog
+from .workspace_dialogs import CreateWorkspaceDialog, GroupDialog
 from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
 
 
@@ -110,11 +111,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         canvas_stack.add_overlay(self.bottom_controls)
 
         self.paned.set_end_child(canvas_stack)
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        root.append(Gtk.PopoverMenuBar.new_from_model(self._build_menu_model()))
         self.paned.set_vexpand(True)
-        root.append(self.paned)
-        self.set_child(root)
+        self.set_child(self.paned)
 
         # 4. Setup Shortcuts
         self._bus_handlers: list[tuple[object, int]] = []
@@ -387,9 +385,52 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             color: #1d1d1f;
         }
         headerbar {
-            background-color: #e8e8ed;
-            border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+            background-color: #f6f6f8;
+            border-bottom: 1px solid #e0e0e4;
             color: #1d1d1f;
+            min-height: 42px;
+            padding: 0 10px;
+        }
+        .maestri-traffic-lights {
+            margin-right: 12px;
+        }
+        .maestri-traffic-dot {
+            min-width: 12px;
+            min-height: 12px;
+            border-radius: 50%;
+            border: none;
+            padding: 0;
+            margin: 0 2px;
+        }
+        .dot-close {
+            background-color: #FF5F56;
+        }
+        .dot-close:hover {
+            background-color: #E0443E;
+        }
+        .dot-min {
+            background-color: #FFBD2E;
+        }
+        .dot-min:hover {
+            background-color: #DEA123;
+        }
+        .dot-max {
+            background-color: #27C93F;
+        }
+        .dot-max:hover {
+            background-color: #1AAB29;
+        }
+        .maestri-header-btn {
+            background-color: #ffffff;
+            border: 1px solid #d1d1d6;
+            border-radius: 7px;
+            padding: 3px 8px;
+            font-size: 13px;
+            color: #333336;
+            margin: 0 3px;
+        }
+        .maestri-header-btn:hover {
+            background-color: #f2f2f7;
         }
         .maestri-loading {
             font-size: 18px;
@@ -415,12 +456,40 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             color: #8e8e93;
             margin-top: 6px;
         }
+        .maestri-sidebar-add-btn {
+            background: transparent;
+            border: none;
+            font-size: 14px;
+            color: #555558;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .maestri-sidebar-add-btn:hover {
+            background-color: #e5e5ea;
+        }
+        .maestri-group-header {
+            padding: 4px 6px;
+            border-radius: 6px;
+        }
+        .maestri-group-header:hover {
+            background-color: rgba(0, 0, 0, 0.04);
+        }
+        .maestri-group-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #48484a;
+        }
+        .maestri-group-chevron {
+            font-size: 9px;
+            color: #8e8e93;
+        }
         .maestri-workspace-card {
             background-color: #ffffff;
             border: 1px solid #e5e5ea;
             border-radius: 10px;
             padding: 8px 12px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+            margin-bottom: 2px;
         }
         .maestri-workspace-card:hover {
             border-color: #007AFF;
@@ -433,6 +502,9 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         .maestri-card-path {
             font-size: 11px;
             color: #8e8e93;
+        }
+        .maestri-card-pin {
+            font-size: 11px;
         }
         .maestri-card-badge {
             font-size: 11px;
@@ -458,7 +530,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         .maestri-floating-pill {
             background-color: rgba(255, 255, 255, 0.96);
             border: 1px solid rgba(0, 0, 0, 0.12);
-            border-radius: 14px;
+            border-radius: 16px;
             box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
             padding: 4px 8px;
         }
@@ -487,6 +559,140 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             color: #555558;
             padding: 0 6px;
         }
+        .maestri-context-popover {
+            background-color: #ffffff;
+            border: 1px solid rgba(0, 0, 0, 0.12);
+            border-radius: 10px;
+            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.15);
+        }
+        .maestri-menu-item-btn {
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 13px;
+            color: #1d1d1f;
+        }
+        .maestri-menu-item-btn:hover {
+            background-color: #007AFF;
+            color: #ffffff;
+        }
+        .maestri-menu-item-btn.danger {
+            color: #FF3B30;
+        }
+        .maestri-menu-item-btn.danger:hover {
+            background-color: #FF3B30;
+            color: #ffffff;
+        }
+        .maestri-modal-window {
+            background-color: #ffffff;
+            border-radius: 14px;
+        }
+        .maestri-sheet-header {
+            background-color: #f7f7f9;
+        }
+        .maestri-sheet-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #111113;
+        }
+        .maestri-form-section-title {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            color: #8e8e93;
+        }
+        .maestri-text-input {
+            border: 1px solid #d1d1d6;
+            border-radius: 8px;
+            padding: 6px 10px;
+            background-color: #ffffff;
+        }
+        .maestri-text-input:focus {
+            border-color: #007AFF;
+        }
+        .maestri-dir-row {
+            background-color: #f2f2f7;
+            border: 1px solid #e5e5ea;
+            border-radius: 8px;
+            padding: 4px 8px;
+        }
+        .maestri-dir-path {
+            font-size: 12px;
+            color: #333336;
+        }
+        .maestri-dialog-btn {
+            background-color: #ffffff;
+            border: 1px solid #d1d1d6;
+            border-radius: 8px;
+            padding: 6px 14px;
+            font-size: 13px;
+            color: #333336;
+        }
+        .maestri-dialog-btn-primary {
+            background-color: #007AFF;
+            border: none;
+            border-radius: 8px;
+            padding: 6px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+        .maestri-dialog-btn-danger {
+            background-color: #FF3B30;
+            border: none;
+            border-radius: 8px;
+            padding: 6px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+        .maestri-dialog-warning-text {
+            font-size: 13px;
+            color: #333336;
+            line-height: 1.4;
+        }
+        .maestri-icon-btn {
+            background: transparent;
+            border: 2px solid transparent;
+            border-radius: 8px;
+            padding: 6px;
+            font-size: 18px;
+        }
+        .maestri-icon-btn:hover {
+            background-color: #f2f2f7;
+        }
+        .maestri-icon-btn.active {
+            background-color: #eef5ff;
+            border-color: #007AFF;
+        }
+        .maestri-color-dot {
+            min-width: 26px;
+            min-height: 26px;
+            border-radius: 50%;
+            border: 2.5px solid transparent;
+            padding: 0;
+        }
+        .maestri-color-dot.active {
+            border-color: #1d1d1f;
+        }
+        .color-blue { background-color: #007AFF; }
+        .color-red { background-color: #FF3B30; }
+        .color-green { background-color: #34C759; }
+        .color-orange { background-color: #FF9500; }
+        .color-purple { background-color: #AF52DE; }
+        .color-pink { background-color: #FF2D55; }
+        .color-cyan { background-color: #32ADE6; }
+        .color-yellow { background-color: #FFCC00; }
+        .color-rainbow { background: linear-gradient(135deg, #ff3b30, #ff9500, #ffcc00, #34c759, #007aff, #af52de); }
+        .icon-color-blue { color: #007AFF; }
+        .icon-color-red { color: #FF3B30; }
+        .icon-color-green { color: #34C759; }
+        .icon-color-orange { color: #FF9500; }
+        .icon-color-purple { color: #AF52DE; }
+        .icon-color-pink { color: #FF2D55; }
+        .icon-color-cyan { color: #32ADE6; }
+        .icon-color-yellow { color: #FFCC00; }
         .maestri-modal-dialog {
             background-color: #ffffff;
             border-radius: 16px;
@@ -583,10 +789,43 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         header = Gtk.HeaderBar()
         self.set_titlebar(header)
 
+        # macOS Window Traffic Lights (Red, Yellow, Green)
+        traffic_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        traffic_box.add_css_class("maestri-traffic-lights")
+        traffic_box.set_margin_start(4)
+        traffic_box.set_margin_end(12)
+        self.traffic_box = traffic_box
+
+        dot_close = Gtk.Button()
+        dot_close.add_css_class("maestri-traffic-dot")
+        dot_close.add_css_class("dot-close")
+        dot_close.set_tooltip_text("Close")
+        dot_close.connect("clicked", lambda _b: self.close())
+        traffic_box.append(dot_close)
+
+        dot_min = Gtk.Button()
+        dot_min.add_css_class("maestri-traffic-dot")
+        dot_min.add_css_class("dot-min")
+        dot_min.set_tooltip_text("Minimize")
+        dot_min.connect("clicked", lambda _b: self.minimize())
+        traffic_box.append(dot_min)
+
+        dot_max = Gtk.Button()
+        dot_max.add_css_class("maestri-traffic-dot")
+        dot_max.add_css_class("dot-max")
+        dot_max.set_tooltip_text("Zoom / Fullscreen")
+        dot_max.connect("clicked", lambda _b: self.unmaximize() if self.is_maximized() else self.maximize())
+        traffic_box.append(dot_max)
+
+        header.pack_start(traffic_box)
+
         # Quick Add (+) MenuButton
         btn_quick_add = Gtk.MenuButton(label="＋ ▾")
         btn_quick_add.set_tooltip_text("Quick Create Node")
+        btn_quick_add.add_css_class("maestri-header-btn")
         quick_menu = Gio.Menu()
+        quick_menu.append("New Workspace…", "win.new-workspace")
+        quick_menu.append("New Group…", "win.new-group")
         quick_menu.append("New Terminal…", "win.new-terminal")
         quick_menu.append("New Sticky Note", "win.new-note")
         quick_menu.append("New Web Portal", "win.new-portal")
@@ -594,9 +833,10 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         btn_quick_add.set_menu_model(quick_menu)
         header.pack_start(btn_quick_add)
 
-        # Toggle Sidebar button
-        btn_sidebar = Gtk.Button(label="☰")
+        # Toggle Sidebar button (macOS [|] style)
+        btn_sidebar = Gtk.Button(label="[|]")
         btn_sidebar.set_tooltip_text("Toggle Sidebar")
+        btn_sidebar.add_css_class("maestri-header-btn")
         btn_sidebar.connect("clicked", self._on_toggle_sidebar)
         header.pack_start(btn_sidebar)
         self._header = header
@@ -604,6 +844,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         # Right: Settings button
         btn_settings = Gtk.Button(label="⚙️")
         btn_settings.set_tooltip_text("Preferences")
+        btn_settings.add_css_class("maestri-header-btn")
         btn_settings.connect("clicked", lambda _b: self.show_preferences())
         header.pack_end(btn_settings)
 
@@ -689,6 +930,8 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         """Menu actions + accelerators: Ctrl+N new terminal, Ctrl+S save, Ctrl+0 reset zoom, Ctrl+Q quit,
         Ctrl+, preferences, Ctrl+B sidebar. Application accels run before focused widgets, so they work inside terminals."""
         handlers = {
+            "new-workspace": lambda: self._on_new_workspace(),
+            "new-group": lambda: self._on_new_group(),
             "new-terminal": lambda: self.open_new_terminal_dialog(),
             "new-note": lambda: self._create_node("stickyNote"),
             "new-portal": lambda: self._create_node("portal"),
@@ -1069,6 +1312,30 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                 self.sync.flush()
 
         dlg = NewTerminalDialog(self, on_create=on_create, default_cwd=self.document.payload.working_directory)
+        dlg.present()
+
+    def _on_new_workspace(self) -> None:
+        """Opens macOS-matching 'New Workspace' modal sheet."""
+        def handle_created(name: str, wd: str, icon: str):
+            def worker():
+                self.client.create_workspace(name=name, working_directory=wd, icon=icon)
+                self.sidebar.refresh()
+            threading.Thread(target=worker, daemon=True).start()
+
+        dlg = CreateWorkspaceDialog(self, handle_created)
+        dlg.present()
+
+    def _on_new_group(self) -> None:
+        """Opens macOS-matching 'New Group' modal dialog."""
+        def handle_ok(name: str):
+            layout = self.sidebar._sidebar_layout
+            layout.groups.append(SidebarGroup(name=name, items=[]))
+            def worker():
+                self.client.save_sidebar_layout(layout)
+                self.sidebar.refresh()
+            threading.Thread(target=worker, daemon=True).start()
+
+        dlg = GroupDialog(self, "New Group", on_ok=handle_ok)
         dlg.present()
 
     def _create_node(self, node_type: str, at: Point = None, size: tuple = None, content=None):

@@ -1463,6 +1463,154 @@ public final class InterAgentServer {
             return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", body: "{\"id\":\"\(id.uuidString)\"}", allowedOrigin: allowedOrigin)
         }
 
+        // 15a. PUT /api/workspaces/:id (Edit Workspace)
+        if method == "PUT" && cleanPath.hasPrefix("/api/workspaces/") && !cleanPath.hasSuffix("/duplicate") {
+            let rawId = String(cleanPath.dropFirst("/api/workspaces/".count))
+            guard let wsId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid workspace ID", allowedOrigin: allowedOrigin)
+            }
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid JSON body", allowedOrigin: allowedOrigin)
+            }
+
+            let pm = PersistenceManager.shared
+            var manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+            guard let idx = manifest.workspaces.firstIndex(where: { $0.id == wsId }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: workspace not found", allowedOrigin: allowedOrigin)
+            }
+
+            if let name = json["name"] as? String, !name.isEmpty {
+                manifest.workspaces[idx].name = name
+            }
+            if let wd = json["workingDirectory"] as? String, !wd.isEmpty {
+                manifest.workspaces[idx].workingDirectory = wd
+            }
+            if let icon = json["icon"] as? String {
+                manifest.workspaces[idx].icon = icon
+            }
+            if let color = json["color"] as? String {
+                manifest.workspaces[idx].color = color
+            }
+            if let isPinned = json["isPinned"] as? Bool {
+                manifest.workspaces[idx].isPinned = isPinned
+                manifest.workspaces.sort { $0.isPinned && !$1.isPinned }
+            }
+
+            try? pm.saveManifest(manifest)
+
+            // Also update workspace document if it exists
+            if var doc = try? pm.loadWorkspace(id: wsId) {
+                if let name = json["name"] as? String, !name.isEmpty { doc.payload.name = name }
+                if let wd = json["workingDirectory"] as? String, !wd.isEmpty { doc.payload.workingDirectory = wd }
+                try? pm.saveSync(doc, to: pm.workspaceURL(id: wsId))
+            }
+
+            let updated = manifest.workspaces.first(where: { $0.id == wsId }) ?? manifest.workspaces[idx]
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime]
+            let respObj: [String: Any] = [
+                "id": updated.id.uuidString,
+                "name": updated.name,
+                "workingDirectory": updated.workingDirectory,
+                "icon": updated.icon,
+                "color": updated.color,
+                "isPinned": updated.isPinned,
+                "locationType": updated.locationType,
+                "createdAt": isoFormatter.string(from: updated.createdAt)
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: respObj) {
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
+        }
+
+        // 15b. POST /api/workspaces/:id/duplicate (Duplicate Workspace)
+        if method == "POST" && cleanPath.hasPrefix("/api/workspaces/") && cleanPath.hasSuffix("/duplicate") {
+            let sub = cleanPath.dropFirst("/api/workspaces/".count)
+            let rawId = String(sub.dropLast("/duplicate".count))
+            guard let srcId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid workspace ID", allowedOrigin: allowedOrigin)
+            }
+
+            let pm = PersistenceManager.shared
+            var manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+            guard let srcEntry = manifest.workspaces.first(where: { $0.id == srcId }) else {
+                return Self.buildHTTPResponse(status: 404, body: "error: source workspace not found", allowedOrigin: allowedOrigin)
+            }
+
+            let newId = UUID()
+            var newEntry = srcEntry
+            newEntry.id = newId
+            newEntry.name = "\(srcEntry.name) Copy"
+            newEntry.isPinned = false
+            newEntry.createdAt = Date()
+            newEntry.lastOpenedAt = nil
+
+            try? pm.ensureWorkspaceDirectoryExists(id: newId)
+
+            // Clone document if exists
+            if var doc = try? pm.loadWorkspace(id: srcId) {
+                doc.payload.id = newId
+                doc.payload.name = newEntry.name
+                try? pm.saveSync(doc, to: pm.workspaceURL(id: newId))
+            } else {
+                let wsManager = WorkspaceManager(entry: newEntry)
+                try? wsManager.saveSync()
+            }
+
+            manifest.workspaces.append(newEntry)
+            try? pm.saveManifest(manifest)
+
+            var sidebar = (try? pm.loadSidebarLayout()) ?? SidebarLayout()
+            if !sidebar.topLevelItems.contains(newId) {
+                sidebar.topLevelItems.append(newId)
+                try? pm.saveSidebarLayout(sidebar)
+            }
+
+            let isoFormatter = ISO8601DateFormatter()
+            isoFormatter.formatOptions = [.withInternetDateTime]
+            let respObj: [String: Any] = [
+                "id": newEntry.id.uuidString,
+                "name": newEntry.name,
+                "workingDirectory": newEntry.workingDirectory,
+                "icon": newEntry.icon,
+                "color": newEntry.color,
+                "isPinned": newEntry.isPinned,
+                "locationType": newEntry.locationType,
+                "createdAt": isoFormatter.string(from: newEntry.createdAt)
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: respObj) {
+                return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
+            }
+            return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", body: "{\"id\":\"\(newId.uuidString)\"}", allowedOrigin: allowedOrigin)
+        }
+
+        // 15c. DELETE /api/workspaces/:id (Delete Workspace)
+        if method == "DELETE" && cleanPath.hasPrefix("/api/workspaces/") {
+            let rawId = String(cleanPath.dropFirst("/api/workspaces/".count))
+            guard let wsId = UUID(uuidString: rawId) else {
+                return Self.buildHTTPResponse(status: 400, body: "error: invalid workspace ID", allowedOrigin: allowedOrigin)
+            }
+
+            let pm = PersistenceManager.shared
+            var manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
+            manifest.workspaces.removeAll { $0.id == wsId }
+            try? pm.saveManifest(manifest)
+
+            var sidebar = (try? pm.loadSidebarLayout()) ?? SidebarLayout()
+            sidebar.topLevelItems.removeAll { $0 == wsId }
+            for i in sidebar.groups.indices {
+                sidebar.groups[i].items.removeAll { $0 == wsId }
+            }
+            try? pm.saveSidebarLayout(sidebar)
+
+            // Remove workspace directory on disk if it exists
+            let wsDir = pm.appDataURL.appendingPathComponent("workspaces").appendingPathComponent(wsId.uuidString)
+            try? FileManager.default.removeItem(at: wsDir)
+
+            return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: "{\"status\":\"ok\"}", allowedOrigin: allowedOrigin)
+        }
+
         // 16. GET /api/floors
         if method == "GET" && cleanPath == "/api/floors" {
             let pm = PersistenceManager.shared

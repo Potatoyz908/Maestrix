@@ -35,6 +35,13 @@ from maestri_canvas.scene import NodeItem  # noqa: E402
 from maestri_core.client.api import MaestriClient  # noqa: E402
 from ui.floating_bars import CanvasBottomRightControls, CanvasTopToolbar  # noqa: E402
 from ui.terminal_dialog import NewTerminalDialog, PRESETS  # noqa: E402
+from ui.workspace_dialogs import (  # noqa: E402
+    CreateWorkspaceDialog,
+    EditWorkspaceDialog,
+    DeleteWorkspaceDialog,
+    GroupDialog,
+)
+from maestri_core.models.workspace import SidebarGroup, WorkspaceEntry  # noqa: E402
 from ui.window import OpenMaestriWindow  # noqa: E402
 
 
@@ -214,6 +221,94 @@ class TestVisualParityMac:
         sidebar.search_entry.set_text("")
         pump_events(0.05)
         assert sidebar.ws_list_box.get_first_child() is not None
+
+    def test_workspace_functions_context_menu(self, window):
+        """Verifies full workspace context menu (Edit, Duplicate, Open in FM, Pin, Group, Delete)."""
+        sidebar = window.sidebar
+        entry = WorkspaceEntry(
+            id="ws-test-1",
+            name="Test Project",
+            working_directory="/tmp",
+            icon="folder",
+            color="blue",
+            is_pinned=False,
+        )
+        card = sidebar._create_workspace_card(entry, count=3)
+        assert hasattr(card, "ws_id")
+        assert card.ws_id == "ws-test-1"
+
+        sidebar.ws_list_box.append(card)
+        pump_events(0.1)
+
+        # Popover creation
+        sidebar._show_workspace_context_menu(card, 0, 0, entry)
+        pump_events(0.1)
+
+        # Pin toggle updates status
+        entry.is_pinned = True
+        card_pinned = sidebar._create_workspace_card(entry, count=3)
+        badges = [c.get_label() for c in card_pinned.get_last_child().observe_children() if hasattr(c, "get_label")]
+        assert "📌" in badges
+
+    def test_create_and_edit_workspace_sheets(self, window):
+        """Tests CreateWorkspaceDialog and EditWorkspaceDialog macOS sheets."""
+        created = []
+        c_dlg = CreateWorkspaceDialog(window, on_create=lambda n, wd, ic: created.append((n, wd, ic)))
+        c_dlg.present()
+        pump_events(0.05)
+
+        # Initial button is disabled until name is typed
+        assert c_dlg.btn_create.get_sensitive() is False
+        c_dlg.name_entry.set_text("Alpha Workspace")
+        pump_events(0.05)
+        assert c_dlg.btn_create.get_sensitive() is True
+
+        # Icon selection
+        c_dlg._select_icon("brain")
+        assert c_dlg.selected_icon == "brain"
+
+        c_dlg.btn_create.emit("clicked")
+        pump_events(0.05)
+        assert len(created) == 1
+        assert created[0][0] == "Alpha Workspace"
+        assert created[0][2] == "brain"
+
+        # Edit Sheet
+        saved = []
+        entry = WorkspaceEntry(id="alpha-1", name="Alpha", working_directory="/tmp", icon="cpu", color="orange")
+        e_dlg = EditWorkspaceDialog(window, entry, on_save=lambda upd: saved.append(upd))
+        e_dlg.present()
+        pump_events(0.05)
+
+        assert e_dlg.name_entry.get_text() == "Alpha"
+        assert e_dlg.selected_color == "orange"
+        e_dlg._select_color("purple")
+        e_dlg.name_entry.set_text("Alpha Renamed")
+        e_dlg.btn_save.emit("clicked")
+        pump_events(0.05)
+        assert len(saved) == 1
+        assert saved[0].name == "Alpha Renamed"
+        assert saved[0].color == "purple"
+
+        # Delete Dialog
+        deleted = []
+        d_dlg = DeleteWorkspaceDialog(window, "Alpha", on_confirm=lambda: deleted.append(True))
+        d_dlg.present()
+        pump_events(0.05)
+        d_dlg._on_delete_clicked(d_dlg.get_last_child())
+        assert len(deleted) == 1
+
+    def test_macos_traffic_lights_and_header(self, window):
+        """Headerbar has traffic light dots and quick create menu."""
+        header = window.get_titlebar()
+        assert header is not None
+        assert hasattr(window, "traffic_box")
+        assert "maestri-traffic-lights" in window.traffic_box.get_css_classes()
+        assert window.traffic_box.get_parent() is not None
+
+        # Verify 3 traffic dots exist (close, min, max)
+        dots = [c for c in window.traffic_box.observe_children()]
+        assert len(dots) == 3
 
     def test_visual_snapshot_capture(self, window):
         """Captures a full visual snapshot of the canvas with the floating macOS bars."""

@@ -23,7 +23,7 @@ import requests
 
 from ..models.connection import Connection
 from ..models.node import CanvasNode
-from ..models.workspace import WorkspaceDocument, WorkspaceEntry, WorkspacePayload
+from ..models.workspace import SidebarLayout, WorkspaceDocument, WorkspaceEntry, WorkspacePayload
 
 
 SCHEMA_VERSION = 2
@@ -772,6 +772,93 @@ class MaestriClient:
         )
         data = self._handle_response(resp).json()
         return WorkspaceEntry.from_dict(data)
+
+    def update_workspace(
+        self,
+        workspace_id: str,
+        name: Optional[str] = None,
+        working_directory: Optional[str] = None,
+        icon: Optional[str] = None,
+        color: Optional[str] = None,
+        is_pinned: Optional[bool] = None,
+    ) -> Optional[WorkspaceEntry]:
+        """Updates workspace metadata on the server."""
+        payload: Dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if working_directory is not None:
+            payload["workingDirectory"] = working_directory
+        if icon is not None:
+            payload["icon"] = icon
+        if color is not None:
+            payload["color"] = color
+        if is_pinned is not None:
+            payload["isPinned"] = is_pinned
+
+        try:
+            resp = self.session.put(
+                f"{self.base_url}/api/workspaces/{urllib.parse.quote(workspace_id)}",
+                json=payload,
+                headers=self._headers({"Content-Type": "application/json"}),
+                timeout=self.timeout,
+            )
+            data = self._handle_response(resp).json()
+            return WorkspaceEntry.from_dict(data)
+        except Exception:
+            return None
+
+    def duplicate_workspace(self, workspace_id: str) -> Optional[WorkspaceEntry]:
+        """Duplicates a workspace on the server."""
+        try:
+            resp = self.session.post(
+                f"{self.base_url}/api/workspaces/{urllib.parse.quote(workspace_id)}/duplicate",
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            data = self._handle_response(resp).json()
+            return WorkspaceEntry.from_dict(data)
+        except Exception:
+            return None
+
+    def delete_workspace(self, workspace_id: str) -> bool:
+        """Deletes a workspace from the server manifest and disk."""
+        try:
+            resp = self.session.delete(
+                f"{self.base_url}/api/workspaces/{urllib.parse.quote(workspace_id)}",
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            self._handle_response(resp)
+            return True
+        except Exception:
+            return False
+
+    def get_sidebar_layout(self) -> SidebarLayout:
+        """Loads sidebar layout (schemaVersion 2) from the server."""
+        try:
+            resp = self.session.get(
+                f"{self.base_url}/api/sidebar-layout",
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            data = self._handle_response(resp).json()
+            return SidebarLayout.from_dict(data)
+        except Exception:
+            return SidebarLayout()
+
+    def save_sidebar_layout(self, layout: SidebarLayout) -> bool:
+        """Saves sidebar layout to the server."""
+        try:
+            resp = self.session.put(
+                f"{self.base_url}/api/sidebar-layout",
+                json=layout.to_dict(),
+                headers=self._headers({"Content-Type": "application/json"}),
+                timeout=self.timeout,
+            )
+            self._handle_response(resp)
+            return True
+        except Exception:
+            return False
 
     def get_workspace(self, workspace_id: Optional[str] = None) -> Optional[WorkspaceDocument]:
         """Fetches a full WorkspaceDocument. Returns None if offline or if the
