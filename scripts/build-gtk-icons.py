@@ -89,6 +89,16 @@ GLYPHS: dict[str, str] = {
     "play": '<path d="M4.5 2.75 L12.75 8 L4.5 13.25 Z"/>',
     "stop": '<rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/>',
     "close": '<path d="M4 4 L12 12 M12 4 L4 12"/>',
+    # bottom capsules (Sprint 8 D5): floor = macOS "square.stack.3d.up", land = airplane, map viewport, zoom +/-
+    "floor": '<path d="M8 1.75 L14 4.75 L8 7.75 L2 4.75 Z"/><path d="M2 8 L8 11 L14 8"/><path d="M2 11.25 L8 14.25 L14 11.25"/>',
+    "floor-new": '<path d="M7 2 L12.5 4.75 L7 7.5 L1.5 4.75 Z"/><path d="M1.5 8 L7 10.75 L9 9.75"/>'
+                 '<path d="M1.5 11.25 L7 14 L8.5 13.25"/><path d="M12.25 9 V14.5 M9.5 11.75 H15"/>',
+    "floor-land": '<path d="M2 14 H14"/><path d="M2.5 10.25 L13.25 6.4 Q14.6 6 14.3 7.1 Q14.05 7.9 12.9 8.3 L4.9 11.15 '
+                  'L2.5 10.25 Z"/><path d="M6.4 8.6 L4.8 4.25 L6.15 3.8 L9.15 7.6"/>',
+    "map-viewport": '<path d="M1.75 3.75 L5.75 2 L10.25 4 L14.25 2.25 V12.25 L10.25 14 L5.75 12 L1.75 13.75 Z"/>'
+                    '<rect x="6.25" y="6" width="4" height="3.5" rx="0.6"/>',
+    "zoom-in": '<path d="M8 3.5 V12.5 M3.5 8 H12.5"/>',
+    "zoom-out": '<path d="M3.5 8 H12.5"/>',
 }
 
 TEMPLATE = ('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'

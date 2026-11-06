@@ -2,7 +2,7 @@
 Floating Island Toolbars for Open Maestri GTK 4 Native.
 Provides:
 1. CanvasTopToolbar: Top-center floating pill with the 8 primary creation/selection tools + selection actions.
-2. CanvasBottomRightControls: Bottom-right floating pill with Floors, Minimap, and Zoom controls.
+2. CanvasBottomRightControls: four bottom-right capsules — Floor selector, agent rings, Minimap, Zoom (− % +).
 Matches the macOS reference layout (docs/images/home.png and docs/reference/official/03-canvas.md).
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
+from maestri_canvas.constants import CANVAS_MAX_ZOOM, CANVAS_MIN_ZOOM, CANVAS_ZOOM_STEP
 from maestri_canvas.geometry import Point, Rect
 from maestri_core.signals.bus import bus
 
@@ -218,7 +219,51 @@ class CanvasTopToolbar(Gtk.Box):
         dialog.show()
 
 
-class AgentActivityRingsWidget(Gtk.DrawingArea):
+def _cairo_foreign_available() -> bool:
+    try:
+        gi.require_foreign("cairo")
+        return True
+    except ImportError:
+        return False
+
+
+_USE_DRAW_FUNC = _cairo_foreign_available()
+
+
+class CairoPaintArea(Gtk.DrawingArea):
+    """DrawingArea whose `paint(cr, w, h)` works with or without python3-gi-cairo: with the foreign-struct bridge it is the
+    regular draw func; without it (set_draw_func raises "Couldn't find foreign struct converter for 'cairo.Context'"), the
+    same routine draws into an ImageSurface uploaded as a texture (the canvas' CairoLayer does the same)."""
+    __gtype_name__ = "MaestriCairoPaintArea"
+
+    def __init__(self) -> None:
+        super().__init__()
+        if _USE_DRAW_FUNC:
+            self.set_draw_func(lambda _a, cr, w, h: self.paint(cr, w, h))
+
+    def paint(self, cr, width: int, height: int) -> None:   # pragma: no cover - overridden
+        pass
+
+    def do_snapshot(self, snapshot) -> None:
+        if _USE_DRAW_FUNC:
+            Gtk.DrawingArea.do_snapshot(self, snapshot)
+            return
+        import cairo
+        gi.require_version("Graphene", "1.0")
+        from gi.repository import Graphene
+        w, h, sc = self.get_width(), self.get_height(), self.get_scale_factor()
+        if w <= 0 or h <= 0:
+            return
+        surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w * sc, h * sc)
+        surf.set_device_scale(sc, sc)
+        self.paint(cairo.Context(surf), w, h)
+        surf.flush()
+        tex = Gdk.MemoryTexture.new(w * sc, h * sc, Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED,
+                                    GLib.Bytes.new(bytes(surf.get_data())), surf.get_stride())
+        snapshot.append_texture(tex, Graphene.Rect().init(0, 0, w, h))
+
+
+class AgentActivityRingsWidget(CairoPaintArea):
     """Draws Apple Activity-style dynamic progress rings representing
     token and quota usage for active terminal AI models in the workspace:
     - Ring 1 (Coral / Orange #E07A5F): Claude Code (% context / quota)
@@ -260,7 +305,6 @@ class AgentActivityRingsWidget(Gtk.DrawingArea):
             },
         }
 
-        self.set_draw_func(self._draw_func)
         self.update_tooltip()
 
     def set_model_usage(self, model_id: str, ratio: float, used: str, max_tokens: str) -> None:
@@ -278,6 +322,9 @@ class AgentActivityRingsWidget(Gtk.DrawingArea):
             lines.append(f"• {m['name']}: {pct}% ({m['used']} / {m['max']})")
         tip = "\n".join(lines)
         self.set_tooltip_text(tip)
+
+    def paint(self, cr, width, height) -> None:
+        self._draw_func(self, cr, width, height)
 
     def _draw_func(self, area, cr, width, height) -> None:
         import cairo
@@ -318,106 +365,433 @@ class AgentActivityRingsWidget(Gtk.DrawingArea):
             cr.restore()
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# Bottom-right capsules (Sprint 8 D1-D5). macOS reference: WorkspaceCanvasView.swift (bottom HStack) +
+# CanvasMinimapPopover.swift + Constants.canvasZoomStep. All glyphs are outline SVGs of gtk4-ui/src/ui/icons (no emoji).
+# ---------------------------------------------------------------------------------------------------------------------
+ZOOM_PRESETS = (0.5, 0.75, 1.0, 1.5, 2.0)
+CAPSULE_H = 32                 # every capsule has the same height, so their centers line up (D1)
+MINIMAP_SIZE = (280, 180)      # CanvasMinimapPopover.mapSize
+MINIMAP_PAD = 100.0            # computeBounds() padding (canvas units)
+JUMP_MS = 220                  # canvasJumpToOrigin animates; ease-out over this duration
+
+# CanvasMinimapPopover.nodeColor(for:)
+MINIMAP_COLORS: Dict[str, tuple] = {
+    "terminal": (0.04, 0.52, 1.0), "stickyNote": (0.6, 0.88, 0.88), "portal": (1.0, 0.92, 0.6),
+    "fileTree": (1.0, 0.82, 0.6), "text": (0.7, 0.7, 0.9), "shape": (0.9, 0.75, 0.85),
+    "stroke": (0.59, 0.51, 0.94), "freehand": (0.6, 0.85, 0.75),
+}
+
+BOTTOM_CSS = """
+.maestri-bottom-controls .maestri-capsule {
+    background-color: rgba(28, 28, 31, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 16px;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 6px 18px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.28);
+    padding: 0 3px;
+    min-height: 32px;
+    color: #ececf0;
+}
+.maestri-bottom-controls .maestri-capsule:hover { background-color: rgba(28, 28, 31, 0.86); }
+/* plain buttons and the inner button of a GtkMenuButton (menubutton > button) share one look */
+.maestri-bottom-controls button.maestri-capsule-btn,
+.maestri-bottom-controls menubutton.maestri-capsule-btn > button,
+.maestri-bottom-controls menubutton.floor-button > button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 13px;
+    min-height: 26px;
+    min-width: 26px;
+    padding: 0 7px;
+    margin: 3px 0;
+    color: #ececf0;
+    transition: background-color 120ms ease-out;
+}
+.maestri-bottom-controls menubutton.maestri-capsule-btn,
+.maestri-bottom-controls menubutton.floor-button { background: transparent; border: none; box-shadow: none; padding: 0; }
+.maestri-bottom-controls menubutton.floor-button > button { padding: 0 10px 0 8px; }
+.maestri-bottom-controls button.maestri-capsule-btn:hover,
+.maestri-bottom-controls menubutton.maestri-capsule-btn > button:hover,
+.maestri-bottom-controls menubutton.floor-button > button:hover { background-color: rgba(255, 255, 255, 0.09); }
+.maestri-bottom-controls button.maestri-capsule-btn:active,
+.maestri-bottom-controls menubutton.maestri-capsule-btn > button:active,
+.maestri-bottom-controls menubutton.maestri-capsule-btn > button:checked,
+.maestri-bottom-controls menubutton.floor-button > button:active,
+.maestri-bottom-controls menubutton.floor-button > button:checked { background-color: rgba(255, 255, 255, 0.16); }
+.maestri-bottom-controls button.maestri-capsule-btn:focus-visible,
+.maestri-bottom-controls menubutton.maestri-capsule-btn > button:focus-visible,
+.maestri-bottom-controls menubutton.floor-button > button:focus-visible { outline: 2px solid rgba(10, 132, 255, 0.85); outline-offset: -2px; }
+.maestri-bottom-controls button.maestri-capsule-btn:disabled image { opacity: 0.35; }
+.maestri-bottom-controls .maestri-zoom-label {
+    font-size: 11px;
+    font-weight: 500;
+    font-feature-settings: "tnum";
+    font-family: monospace;
+    color: #ececf0;
+    padding: 0;
+    min-width: 40px;
+}
+.maestri-bottom-controls .maestri-floor-label { font-size: 12px; font-weight: 500; }
+.maestri-bottom-controls .maestri-capsule-sep { background-color: rgba(255, 255, 255, 0.10); min-width: 1px; margin: 8px 1px; }
+.maestri-zoom-preset { padding: 4px 10px; border-radius: 6px; min-width: 140px; }
+.maestri-zoom-preset label { font-feature-settings: "tnum"; }
+.maestri-minimap-empty { opacity: 0.6; font-size: 12px; }
+"""
+_bottom_css_installed = False
+
+
+def _install_bottom_css() -> None:
+    global _bottom_css_installed
+    display = Gdk.Display.get_default()
+    if _bottom_css_installed or display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_string(BOTTOM_CSS)
+    # +1 over the window's APPLICATION provider: these scoped rules must win over the generic pill rules in window.py
+    Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+    _bottom_css_installed = True
+
+
+def _icon(name: str, size: int = 16) -> Gtk.Image:
+    img = Gtk.Image.new_from_icon_name(name)
+    img.set_pixel_size(size)
+    return img
+
+
+def zoom_percent(zoom: float) -> str:
+    """Label text of the zoom capsule (macOS: `Int(zoom * 100)%`; rounded here so 0.85 never reads 84%)."""
+    return f"{int(round(zoom * 100))}%"
+
+
+def clamp_zoom(zoom: float) -> float:
+    return min(CANVAS_MAX_ZOOM, max(CANVAS_MIN_ZOOM, zoom))
+
+
+def stepped_zoom(zoom: float, direction: int) -> float:
+    """−/+ buttons: additive step of Constants.canvasZoomStep (0.25), clamped to the canvas limits (0.1 ... 3.0)."""
+    return clamp_zoom(round(zoom + direction * CANVAS_ZOOM_STEP, 4))
+
+
+def minimap_bounds(frames: list, viewport: Optional[Rect] = None) -> Optional[Rect]:
+    """Bounding box of all node frames padded by 100 (CanvasMinimapPopover.computeBounds); the visible viewport is included so
+    its indicator is always inside the map. None when there is nothing to show."""
+    rects = list(frames) + ([viewport] if viewport is not None and frames else [])
+    if not rects:
+        return None
+    x0 = min(r.x for r in rects) - MINIMAP_PAD
+    y0 = min(r.y for r in rects) - MINIMAP_PAD
+    x1 = max(r.x + r.w for r in rects) + MINIMAP_PAD
+    y1 = max(r.y + r.h for r in rects) + MINIMAP_PAD
+    return Rect(x0, y0, x1 - x0, y1 - y0)
+
+
+class MinimapTransform:
+    """Canvas <-> minimap mapping: aspect-fit of `bounds` into (w, h), centered (CanvasMinimapPopover.scaledRect)."""
+
+    def __init__(self, bounds: Rect, w: float, h: float) -> None:
+        self.bounds = bounds
+        self.scale = min(w / max(bounds.w, 1e-6), h / max(bounds.h, 1e-6))
+        self.ox = (w - bounds.w * self.scale) / 2.0
+        self.oy = (h - bounds.h * self.scale) / 2.0
+
+    def to_map(self, r: Rect) -> Rect:
+        s = self.scale
+        return Rect((r.x - self.bounds.x) * s + self.ox, (r.y - self.bounds.y) * s + self.oy, r.w * s, r.h * s)
+
+    def to_canvas(self, x: float, y: float) -> Point:
+        s = self.scale
+        return Point((x - self.ox) / s + self.bounds.x, (y - self.oy) / s + self.bounds.y)
+
+
+class MinimapView(CairoPaintArea):
+    """The map inside the minimap popover: node blocks coloured by kind + the real viewport rectangle. A click on a node centers
+    that node, a click elsewhere centers the viewport on that point (MinimapView.mouseDown); `on_jump(center)` does the move."""
+
+    def __init__(self, canvas, on_jump: Callable[[Point], None]) -> None:
+        super().__init__()
+        self.cw, self.on_jump = canvas, on_jump
+        self.set_content_width(MINIMAP_SIZE[0])
+        self.set_content_height(MINIMAP_SIZE[1])
+        self.set_cursor_from_name("pointer")
+        click = Gtk.GestureClick(button=Gdk.BUTTON_PRIMARY)
+        click.connect("released", self._clicked)
+        self.add_controller(click)
+
+    def _viewport_rect(self) -> Rect:
+        vp = self.cw.viewport
+        w = max(1.0, float(self.cw.get_width() or 1200))
+        h = max(1.0, float(self.cw.get_height() or 800))
+        return Rect(vp.origin.x, vp.origin.y, w / vp.zoom, h / vp.zoom)
+
+    def transform(self) -> Optional[MinimapTransform]:
+        frames = [n.frame for n in self.cw.scene.nodes.values()]
+        b = minimap_bounds(frames, self._viewport_rect())
+        return MinimapTransform(b, *MINIMAP_SIZE) if b is not None else None
+
+    def paint(self, cr, width, height) -> None:
+        cr.set_source_rgba(1, 1, 1, 0.06)
+        _rounded(cr, 0, 0, width, height, 8)
+        cr.fill()
+        t = self.transform()
+        if t is None:
+            return
+        for n in self.cw.scene.ascending():
+            r = t.to_map(n.frame)
+            cr.set_source_rgba(*MINIMAP_COLORS.get(n.kind, (0.6, 0.6, 0.65)), 0.9)
+            _rounded(cr, r.x, r.y, max(r.w, 6), max(r.h, 4), 2)
+            cr.fill()
+        v = t.to_map(self._viewport_rect())
+        cr.set_source_rgba(0.04, 0.52, 1.0, 0.12)
+        _rounded(cr, v.x, v.y, v.w, v.h, 2)
+        cr.fill_preserve()
+        cr.set_source_rgba(0.04, 0.52, 1.0, 0.75)
+        cr.set_line_width(1.5)
+        cr.stroke()
+
+    def node_at(self, x: float, y: float):
+        t = self.transform()
+        if t is None:
+            return None
+        for n in self.cw.scene.descending():
+            r = t.to_map(n.frame)
+            if r.x <= x <= r.x + max(r.w, 6) and r.y <= y <= r.y + max(r.h, 4):
+                return n
+        return None
+
+    def _clicked(self, _g, _n, x: float, y: float) -> None:
+        t = self.transform()
+        if t is None:
+            return
+        node = self.node_at(x, y)
+        self.on_jump(node.frame.center if node is not None else t.to_canvas(x, y))
+
+
+def _rounded(cr, x: float, y: float, w: float, h: float, r: float) -> None:
+    r = max(0.0, min(r, w / 2.0, h / 2.0))
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    cr.arc(x + r, y + r, r, math.pi, 1.5 * math.pi)
+    cr.close_path()
+
+
 class CanvasBottomRightControls(Gtk.Box):
-    """Floating bottom-right controls matching macOS Maestri (Floors, Agent Rings, Minimap, Zoom).
-    Separated into 4 distinct dark-glass capsules (pills) side-by-side (uploaded_media_0).
+    """Bottom-right capsules, left to right: [Floor] [agent rings] [Map] [− % +] — four separate dark-glass capsules of equal
+    height, 8 px apart (uploaded_media_0). Behaviour follows the macOS app:
+
+    * Floor: `FloorButton` (floors.py) is mounted into `pill_floor` by `install_floors`; it shows the active floor.
+    * Map: opens the minimap popover (CanvasMinimapPopover); clicking a node / a spot jumps there (animated) and closes it.
+    * Zoom: −/+ step 0.25 within 0.1 ... 3.0 around the viewport center; the % opens presets (50-200%). The label follows every
+      zoom change (scroll, pinch, keyboard, Ctrl+0, `\\` focus) — it is refreshed from a frame tick, not only from signals.
     """
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        _install_bottom_css()
         self.window = window
         self.cw = window.canvas_widget
+        self.add_css_class("maestri-bottom-controls")
         self.set_halign(Gtk.Align.END)
         self.set_valign(Gtk.Align.END)
         self.set_margin_end(16)
         self.set_margin_bottom(16)
+        self._tick_id = 0
+        self._jump_tick = 0
+        self._shown_zoom: Optional[float] = None
+        self._handlers: list = []
 
-        # Pill 1: Floor Button Capsule (holds FloorButton from install_floors)
-        self.pill_floor = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        # Capsule 1: Floor selector (FloorButton is appended by install_floors)
+        self.pill_floor = self._capsule()
         self.btn_floors = None
-        self.append(self.pill_floor)
 
-        # Pill 2: Agent Activity Rings (Claude Code, Codex, Gemini CLI)
-        self.pill_agents = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.pill_agents.add_css_class("maestri-bottom-pill")
+        # Capsule 2: agent rings (Cairo)
+        self.pill_agents = self._capsule()
         self.rings_widget = AgentActivityRingsWidget(window)
+        self.rings_widget.set_valign(Gtk.Align.CENTER)
+        self.rings_widget.set_margin_start(4)
+        self.rings_widget.set_margin_end(4)
         self.pill_agents.append(self.rings_widget)
         self.pill_agents.set_tooltip_text(self.rings_widget.get_tooltip_text())
-        self.append(self.pill_agents)
 
-        # Pill 3: Minimap Toggle Button Capsule
-        self.pill_minimap = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        self.pill_minimap.add_css_class("maestri-bottom-pill")
-        img_map = Gtk.Image.new_from_icon_name("maestri-map-symbolic")
-        img_map.set_pixel_size(15)
-        self.btn_minimap = Gtk.Button(child=img_map)
-        self.btn_minimap.add_css_class("maestri-island-btn")
-        self.btn_minimap.set_tooltip_text("Toggle Mini Map / Reset View")
-        self.btn_minimap.connect("clicked", self._on_minimap_clicked)
+        # Capsule 3: minimap
+        self.pill_minimap = self._capsule()
+        self.minimap = MinimapView(self.cw, self.jump_to)
+        empty = Gtk.Label(label="Canvas vazio", css_classes=["maestri-minimap-empty"],
+                          width_request=MINIMAP_SIZE[0], height_request=MINIMAP_SIZE[1])
+        self._minimap_stack = Gtk.Stack()
+        self._minimap_stack.add_named(self.minimap, "map")
+        self._minimap_stack.add_named(empty, "empty")
+        map_box = Gtk.Box(margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
+        map_box.append(self._minimap_stack)
+        self.minimap_popover = Gtk.Popover(child=map_box, position=Gtk.PositionType.TOP)
+        self.minimap_popover.connect("show", lambda _p: self._refresh_minimap())
+        self.btn_minimap = Gtk.MenuButton(child=_icon("maestri-map-symbolic"), popover=self.minimap_popover,
+                                          direction=Gtk.ArrowType.UP, tooltip_text="Minimapa",
+                                          css_classes=["maestri-capsule-btn"], valign=Gtk.Align.CENTER)
         self.pill_minimap.append(self.btn_minimap)
-        self.append(self.pill_minimap)
 
-        # Pill 4: Zoom Controls Capsule [ —  XX%  + ]
-        self.pill_zoom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.pill_zoom.add_css_class("maestri-bottom-pill")
+        # Capsule 4: zoom [ −  87%  + ]
+        self.pill_zoom = self._capsule()
         self.pill_zoom.add_css_class("maestri-zoom-controls")
+        self.btn_zoom_out = Gtk.Button(child=_icon("maestri-zoom-out-symbolic", 14), tooltip_text="Reduzir (Ctrl+−)",
+                                       css_classes=["maestri-capsule-btn"], valign=Gtk.Align.CENTER)
+        self.btn_zoom_out.connect("clicked", lambda _b: self.zoom_by_step(-1))
+        self.zoom_lbl = Gtk.Label(label=zoom_percent(self.cw.viewport.zoom), css_classes=["maestri-zoom-label"],
+                                  width_chars=4, xalign=0.5)
+        self.zoom_popover = self._build_zoom_presets()
+        self.btn_zoom_menu = Gtk.MenuButton(child=self.zoom_lbl, popover=self.zoom_popover, direction=Gtk.ArrowType.UP,
+                                            tooltip_text="Níveis de zoom", css_classes=["maestri-capsule-btn"],
+                                            valign=Gtk.Align.CENTER, always_show_arrow=False)
+        self.btn_zoom_in = Gtk.Button(child=_icon("maestri-zoom-in-symbolic", 14), tooltip_text="Ampliar (Ctrl++)",
+                                      css_classes=["maestri-capsule-btn"], valign=Gtk.Align.CENTER)
+        self.btn_zoom_in.connect("clicked", lambda _b: self.zoom_by_step(+1))
+        for w in (self.btn_zoom_out, self.btn_zoom_menu, self.btn_zoom_in):
+            self.pill_zoom.append(w)
 
-        img_out = Gtk.Image.new_from_icon_name("maestri-minus-symbolic")
-        img_out.set_pixel_size(12)
-        btn_zoom_out = Gtk.Button(child=img_out)
-        btn_zoom_out.add_css_class("maestri-island-btn")
-        btn_zoom_out.set_tooltip_text("Zoom Out (Ctrl+-)")
-        btn_zoom_out.connect("clicked", lambda _b: self._zoom_step(0.8))
-        self.pill_zoom.append(btn_zoom_out)
-
-        self.zoom_lbl = Gtk.Label(label="100%")
-        self.zoom_lbl.add_css_class("maestri-zoom-label")
-        self.pill_zoom.append(self.zoom_lbl)
-
-        img_in = Gtk.Image.new_from_icon_name("maestri-plus-symbolic")
-        img_in.set_pixel_size(12)
-        btn_zoom_in = Gtk.Button(child=img_in)
-        btn_zoom_in.add_css_class("maestri-island-btn")
-        btn_zoom_in.set_tooltip_text("Zoom In (Ctrl++)")
-        btn_zoom_in.connect("clicked", lambda _b: self._zoom_step(1.25))
-        self.pill_zoom.append(btn_zoom_in)
-
-        self.append(self.pill_zoom)
-
-        # Track viewport zoom changes
-        self.cw.connect("viewport-changed", self._on_viewport_changed)
+        self._handlers.append(self.cw.connect("viewport-changed", self._on_viewport_changed))
+        self._tick_id = self.add_tick_callback(self._on_tick)
+        self.connect("unrealize", lambda *_: self._cleanup())
+        self.connect("destroy", lambda *_: self._cleanup())
         self._update_zoom_label(self.cw.viewport.zoom)
 
-    def _zoom_step(self, factor: float) -> None:
+    # -- building blocks ---------------------------------------------------------------------------------------------
+    def _capsule(self) -> Gtk.Box:
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0, valign=Gtk.Align.END,
+                      css_classes=["maestri-floating-pill", "maestri-bottom-pill", "maestri-capsule"])
+        box.set_size_request(-1, CAPSULE_H)
+        self.append(box)
+        return box
+
+    def _build_zoom_presets(self) -> Gtk.Popover:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, margin_top=4, margin_bottom=4,
+                      margin_start=4, margin_end=4)
+        self._preset_checks: list[tuple[float, Gtk.Image]] = []
+        for z in ZOOM_PRESETS:
+            row = Gtk.Box(spacing=8)
+            check = _icon("maestri-check-symbolic", 14)
+            row.append(check)
+            row.append(Gtk.Label(label=zoom_percent(z), xalign=0, hexpand=True))
+            btn = Gtk.Button(child=row, has_frame=False, css_classes=["flat", "maestri-zoom-preset"])
+            btn.connect("clicked", lambda _b, zz=z: (self.set_zoom(zz), self.zoom_popover.popdown()))
+            box.append(btn)
+            self._preset_checks.append((z, check))
+        pop = Gtk.Popover(child=box, position=Gtk.PositionType.TOP)
+        pop.connect("show", lambda _p: self._sync_preset_checks())
+        return pop
+
+    def _sync_preset_checks(self) -> None:
+        z = self.cw.viewport.zoom
+        for preset, check in self._preset_checks:
+            check.set_opacity(1.0 if abs(preset - z) < 0.005 else 0.0)
+
+    # -- zoom --------------------------------------------------------------------------------------------------------
+    def _center(self) -> Point:
+        return Point(max(1.0, float(self.cw.get_width())) / 2.0, max(1.0, float(self.cw.get_height())) / 2.0)
+
+    def set_zoom(self, zoom: float) -> None:
+        """Absolute zoom around the viewport center (canvasZoom(toAbsolute:)); notifies through the canvas controller."""
         vp = self.cw.viewport
-        new_zoom = max(0.1, min(4.0, vp.zoom * factor))
-        # Keep center pinned
-        w = max(1.0, float(self.cw.get_width()))
-        h = max(1.0, float(self.cw.get_height()))
-        cx = vp.origin.x + w / (2.0 * vp.zoom)
-        cy = vp.origin.y + h / (2.0 * vp.zoom)
-        vp.zoom = new_zoom
-        vp.origin = Point(cx - w / (2.0 * vp.zoom), cy - h / (2.0 * vp.zoom))
-        self.cw.controller.dirty = True
-        self.cw.emit("viewport-changed", vp.origin.x, vp.origin.y, vp.zoom)
+        target = clamp_zoom(zoom)
+        if abs(target - vp.zoom) < 1e-9:
+            return
+        vp.set_zoom_at(self._center(), target)
+        self._viewport_changed()
+
+    def zoom_by_step(self, direction: int) -> None:
+        """−/+ capsule buttons and Ctrl+−/+: additive 0.25 step (Constants.canvasZoomStep)."""
+        self.set_zoom(stepped_zoom(self.cw.viewport.zoom, direction))
+
+    def _zoom_step(self, factor: float) -> None:
+        """Multiplicative zoom around the center (kept for callers/tests that pass a factor)."""
+        self.set_zoom(self.cw.viewport.zoom * factor)
+
+    def _viewport_changed(self) -> None:
+        ctl = self.cw.controller
+        ctl.dirty = True
+        notify = getattr(ctl, "_viewport_changed", None)
+        if notify is not None:
+            notify()   # -> ViewportChanged -> CanvasWidget "viewport-changed" -> bus/sync, like scroll/pinch
+        else:
+            vp = self.cw.viewport
+            self.cw.emit("viewport-changed", vp.origin.x, vp.origin.y, vp.zoom)
+        self._update_zoom_label(self.cw.viewport.zoom)
 
     def _update_zoom_label(self, zoom: float) -> None:
-        pct = int(round(zoom * 100))
-        self.zoom_lbl.set_label(f"{pct}%")
+        self._shown_zoom = zoom
+        self.zoom_lbl.set_label(zoom_percent(zoom))
+        self.btn_zoom_out.set_sensitive(zoom > CANVAS_MIN_ZOOM + 1e-6)
+        self.btn_zoom_in.set_sensitive(zoom < CANVAS_MAX_ZOOM - 1e-6)
 
     def _on_viewport_changed(self, _cw, _x, _y, zoom) -> None:
         self._update_zoom_label(zoom)
 
-    def _on_floors_clicked(self, _btn) -> None:
-        if self.btn_floors:
-            self.btn_floors.emit("clicked")
-        elif hasattr(self.window, "floor_button") and self.window.floor_button:
-            self.window.floor_button.emit("clicked")
+    def _on_tick(self, _w, _clock) -> bool:
+        z = self.cw.viewport.zoom
+        if self._shown_zoom is None or abs(z - self._shown_zoom) > 1e-9:
+            self._update_zoom_label(z)   # zoom changed without a signal (reset_zoom, focus_on, workspace switch)
+        return GLib.SOURCE_CONTINUE
 
-    def _on_minimap_clicked(self, _btn) -> None:
-        # Reset zoom to fit or toggle overview
+    # -- minimap -----------------------------------------------------------------------------------------------------
+    def _refresh_minimap(self) -> None:
+        self._minimap_stack.set_visible_child_name("map" if self.cw.scene.nodes else "empty")
+        self.minimap.queue_draw()
+
+    def jump_to(self, center: Point) -> None:
+        """Center the viewport on canvas point `center` keeping the zoom, with a short ease-out (canvasJumpToOrigin),
+        then close the minimap popover like the macOS one."""
         vp = self.cw.viewport
-        vp.origin = Point(0, 0)
-        vp.zoom = 1.0
-        self.cw.controller.dirty = True
-        self.cw.emit("viewport-changed", 0, 0, 1.0)
+        w = max(1.0, float(self.cw.get_width() or 1200))
+        h = max(1.0, float(self.cw.get_height() or 800))
+        start = Point(vp.origin.x, vp.origin.y)
+        goal = Point(center.x - w / (2.0 * vp.zoom), center.y - h / (2.0 * vp.zoom))
+        self.minimap_popover.popdown()
+        if self._jump_tick:
+            self.cw.remove_tick_callback(self._jump_tick)
+            self._jump_tick = 0
+        if not self.cw.get_mapped():
+            vp.origin = goal
+            self._viewport_changed()
+            return
+        t0 = self.cw.get_frame_clock().get_frame_time() if self.cw.get_frame_clock() else GLib.get_monotonic_time()
+
+        def step(widget, clock) -> bool:
+            p = min(1.0, (clock.get_frame_time() - t0) / (JUMP_MS * 1000.0))
+            e = 1.0 - (1.0 - p) ** 3
+            vp.origin = Point(start.x + (goal.x - start.x) * e, start.y + (goal.y - start.y) * e)
+            self.cw.controller.dirty = True
+            if p >= 1.0:
+                self._jump_tick = 0
+                self._viewport_changed()   # one notification at the end: sync persists the final origin only
+                return GLib.SOURCE_REMOVE
+            return GLib.SOURCE_CONTINUE
+
+        self._jump_tick = self.cw.add_tick_callback(step)
+
+    # -- floors (kept for older callers) -----------------------------------------------------------------------------
+    def _on_floors_clicked(self, _btn=None) -> None:
+        btn = self.btn_floors or getattr(self.window, "floor_button", None)
+        if btn is not None:
+            btn.popup()
+
+    def _on_minimap_clicked(self, _btn=None) -> None:
+        self.btn_minimap.popup()
+
+    def _cleanup(self) -> None:
+        if self._tick_id:
+            self.remove_tick_callback(self._tick_id)
+            self._tick_id = 0
+        if self._jump_tick:
+            try:
+                self.cw.remove_tick_callback(self._jump_tick)
+            except Exception:
+                pass
+            self._jump_tick = 0
+        for hid in self._handlers:
+            try:
+                if self.cw.handler_is_connected(hid):
+                    self.cw.disconnect(hid)
+            except Exception:
+                pass
+        self._handlers.clear()

@@ -8,8 +8,9 @@ only a client:
   terminals inherit from it (`terminal_cwd`, `terminal_env`). Reloads on `workspace-loaded` and on the core's `/ws/events`
   floor events. Every HTTP call runs on a worker thread; results come back through GLib.idle_add. The server's floor list is
   mirrored into `window.document.payload.floors` on the main thread, so a sync snapshot never resends a stale list (R1).
-* `FloorButton`: floating `Gtk.MenuButton` "🏢 <active floor | Ground>" in the canvas's bottom-right corner. Its popover lists
-  Ground + the floors (click = switch, ✕ = delete), "＋ Novo floor…" and "Land…" (only when a floor is active).
+* `FloorButton`: the Floor capsule of the bottom-right controls (floating_bars.py): floor icon + "<active floor | Ground>".
+  Its popover lists Ground + the floors (click = switch, close icon = delete), "Novo floor…" and "Land…" (only when a
+  floor is active). Outline SVG icons only (maestri-floor-*-symbolic), no emoji.
 * `NewFloorDialog`, `LandFloorDialog`, `DeleteFloorDialog`: T2.4 / T2.5 / T2.6.
 
 `install_floors(window)` is the hook `window.py` needs; `_create_node` / `_add_node_to_canvas` ask `terminal_cwd` / `terminal_env`.
@@ -35,17 +36,23 @@ Floor = Dict[str, Any]   # floorJSON from the core: id, name, branchName, worktr
 FLOOR_EVENTS = frozenset({"floorCreated", "floorRemoved", "floorChanged", "floorUpdated", "floorLanded"})
 
 CSS = """
-.floor-button { border-radius: 18px; padding: 4px 12px; background-color: alpha(#1f1f22, 0.92); }
-.floor-popover-title { font-weight: bold; margin: 4px 8px; }
-.floor-row { padding: 4px 6px; }
+.floor-popover { padding: 2px; }
+.floor-popover-title { font-weight: 600; font-size: 11px; letter-spacing: 0.04em; opacity: 0.6; margin: 4px 10px 0 10px; }
+.floor-row { padding: 6px 8px; border-radius: 6px; }
+.floor-row-icon { opacity: 0.75; }
+.floor-row .floor-check { color: #0a84ff; }
+.floor-row-delete { min-width: 22px; min-height: 22px; padding: 0; border-radius: 11px; opacity: 0.55; }
+.floor-row-delete:hover { opacity: 1; background-color: alpha(#ff453a, 0.18); color: #ff453a; }
+.floor-action { padding: 5px 10px; border-radius: 6px; }
+.floor-dot { min-width: 7px; min-height: 7px; border-radius: 4px; background-color: #e5c07b; }
 .floor-row.active { background-color: alpha(#3b82f6, 0.18); border-radius: 6px; }
 .floor-branch { font-family: monospace; font-size: 11px; opacity: 0.7; }
-.floor-badge { font-family: monospace; font-size: 11px; }
+.floor-badge { font-family: monospace; font-size: 11px; font-feature-settings: "tnum"; opacity: 0.8; }
 .floor-dirty { color: #e5c07b; }
 .floor-error { color: #f14c4c; }
 .floor-ok { color: #23d18b; }
 .floor-conflict { color: #f14c4c; font-family: monospace; }
-.floor-plane { font-size: 20px; }
+.floor-plane { opacity: 0.85; }
 """
 _css_installed = False
 
@@ -554,7 +561,7 @@ class NewFloorDialog(Gtk.Window):
 
 
 class LandFloorDialog(Gtk.Window):
-    """T2.5 — modal "Land": [branch do floor] ✈ [destino]. The target defaults to the floor's own branch; changing it reloads
+    """T2.5 — modal "Land": [branch do floor] (plane icon) [destino]. The target defaults to the floor's own branch; changing it reloads
     the preview (+ins −del, conflicts in red). Merge is enabled only when the core reports canLand."""
 
     def __init__(self, parent: Gtk.Window, controller: FloorsController, floor: Floor,
@@ -570,8 +577,8 @@ class LandFloorDialog(Gtk.Window):
 
         route = Gtk.Box(spacing=12, halign=Gtk.Align.CENTER, margin_top=16)
         route.append(Gtk.Label(label=floor.get("branchName", "?"), css_classes=["floor-branch"]))
-        plane_icon = Gtk.Image.new_from_icon_name("maestri-send-symbolic")
-        plane_icon.set_pixel_size(16)
+        plane_icon = Gtk.Image.new_from_icon_name("maestri-floor-land-symbolic")
+        plane_icon.set_pixel_size(18)
         plane_icon.add_css_class("floor-plane")
         route.append(plane_icon)
         self.target_model = Gtk.StringList.new([])
@@ -730,72 +737,80 @@ class DeleteFloorDialog:
             self.controller.delete(self.floor, delete_branch=index == self.DELETE_BRANCH)
 
 
+def _icon_exists(name: str) -> bool:
+    display = Gdk.Display.get_default()
+    return display is not None and Gtk.IconTheme.get_for_display(display).has_icon(name)
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # floating button
 # ---------------------------------------------------------------------------------------------------------------------
 class FloorButton(Gtk.MenuButton):
-    """Bottom-right canvas overlay "🏢 <floor ativo | Ground>"; the popover holds the list and the actions."""
+    """Floor capsule of the bottom-right controls: floor icon + "<floor ativo | Ground>". The popover (opening upwards) lists
+    Ground and the floors, then "Novo floor…" and "Land…" (reference 09-floors.md). Outline SVG icons only, no emoji."""
     TOAST_MS = 4000
+    LABEL_CHARS = 24
 
     def __init__(self, window, controller: FloorsController) -> None:
-        super().__init__(css_classes=["floor-button", "maestri-bottom-pill"], direction=Gtk.ArrowType.UP)
+        super().__init__(css_classes=["floor-button"], direction=Gtk.ArrowType.UP, valign=Gtk.Align.CENTER)
         _install_css()
         self.window, self.controller = window, controller
         self._toast_timer = 0
 
-        self.list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.list_box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["navigation-sidebar"])
         self.list_box.connect("row-activated", lambda _lb, row: self._row_activated(row))
-        self.status = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, margin_start=8, margin_end=8)
+        self.status = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, margin_start=10, margin_end=10)
         self.status.set_visible(False)
 
-        new_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        new_icon = Gtk.Image.new_from_icon_name("maestri-plus-symbolic")
-        new_icon.set_pixel_size(14)
-        new_box.append(new_icon)
-        new_box.append(Gtk.Label(label="Novo floor…"))
-        self.new_btn = Gtk.Button(child=new_box, has_frame=False)
-        self.new_btn.get_label = lambda: "＋ Novo floor…"
+        self.new_btn = self._action_button("maestri-floor-new-symbolic", "Novo floor…")
         self.new_btn.connect("clicked", lambda _b: self.open_new())
-
-        land_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        land_icon = Gtk.Image.new_from_icon_name("maestri-send-symbolic")
-        land_icon.set_pixel_size(14)
-        land_box.append(land_icon)
-        land_box.append(Gtk.Label(label="Land…"))
-        self.land_btn = Gtk.Button(child=land_box, has_frame=False)
-        self.land_btn.get_label = lambda: "✈ Land…"
+        self.land_btn = self._action_button("maestri-floor-land-symbolic", "Land…")
+        self.land_btn.set_tooltip_text("Pousar os commits do floor ativo de volta no repositório (Ground)")
         self.land_btn.connect("clicked", lambda _b: self.controller.active_floor and self.open_land(self.controller.active_floor))
 
-        actions = Gtk.Box(spacing=4)
+        actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, margin_start=4, margin_end=4)
         actions.append(self.new_btn)
         actions.append(self.land_btn)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=6, margin_bottom=6)
-        box.append(Gtk.Label(label="Floors", xalign=0, css_classes=["floor-popover-title"]))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=6, margin_bottom=6,
+                      css_classes=["floor-popover"])
+        box.append(Gtk.Label(label="FLOORS", xalign=0, css_classes=["floor-popover-title"]))
         scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True,
-                                      max_content_height=360, min_content_width=340)
+                                      propagate_natural_width=True, max_content_height=360, min_content_width=320)
         scroller.set_child(self.list_box)
         box.append(scroller)
         box.append(self.status)
-        box.append(Gtk.Separator())
+        box.append(Gtk.Separator(margin_start=8, margin_end=8))
         box.append(actions)
-        self.popover = Gtk.Popover(child=box)
+        self.popover = Gtk.Popover(child=box, position=Gtk.PositionType.TOP)
         self.set_popover(self.popover)
         self.popover.connect("show", lambda _p: controller.refresh())
 
-        # Main button content: symbolic icon + floor title
-        self.btn_icon = Gtk.Image.new_from_icon_name("maestri-layers-symbolic")
-        self.btn_icon.set_pixel_size(15)
-        self.btn_label = Gtk.Label(label="Ground")
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        # Capsule content: floor icon + active floor name (ellipsized so the capsules never overlap)
+        self.btn_icon = Gtk.Image.new_from_icon_name("maestri-floor-symbolic")
+        self.btn_icon.set_pixel_size(16)
+        self.btn_label = Gtk.Label(label="Ground", ellipsize=Pango.EllipsizeMode.END, max_width_chars=self.LABEL_CHARS,
+                                   css_classes=["maestri-floor-label"])
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, valign=Gtk.Align.CENTER)
         btn_box.append(self.btn_icon)
         btn_box.append(self.btn_label)
         self.set_child(btn_box)
-        self.get_label = lambda: f"🏢 {self.btn_label.get_text()}"
+        self.get_label = lambda: self.btn_label.get_text()   # the visible text (the child is a custom box)
 
         controller.listeners.append(self.rebuild)
         controller.on_status = self.show_status
         self.rebuild()
+
+    @staticmethod
+    def _action_button(icon: str, text: str) -> Gtk.Button:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        img = Gtk.Image.new_from_icon_name(icon)
+        img.set_pixel_size(16)
+        row.append(img)
+        row.append(Gtk.Label(label=text, xalign=0, hexpand=True))
+        btn = Gtk.Button(child=row, has_frame=False, css_classes=["flat", "floor-action"])
+        btn.get_label = lambda: text
+        return btn
 
     def rebuild(self) -> None:
         c = self.controller
@@ -803,8 +818,12 @@ class FloorButton(Gtk.MenuButton):
         name = active.get('name') if active else 'Ground'
         self.btn_label.set_text(name)
         self.set_sensitive(c.available)
-        self.set_tooltip_text("Floors: worktrees git isolados deste workspace" if c.available
-                              else "Floors precisam do core do Open Maestri (desconectado)")
+        if not c.available:
+            self.set_tooltip_text("Floors precisam do core do Open Maestri (desconectado)")
+        elif active is not None:
+            self.set_tooltip_text(f"Floor “{name}” · {active.get('branchName', '')}")
+        else:
+            self.set_tooltip_text("Floors: worktrees git isolados deste workspace")
         self.land_btn.set_sensitive(active is not None)   # Land only from a floor, never from Ground (T2.3)
         child = self.list_box.get_first_child()
         while child is not None:
@@ -822,21 +841,35 @@ class FloorButton(Gtk.MenuButton):
         row = Gtk.ListBoxRow(activatable=True, css_classes=["floor-row"] + (["active"] if is_active else []))
         row.floor_id = floor.get("id") if floor else None
         h = Gtk.Box(spacing=8)
-        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+        kind = Gtk.Image.new_from_icon_name("maestri-floor-symbolic" if floor is None else "maestri-git-branch-symbolic"
+                                            if _icon_exists("maestri-git-branch-symbolic") else "maestri-layers-symbolic")
+        kind.set_pixel_size(16)
+        kind.add_css_class("floor-row-icon")
+        h.append(kind)
+        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
         title = floor.get("name", "floor") if floor else "Ground"
         subtitle = floor.get("branchName", "") if floor else c.root
-        texts.append(Gtk.Label(label=("✓ " if is_active else "") + title, xalign=0, ellipsize=Pango.EllipsizeMode.END))
-        texts.append(Gtk.Label(label=subtitle, xalign=0, ellipsize=Pango.EllipsizeMode.MIDDLE, css_classes=["floor-branch"]))
+        texts.append(Gtk.Label(label=title, xalign=0, ellipsize=Pango.EllipsizeMode.END, width_chars=16, max_width_chars=30))
+        texts.append(Gtk.Label(label=subtitle, xalign=0, ellipsize=Pango.EllipsizeMode.MIDDLE, width_chars=16, max_width_chars=34,
+                               css_classes=["floor-branch"]))
         h.append(texts)
         if floor is not None:
             st = c.statuses.get(floor.get("id"))
-            row.floor_badge = Gtk.Label(label=badge_text(st), css_classes=["floor-badge"])
-            row.floor_dirty = Gtk.Label(label="●", css_classes=["floor-dirty"], tooltip_text="Mudanças sem commit",
-                                  visible=bool(st and st.get("dirty")))
-            delete = Gtk.Button(label="✕", has_frame=False, tooltip_text="Apagar floor…")
+            row.floor_badge = Gtk.Label(label=badge_text(st), css_classes=["floor-badge"], valign=Gtk.Align.CENTER)
+            row.floor_dirty = Gtk.Box(css_classes=["floor-dot"], tooltip_text="Mudanças sem commit", valign=Gtk.Align.CENTER,
+                                      visible=bool(st and st.get("dirty")))
+            h.append(row.floor_badge)
+            h.append(row.floor_dirty)
+        check = Gtk.Image.new_from_icon_name("maestri-check-symbolic")
+        check.set_pixel_size(14)
+        check.add_css_class("floor-check")
+        check.set_opacity(1.0 if is_active else 0.0)   # keeps the column width stable
+        h.append(check)
+        if floor is not None:
+            delete = Gtk.Button(child=Gtk.Image.new_from_icon_name("maestri-close-symbolic"), has_frame=False,
+                                tooltip_text="Apagar floor…", css_classes=["flat", "floor-row-delete"], valign=Gtk.Align.CENTER)
             delete.connect("clicked", lambda _b, f=floor: self.open_delete(f))
-            for w in (row.floor_badge, row.floor_dirty, delete):
-                h.append(w)
+            h.append(delete)
         row.set_child(h)
         return row
 

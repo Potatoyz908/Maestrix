@@ -183,7 +183,7 @@ class TestFloorsUI:
         btn = w.floor_button
         assert isinstance(btn, FloorButton) and (btn.get_parent() is w.canvas_widget.get_parent() or btn.get_ancestor(Gtk.Overlay) is w.canvas_widget.get_parent())
         assert (btn.get_halign() == Gtk.Align.END and btn.get_valign() == Gtk.Align.END) or btn.get_parent() is getattr(w.bottom_controls, "pill_floor", None)
-        assert btn.get_sensitive() and btn.get_label() == "🏢 Ground"
+        assert btn.get_sensitive() and btn.get_label() == "Ground"
         assert not btn.land_btn.get_sensitive(), "Land only from a floor"
         rows = _rows(btn)
         assert [getattr(r, "floor_id", "?") for r in rows] == [None, FLOOR_ID]       # Ground on top
@@ -192,12 +192,12 @@ class TestFloorsUI:
         assert ("events", w.document.payload.id) in core.calls
 
         btn._row_activated(rows[1])
-        assert btn.get_label() == "🏢 Fix login" and btn.land_btn.get_sensitive()
+        assert btn.get_label() == "Fix login" and btn.land_btn.get_sensitive()
         w._create_node("terminal")
         term = w.document.payload.nodes[-1]
         assert term.content.working_directory == core.floors[0]["worktreePath"], "new terminals start in the floor"
         btn._row_activated(_rows(btn)[0])
-        assert btn.get_label() == "🏢 Ground"
+        assert btn.get_label() == "Ground"
         save_dual_screenshot(w, "floor_01_button_overlay.png", "08_floors_button_overlay.png")
 
     def test_button_disabled_offline(self, app, tmp_path, monkeypatch):
@@ -330,11 +330,11 @@ class TestFloorsUI:
 
         # 3. Delete Branch (2 -> delete_branch=True) on active floor: deletes branch and returns to Ground
         w.floors.switch_to(floor2["id"])
-        assert w.floors.active_floor_id == floor2["id"] and w.floor_button.get_label() == f"🏢 {floor2['name']}"
+        assert w.floors.active_floor_id == floor2["id"] and w.floor_button.get_label() == floor2["name"]
         dlg2 = w.floor_button.open_delete(floor2)
         dlg2.choose(DeleteFloorDialog.DELETE_BRANCH)
         assert pump_until(lambda: w.floors.floors == [])
         assert ("delete", floor2["id"], True) in core.calls
         assert w.floor_button.status.get_label() == f"Floor “{floor2['name']}” e a branch apagado"
-        assert w.floors.active_floor_id is None and w.floor_button.get_label() == "🏢 Ground"
+        assert w.floors.active_floor_id is None and w.floor_button.get_label() == "Ground"
         assert w.document.payload.floors == []
