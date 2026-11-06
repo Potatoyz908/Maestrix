@@ -258,65 +258,57 @@ class CairoPaintArea(Gtk.DrawingArea):
         snapshot.append_texture(tex, Graphene.Rect().init(0, 0, w, h))
 
 
-class AgentActivityRingsWidget(CairoPaintArea):
-    """Draws Apple Activity-style dynamic progress rings representing
-    token and quota usage for active terminal AI models in the workspace:
-    - Ring 1 (Coral / Orange #E07A5F): Claude Code (% context / quota)
-    - Ring 2 (Emerald / Teal #2A9D8F): Codex (% context / quota)
-    - Ring 3 (Royal Blue #3A86FF): Gemini CLI (% context / quota)
-    """
+def terminal_activity_counts(nodes, frames):
+    """Observed busy terminals / present terminals; never token or provider quota estimates."""
+    counts = {"claude": [0, 0], "codex": [0, 0], "gemini": [0, 0]}
+    aliases = {"claude_code": "claude", "codex": "codex", "gemini_cli": "gemini"}
+    from maestri_core.models.node import agent_type_for_command
+    for node in nodes:
+        if node.node_type != "terminal":
+            continue
+        c = node.content
+        kind = aliases.get(getattr(c, "agent_type", "")) or aliases.get(agent_type_for_command(c.command))
+        if kind is None:
+            continue
+        counts[kind][1] += 1
+        frame = frames.get(node.id.upper())
+        features = getattr(frame, "terminal_features", None)
+        if features is not None and features.busy and features.exited is None:
+            counts[kind][0] += 1
+    return counts
 
+
+class AgentActivityRingsWidget(CairoPaintArea):
+    """Live output activity of Claude, Codex and Gemini terminals in this workspace."""
     def __init__(self, window=None) -> None:
         super().__init__()
         self.window = window
         self.set_content_width(78)
         self.set_content_height(26)
-
-        # Dynamic model quota & token usage states
-        self.models: dict[str, dict[str, Any]] = {
-            "claude": {
-                "name": "Claude Code",
-                "ratio": 0.68,
-                "used": "136k",
-                "max": "200k",
-                "color": (0.94, 0.45, 0.35),       # Coral / Orange
-                "cx": 15,
-            },
-            "codex": {
-                "name": "Codex",
-                "ratio": 0.42,
-                "used": "54k",
-                "max": "128k",
-                "color": (0.18, 0.76, 0.62),       # Emerald / Teal
-                "cx": 39,
-            },
-            "gemini": {
-                "name": "Gemini CLI",
-                "ratio": 0.25,
-                "used": "250k",
-                "max": "1.0M",
-                "color": (0.23, 0.58, 1.00),       # Royal Blue
-                "cx": 63,
-            },
+        self.models = {
+            "claude": dict(name="Claude Code", ratio=0, active=0, total=0, color=(0.94, 0.45, 0.35), cx=15),
+            "codex": dict(name="Codex", ratio=0, active=0, total=0, color=(0.18, 0.76, 0.62), cx=39),
+            "gemini": dict(name="Gemini CLI", ratio=0, active=0, total=0, color=(0.23, 0.58, 1.00), cx=63),
         }
+        self._counts = None
+        self.refresh()
 
+    def refresh(self) -> None:
+        win = self.window
+        nodes = win.document.payload.nodes if win is not None else []
+        frames = win.canvas_widget.frames if win is not None else {}
+        counts = terminal_activity_counts(nodes, frames)
+        if counts == self._counts:
+            return
+        self._counts = counts
+        for kind, (active, total) in counts.items():
+            self.models[kind].update(active=active, total=total, ratio=active / total if total else 0)
         self.update_tooltip()
-
-    def set_model_usage(self, model_id: str, ratio: float, used: str, max_tokens: str) -> None:
-        if model_id in self.models:
-            self.models[model_id]["ratio"] = max(0.0, min(1.0, ratio))
-            self.models[model_id]["used"] = used
-            self.models[model_id]["max"] = max_tokens
-            self.update_tooltip()
-            self.queue_draw()
+        self.queue_draw()
 
     def update_tooltip(self) -> None:
-        lines = ["Model Quotas & Context Usage:"]
-        for m in self.models.values():
-            pct = int(round(m["ratio"] * 100))
-            lines.append(f"• {m['name']}: {pct}% ({m['used']} / {m['max']})")
-        tip = "\n".join(lines)
-        self.set_tooltip_text(tip)
+        self.set_tooltip_text("Terminal activity (recent output):\n" + "\n".join(
+            f"{m['name']}: {m['active']} of {m['total']} terminals active" for m in self.models.values()))
 
     def paint(self, cr, width, height) -> None:
         self._draw_func(self, cr, width, height)
@@ -333,7 +325,7 @@ class AgentActivityRingsWidget(CairoPaintArea):
         for m in self.models.values():
             cx = m["cx"]
             r, g, b = m["color"]
-            ratio = max(0.02, min(1.0, m["ratio"]))
+            ratio = max(0.0, min(1.0, m["ratio"]))
 
             # 1. Background ring track (translucent)
             cr.save()
@@ -342,6 +334,9 @@ class AgentActivityRingsWidget(CairoPaintArea):
             cr.arc(cx, cy, radius, 0, 2 * math.pi)
             cr.stroke()
             cr.restore()
+
+            if ratio == 0:
+                continue
 
             # 2. Dynamic progress arc (starting at -pi/2, top of clock)
             start_angle = -0.5 * math.pi
@@ -723,6 +718,8 @@ class CanvasBottomRightControls(Gtk.Box):
         self._update_zoom_label(zoom)
 
     def _on_tick(self, _w, _clock) -> bool:
+        self.rings_widget.refresh()
+        self.pill_agents.set_tooltip_text(self.rings_widget.get_tooltip_text())
         z = self.cw.viewport.zoom
         if self._shown_zoom is None or abs(z - self._shown_zoom) > 1e-9:
             self._update_zoom_label(z)   # zoom changed without a signal (reset_zoom, focus_on, workspace switch)

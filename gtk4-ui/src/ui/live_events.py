@@ -72,14 +72,31 @@ class LiveEvents:
         if not self._is_open(ws) or not getattr(self.win, "loaded", True):
             return False
         fn = {"nodeAdded": self.node_added, "nodeRemoved": self.node_removed,
-              "connectionCreated": self.connection_created, "connectionRemoved": self.connection_removed}.get(etype)
-        changed = bool(fn and fn(evt))
+              "connectionCreated": self.connection_created, "connectionRemoved": self.connection_removed,
+              "terminalExited": self.terminal_state, "terminalBecameIdle": self.terminal_state,
+              "terminalBecameBusy": self.terminal_state}.get(etype)
+        changed = bool(fn and fn(dict(evt, type=etype)))
         if changed:
             self.applied += 1
             cw = self.win.canvas_widget
             cw.controller.dirty = True
             cw.queue_draw()
         return changed
+
+    def terminal_state(self, evt: Dict[str, Any]) -> bool:
+        nid = self.node_id_for(evt.get("terminalId"))
+        if nid is None:
+            return False
+        frame = self.win.canvas_widget.frames.get(norm(nid))
+        features = getattr(frame, "terminal_features", None)
+        if features is None:
+            return False
+        kind = evt.get("type")
+        if kind == "terminalExited":
+            self.win.canvas_widget.set_terminal_exited(nid, int(evt.get("exitCode", 0)))
+        else:
+            features._set_busy(kind == "terminalBecameBusy")
+        return True
 
     # ---- nodes --------------------------------------------------------------------------------------------------------
     def node_added(self, evt: Dict[str, Any]) -> bool:

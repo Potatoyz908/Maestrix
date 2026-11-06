@@ -110,3 +110,28 @@ class PresetRecoveryTests(unittest.TestCase):
         self.assertEqual(presets[0]['sf_icon'], 'brain')
         prefs._extra['agentPresets'] = []
         self.assertEqual(ns['agent_presets'](NS(preferences=prefs)), [])
+
+
+class TerminalActivityRecoveryTests(unittest.TestCase):
+    def test_rings_count_only_observed_busy_terminals(self):
+        tree = ast.parse((ROOT / 'gtk4-ui/src/ui/floating_bars.py').read_text())
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'terminal_activity_counts')
+        ns = {}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), 'floating_bars.py', 'exec'), ns)
+        nodes = [NS(node_type='terminal', id='A', content=TerminalContent(command='codex')),
+                 NS(node_type='terminal', id='B', content=TerminalContent(command='codex')),
+                 NS(node_type='terminal', id='C', content=TerminalContent(command='claude'))]
+        frames = {'A': NS(terminal_features=NS(busy=True, exited=None)),
+                  'B': NS(terminal_features=NS(busy=True, exited=0))}
+        counts = ns['terminal_activity_counts'](nodes, frames)
+        self.assertEqual(counts, {'claude': [0, 1], 'codex': [1, 2], 'gemini': [0, 0]})
+        self.assertEqual(ns['terminal_activity_counts']([], {}), {'claude': [0, 0], 'codex': [0, 0], 'gemini': [0, 0]})
+
+    def test_exit_event_uses_resolved_legacy_node_id(self):
+        state = method('gtk4-ui/src/ui/live_events.py', 'LiveEvents', 'terminal_state',
+                       dict(globals(), Dict=dict, Any=object, norm=lambda n: n))
+        cw = NS(frames={'NODE': NS(terminal_features=Mock())}, set_terminal_exited=Mock())
+        live = NS(node_id_for=lambda tid: 'NODE' if tid == 'LEGACY' else None, win=NS(canvas_widget=cw))
+        self.assertTrue(state(live, dict(type='terminalExited', terminalId='LEGACY', exitCode=7)))
+        cw.set_terminal_exited.assert_called_once_with('NODE', 7)
+        self.assertFalse(state(live, dict(type='terminalExited', terminalId='unknown')))

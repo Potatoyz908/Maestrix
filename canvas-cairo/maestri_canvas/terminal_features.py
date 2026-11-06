@@ -105,6 +105,7 @@ class TerminalFeatures:
         self.term, self.frame = term, frame
         self.on_activity = on_activity
         self.open_link = open_link
+        self.option_as_meta = False
         self.busy = False
         self.exited: Optional[int] = None
         self._idle_timer = 0
@@ -146,6 +147,16 @@ class TerminalFeatures:
         action = shortcut_action(Gdk.keyval_name(keyval) or "", bool(state & Gdk.ModifierType.CONTROL_MASK),
                                  bool(state & Gdk.ModifierType.SHIFT_MASK))
         if action is None:
+            if self.option_as_meta and state & Gdk.ModifierType.ALT_MASK and not state & Gdk.ModifierType.CONTROL_MASK:
+                codepoint = Gdk.keyval_to_unicode(keyval)
+                if codepoint >= 32:
+                    text = "\x1b" + chr(codepoint)
+                    transport = getattr(self.frame.content, "transport", None)
+                    if transport is not None:
+                        transport.write(text)
+                    else:
+                        self.term.feed_child(text.encode("utf-8"))
+                    return True
             return False
         {"copy": self.copy, "paste": self.paste, "select-all": self.select_all, "find": self.open_search}[action]()
         return True

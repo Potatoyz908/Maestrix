@@ -1281,6 +1281,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         term = terminal_of(frame.content) if frame is not None else None
         if term is not None:
             apply_terminal_style(term, *self._terminal_style(node))
+            term.set_scrollback_lines(2000 if self.preferences.scrollback_memory_limit else 10000)
+            frame.terminal_features.option_as_meta = self.preferences.option_as_meta
 
     @staticmethod
     def _terminal_id(node: CanvasNode) -> str:

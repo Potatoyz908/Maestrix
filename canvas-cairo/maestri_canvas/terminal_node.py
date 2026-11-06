@@ -48,7 +48,7 @@ class VteTerminalView(Gtk.ScrolledWindow):
         transport.on_data = self._on_data
         transport.on_status = self._on_status
         self.term.connect("commit", lambda _t, text, _n: transport.write(text))   # typed keys + pastes
-        self.term.add_tick_callback(self._watch_size)
+        self._size_tick = self.term.add_tick_callback(self._watch_size)
         # Files dragged from a FileTreeView (or a file manager) are pasted into the shell as quoted paths, without Enter.
         # paste_text -> (bracketed paste if the shell asked for it) -> "commit" -> transport.write.
         self.drop_target = install_terminal_drop(self, self.term.paste_text, focus=self.term)
@@ -88,5 +88,10 @@ class VteTerminalView(Gtk.ScrolledWindow):
         apply_terminal_style(self.term, family, size, theme)
 
     def dispose(self) -> None:
+        if self.disposed:
+            return
         self.disposed = True
+        if self._size_tick:
+            self.term.remove_tick_callback(self._size_tick)
+            self._size_tick = 0
         self.transport.close()
