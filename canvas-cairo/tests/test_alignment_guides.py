@@ -160,3 +160,87 @@ def test_canvas_widget_toggle():
     assert c.snapping and c.controller.snapping and seen == [True]
     c.set_snapping(False)
     assert seen == [True, False] and not c.controller.overlay.guides
+
+
+# ---- resize (Sprint 6) -------------------------------------------------------------------------------------------------
+from maestri_canvas.alignment_guides import align_resize  # noqa: E402
+from maestri_canvas.interaction import NodeEdge  # noqa: E402
+from maestri_canvas.resize import Edge, resize_frame  # noqa: E402
+
+NODE = Rect(0, 300, 160, 100)   # below OTHER (0..200 x, 0..100 y)
+
+
+def test_resize_right_edge_snaps_to_neighbour_edge_with_guide():
+    f, guides = align_resize(NODE, Edge.RIGHT, 37, 0, [OTHER])           # right 197 -> OTHER.max_x 200
+    assert f == Rect(0, 300, 200, 100)
+    (g,) = guides
+    assert g.axis == "vertical" and g.position == 200 and g.kind == "edge" and g.start < 0 and g.end > 400
+
+
+def test_resize_edge_snaps_to_neighbour_center_dashed():
+    f, guides = align_resize(Rect(-100, 300, 160, 100), Edge.RIGHT, 43, 0, [OTHER])   # right 103 -> OTHER center 100
+    assert f.max_x == 100 and f.min_x == -100 and guides[0].kind == "center"
+
+
+def test_resize_out_of_range_keeps_the_grid():
+    start = Rect(0, 300, 160, 100)
+    f, guides = align_resize(start, Edge.RIGHT, 21, 0, [OTHER])          # right 181: 19 from 200, 81 from 100 -> grid
+    assert f == resize_frame(start, Edge.RIGHT, 21, 0) and guides == []
+    assert align_resize(start, Edge.RIGHT, 21, 0, []) == (resize_frame(start, Edge.RIGHT, 21, 0), [])
+
+
+def test_resize_corner_snaps_each_axis_and_fixes_the_opposite_edges():
+    start = Rect(0, 200, 160, 100)                                        # left 0 / top 200 must stay put
+    others = [Rect(300, 0, 100, 100), Rect(500, 345, 50, 50)]
+    f, guides = align_resize(start, Edge.BOTTOM_RIGHT, 137, 43, others)   # right 297 -> 300, bottom 343 -> 345
+    assert (f.min_x, f.min_y, f.max_x, f.max_y) == (0, 200, 300, 345)
+    assert {(g.axis, g.position) for g in guides} == {("vertical", 300), ("horizontal", 345)}
+
+
+def test_resize_left_and_top_edges():
+    other = Rect(-50, -60, 30, 30)                                        # left -50, right -20 / top -60, bottom -30
+    start = Rect(0, 0, 300, 200)
+    f, guides = align_resize(start, Edge.TOP_LEFT, -48, -27, [other])     # left -48 -> -50, top -27 -> -30
+    assert (f.min_x, f.min_y, f.max_x, f.max_y) == (-50, -30, 300, 200)
+    assert {(g.axis, g.position) for g in guides} == {("vertical", -50), ("horizontal", -30)}
+
+
+def test_resize_never_snaps_below_the_minimum_size():
+    start = Rect(0, 300, 200, 100)
+    neighbour = Rect(100, 0, 57, 50)                                      # right edge 157: 3 from the clamped 160, but < 160
+    f, guides = align_resize(start, Edge.RIGHT, -98, 0, [neighbour])      # raw right 102 -> min width clamps it to 160
+    assert f.max_x == 160 and f.w == 160 and guides == []
+
+
+def test_resize_threshold_scales_with_zoom():
+    assert align_resize(NODE, Edge.RIGHT, 30, 0, [OTHER], zoom=1.0)[1] == []     # 10 px away
+    assert align_resize(NODE, Edge.RIGHT, 30, 0, [OTHER], zoom=0.5)[0].max_x == 200   # 5 px at zoom 0.5
+
+
+def test_controller_resize_uses_guides_only_when_enabled():
+    ctl, sc = make()                      # aa (0,0,200,100), bb (0,300,200,100), cc (600,300,100,100)
+    ctl.press(Point(600, 350), 1, N, NodeEdge("cc", Edge.LEFT))
+    ctl.move(Point(600 - 397, 350), N)    # left 203 without snapping -> grid 208
+    assert sc.get("cc").frame.min_x == 208 and not ctl.overlay.guides
+    ctl.release(Point(203, 350), N)
+
+    ctl, sc = make()
+    ctl.snapping = True
+    ctl.press(Point(600, 350), 1, N, NodeEdge("cc", Edge.LEFT))
+    ctl.move(Point(600 - 397, 350), N)    # left 203 -> bb.max_x 200 (and aa.max_x 200: one merged guide)
+    f = sc.get("cc").frame
+    assert f.min_x == 200 and f.max_x == 700
+    (g,) = [g for g in ctl.overlay.guides if g.axis == "vertical"]
+    assert g.position == 200 and g.start < 0                              # spans up to aa too
+    ctl.release(Point(203, 350), N)
+    assert not ctl.overlay.guides and sc.get("cc").frame.min_x == 200
+
+
+def test_controller_resize_escape_restores_and_clears_guides():
+    ctl, sc = make()
+    ctl.snapping = True
+    ctl.press(Point(600, 350), 1, N, NodeEdge("cc", Edge.LEFT))
+    ctl.move(Point(203, 350), N)
+    assert ctl.overlay.guides
+    ctl.cancel()
+    assert sc.get("cc").frame == Rect(600, 300, 100, 100) and not ctl.overlay.guides

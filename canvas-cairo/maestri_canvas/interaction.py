@@ -2,7 +2,7 @@
 
 Reference spec (docs/reference/maestri-reference-index.md), with the macOS command key mapped to Ctrl:
   pan: two-finger scroll / middle-drag / Space+drag      zoom: Ctrl+scroll / pinch / Ctrl+= / Ctrl+-
-  move: drag a node header (smart alignment guides when `snapping` is on; Ctrl = magnetic tile snapping)   resize: drag edge/corner (snaps to the 16-unit grid)
+  move: drag a node header (smart alignment guides when `snapping` is on; Ctrl = magnetic tile snapping)   resize: drag edge/corner (16-unit grid; with `snapping`, edges also snap to neighbours' edges/centers)
   duplicate: Alt+drag     delete: Ctrl+W / Delete     focus node: \\     select: click, Shift+click, marquee on empty space
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from .geometry import Point, Rect, round_half_away
 from .resize import Edge, resize_frame
 from .rope import RopeSimulation
 from .scene import ConnItem, PinSide, Scene, norm, pin_point
-from .alignment_guides import align, candidates
+from .alignment_guides import align, align_resize, candidates
 from .snapping import GuideLine, snap
 from .viewport import Viewport
 
@@ -236,7 +236,13 @@ class CanvasController:
             self._drag(st, pt, mods)
         elif isinstance(st, _Resizing):
             dx, dy = (pt.x - st.start.x) / self.vp.zoom, (pt.y - st.start.y) / self.vp.zoom
-            frame = resize_frame(st.start_frame, st.edge, dx, dy, min_size=st.min_size) if st.min_size else resize_frame(st.start_frame, st.edge, dx, dy)
+            if self.snapping:   # active edges snap to neighbours' edges / centers (else the 16-unit grid), with guides
+                others = (n.frame for n in self.scene.nodes.values() if n.id != st.id)
+                frame, self.overlay.guides = align_resize(
+                    st.start_frame, st.edge, dx, dy, candidates(others, self.vp.visible_rect(*self.size, margin=0.0), st.start_frame),
+                    self.vp.zoom, **({"min_size": st.min_size} if st.min_size else {}))
+            else:
+                frame = resize_frame(st.start_frame, st.edge, dx, dy, min_size=st.min_size) if st.min_size else resize_frame(st.start_frame, st.edge, dx, dy)
             self.scene.set_frame(st.id, frame)
             self._reanchor({st.id})
             self._emit(NodeResized(st.id, frame, False))

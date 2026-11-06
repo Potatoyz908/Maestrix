@@ -19,7 +19,8 @@ sys.path.insert(0, str(ROOT_DIR / "gtk4-ui" / "src"))
 sys.path.insert(0, str(ROOT_DIR))
 
 from maestri_canvas.geometry import Point  # noqa: E402
-from maestri_canvas.interaction import Mods, NodeHeader  # noqa: E402
+from maestri_canvas.interaction import Mods, NodeEdge, NodeHeader  # noqa: E402
+from maestri_canvas.resize import Edge  # noqa: E402
 from maestri_core.client.api import MaestriClient  # noqa: E402
 from maestri_core.preferences import PreferencesStore  # noqa: E402
 from ui.window import OpenMaestriWindow  # noqa: E402
@@ -63,6 +64,16 @@ def test_view_menu_toggle_and_drag_guides(app, tmp_path):
     assert cw.scene.get(b.id).frame.x == pytest.approx(a.frame.x)
     assert any(g.axis == "vertical" and g.position == pytest.approx(a.frame.x) for g in ctl.overlay.guides)
     ctl.release(Point(start.x + 2 * cw.viewport.zoom, start.y + 20), Mods.NONE)
+    # Sprint 6: resizing b's right edge to within a few px of a's right edge pulls it onto it, with a guide
+    fb = cw.scene.get(b.id).frame
+    target = a.frame.x + a.frame.width
+    grip = cw.viewport.to_screen(Point(fb.max_x, fb.y + fb.h / 2))
+    ctl.press(grip, 1, Mods.NONE, NodeEdge(b.id, Edge.RIGHT))
+    ctl.move(Point(grip.x + (target - fb.max_x - 3) * cw.viewport.zoom, grip.y), Mods.NONE)
+    assert cw.scene.get(b.id).frame.max_x == pytest.approx(target)
+    assert any(g.axis == "vertical" and g.position == pytest.approx(target) for g in ctl.overlay.guides)
+    ctl.release(Point(grip.x, grip.y), Mods.NONE)
+    assert not ctl.overlay.guides
     # toggle off from the menu: persisted, and no more pull
     win.lookup_action("snapping").change_state(GLib.Variant.new_boolean(False))
     assert not cw.snapping and PreferencesStore(tmp_path).load().canvas_snapping is False
