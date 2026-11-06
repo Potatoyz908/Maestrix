@@ -329,7 +329,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         for conn in self.document.payload.all_connections():
             if conn.a_id and conn.b_id and conn.a_id.upper() in final_ids and conn.b_id.upper() in final_ids:
                 if not any(c.id == conn.id for c in server_doc.payload.all_connections()):
-                    server_doc.payload.terminal_to_terminal.append(conn)
+                    server_doc.payload.connections.append(conn)
 
         # B2: Render the merged workspace on canvas via _apply_workspace_switched!
         self._apply_workspace_switched(server_doc)
