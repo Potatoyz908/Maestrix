@@ -13,6 +13,7 @@ from unittest.mock import Mock
 
 from maestri_core.models.node import CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent, agent_type_for_command
 from maestri_canvas.geometry import Point
+from maestri_core.element_defaults import apply_element_defaults
 from maestri_canvas.note_model import unique_name
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,7 +31,7 @@ class CreationRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.create = method('gtk4-ui/src/ui/window.py', 'OpenMaestriWindow', '_create_node',
                              dict(globals(), WIDGET_KINDS={'terminal', 'stickyNote', 'portal', 'fileTree'}, bus=Mock()))
-        self.win = NS(loaded=True, document=NS(payload=NS(nodes=[], working_directory='/workspace')),
+        self.win = NS(loaded=True, preferences=NS(_extra={}), document=NS(payload=NS(nodes=[], working_directory='/workspace')),
                       canvas_widget=NS(get_width=lambda: 1000, get_height=lambda: 800),
                       floors=NS(terminal_cwd=lambda: '/workspace'), _add_node_to_canvas=Mock())
 
@@ -203,3 +204,17 @@ class RoutineRecoveryTests(unittest.TestCase):
         self.assertEqual(requests, ['OTHER-WORKSPACE'])
         self.assertFalse(controller._remote_runs)
         controller.scheduler.run_now.assert_not_called()
+
+
+class ElementDefaultsRecoveryTests(unittest.TestCase):
+    def test_defaults_apply_only_when_requested(self):
+        prefs = NS(_extra={'newElementDefaults': {'terminal': {'size': [640, 480], 'appearance': {'font_size': 17}}}})
+        node = CanvasNode(frame=NodeFrame(width=420, height=300), content=TerminalContent(), node_type='terminal')
+        apply_element_defaults(node, prefs, size=False)
+        self.assertEqual(node.frame.width, 420)
+        self.assertEqual(node.content.font_size, 17)
+        apply_element_defaults(node, prefs)
+        self.assertEqual((node.frame.width, node.frame.height), (640, 480))
+        prefs._extra['newElementDefaults']['terminal']['size'] = [float('nan'), -1]
+        apply_element_defaults(node, prefs)
+        self.assertEqual((node.frame.width, node.frame.height), (640, 480))

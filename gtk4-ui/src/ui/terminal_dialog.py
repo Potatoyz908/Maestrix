@@ -365,6 +365,10 @@ class NewTerminalDialog(_TerminalForm, Gtk.Window):
                       "font_family": getattr(prefs, "terminal_font_family", "") or "",
                       "font_size": float(getattr(prefs, "terminal_font_size", 13.0) or 13.0), "role_id": None}
 
+        defaults = getattr(prefs, "_extra", {}).get("newElementDefaults", {}).get("terminal", {})
+        if isinstance(defaults, dict) and isinstance(defaults.get("appearance"), dict):
+            self._init.update({k: v for k, v in defaults["appearance"].items() if k in self._init})
+
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0, margin_start=20, margin_end=20, margin_bottom=16)
         title = Gtk.Label(label="New Terminal", margin_top=16, margin_bottom=12)
         title.add_css_class("heading")

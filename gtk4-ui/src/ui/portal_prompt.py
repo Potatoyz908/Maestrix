@@ -23,14 +23,15 @@ def normalize_url(text: str) -> str:
 
 
 class NewPortalDialog(Gtk.Window):
-    def __init__(self, parent: Gtk.Window, on_confirm: Callable[[str, str], None]) -> None:
-        super().__init__(title="New Portal", transient_for=parent, modal=True, resizable=False)
+    def __init__(self, parent: Gtk.Window, on_confirm: Callable[[str, str], None],
+                 title: str = "New Portal", submit_label: str = "Create") -> None:
+        super().__init__(title=title, transient_for=parent, modal=True, resizable=False)
         self.set_default_size(480, 190)
         self.add_css_class("maestri-modal-window")
         self.on_confirm = on_confirm
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        title = Gtk.Label(label="New Portal", margin_top=20, margin_bottom=16)
+        title = Gtk.Label(label=title, margin_top=20, margin_bottom=16)
         title.add_css_class("heading")
         root.append(title)
 
@@ -47,7 +48,7 @@ class NewPortalDialog(Gtk.Window):
         buttons = Gtk.Box(spacing=8, halign=Gtk.Align.END, margin_top=20, margin_bottom=20, margin_end=24)
         cancel = Gtk.Button(label="Cancel")
         cancel.connect("clicked", lambda _b: self.close())
-        self.create_btn = Gtk.Button(label="Create")
+        self.create_btn = Gtk.Button(label=submit_label)
         self.create_btn.add_css_class("suggested-action")
         self.create_btn.connect("clicked", lambda _b: self.confirm())
         buttons.append(cancel)

@@ -24,6 +24,7 @@ from maestri_core.models.node import (CanvasNode, NodeFrame, TerminalContent, St
                                       agent_type_for_command, current_iso8601)
 from maestri_core.client.api import MaestriClient, AuthenticationError
 from maestri_core.preferences import PreferencesStore
+from maestri_core.element_defaults import apply_element_defaults
 from maestri_core.signals.bus import bus
 from maestri_core.terminal_fields import apply_fields, role_name, terminal_fields_from_dialog
 from maestri_core.sync import WorkspaceSync
@@ -1170,7 +1171,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             "new-terminal-opencode": lambda: self.create_terminal_preset("opencode"),
             "new-terminal-shell": lambda: self.create_terminal_preset("shell"),
             "new-note": lambda: self._create_node("stickyNote"),
-            "new-portal": lambda: self._create_node("portal"),
+            "new-portal": lambda: self.open_new_portal_dialog(),
             "new-file-tree": lambda: self._create_node("fileTree"),
             "save": lambda: self._save_to_backend(),
             "preferences": lambda: self.show_preferences(),
@@ -1334,7 +1335,10 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         content_fields.setdefault("agent_type", agent_type_for_command(command))
         content = TerminalContent(id=nid, terminal_id=nid, name=name, command=command, working_directory=cwd, **content_fields)
         z = max((n.z_index for n in self.document.payload.nodes), default=0) + 1
-        return CanvasNode(id=nid, frame=frame, node_type="terminal", content=content, z_index=z)
+        node = CanvasNode(id=nid, frame=frame, node_type="terminal", content=content, z_index=z)
+        apply_element_defaults(node, self.preferences)
+        apply_fields(content, content_fields)  # explicit dialog/preset choices win
+        return node
 
     def _insert_node(self, node: CanvasNode, focus: bool = False, flush: bool = True) -> CanvasNode:
         """Add a node created by the UI to the document + canvas and persist it."""
@@ -1785,6 +1789,11 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                                       **{k: v for k, v in (("icon", preset.get("sf_icon", preset.get("icon"))), ("color", preset.get("color"))) if v})
         return self._insert_node(node)
 
+    def open_new_portal_dialog(self):
+        from .portal_prompt import ask_portal_url
+        return ask_portal_url(self, lambda name, url: self._create_node(
+            "portal", content=PortalContent(name=name or "Portal", current_url=url)))
+
     def open_new_terminal_dialog(self, at: Point | None = None, size: tuple[float, float] | None = None, default_preset: str = "claude") -> NewTerminalDialog:
         """Opens the macOS-matching 'New Terminal' modal dialog with Quick Start presets."""
         def on_create(data: dict):
@@ -1799,6 +1808,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             )
             frame = NodeFrame(x=spawn_at.x, y=spawn_at.y, width=term_w, height=term_h)
             node = self.new_terminal_node(frame, name, cmd, cwd, **terminal_fields_from_dialog(data))
+            if size is not None:
+                node.frame.width, node.frame.height = size
             self._insert_node(node)
 
         dlg = NewTerminalDialog(
@@ -1849,8 +1860,32 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             dlg.present()
         elif node.node_type == "stickyNote":
             frame = self.canvas_widget.frames.get(norm(node.id))
-            if frame and hasattr(frame.content, "edit_button"):
-                frame.content.edit_button.emit("clicked")
+            if frame:
+                frame.content.begin_rename()
+        elif node.node_type == "portal":
+            from .portal_prompt import NewPortalDialog
+            def save_portal(name, url):
+                node.content.name = name or "Portal"
+                frame = self.canvas_widget.frames.get(norm(node.id))
+                if frame:
+                    frame.content.meta.name = node.content.name
+                    frame.content.navigate(url)
+                    self._on_portal_meta_changed(None, node.id, frame.content.meta.to_dict())
+            dlg = NewPortalDialog(self, save_portal, title="Edit Portal", submit_label="Save")
+            dlg.name_entry.set_text(node.content.name)
+            dlg.url_entry.set_text(node.content.current_url)
+            dlg.present()
+        elif node.node_type == "fileTree":
+            chooser = Gtk.FileDialog(title="Choose Root Folder")
+            def selected(d, result):
+                try:
+                    folder = d.select_folder_finish(result)
+                    frame = self.canvas_widget.frames.get(norm(node.id))
+                    if folder and frame:
+                        frame.content.set_root(folder.get_path())
+                except GLib.Error:
+                    pass
+            chooser.select_folder(self, None, selected)
 
     def _on_new_workspace(self) -> None:
         """Opens macOS-matching 'New Workspace' modal sheet."""
@@ -1896,6 +1931,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         n = len(self.document.payload.nodes) + 1
         max_z = max((x.z_index for x in self.document.payload.nodes), default=0)
 
+        supplied_content = content is not None
         if content is None:
             if node_type == "terminal":
                 content = TerminalContent(name=f"Terminal {n}", command="bash", working_directory=self.floors.terminal_cwd())
@@ -1922,6 +1958,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             content=content,
             z_index=max_z + 1,
         )
+        apply_element_defaults(new_node, self.preferences, size=size is None, appearance=not supplied_content)
         self.document.payload.nodes.append(new_node)
         self._add_node_to_canvas(new_node, focus=node_type == "stickyNote")
         bus.emit("node-added", new_node)  # WorkspaceSync schedules the save
