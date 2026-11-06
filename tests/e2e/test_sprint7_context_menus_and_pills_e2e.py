@@ -45,16 +45,17 @@ def pump_events(seconds: float = 0.05) -> None:
 def test_bottom_controls_4_pills_and_agent_rings(win):
     bottom = win.bottom_controls
     assert isinstance(bottom, CanvasBottomRightControls)
+    assert hasattr(bottom, "pill_floor")
     assert hasattr(bottom, "pill_agents")
     assert hasattr(bottom, "pill_minimap")
     assert hasattr(bottom, "pill_zoom")
     assert hasattr(bottom, "rings_widget")
     assert isinstance(bottom.rings_widget, AgentActivityRingsWidget)
 
-    # Floor button exists as Pill 1 on the canvas overlay
+    # Floor button exists as Pill 1 in bottom controls
     assert win.floor_button is not None
     assert "maestri-bottom-pill" in win.floor_button.get_css_classes()
-    assert win.floor_button.get_margin_end() >= 200
+    assert win.floor_button.get_parent() is bottom.pill_floor
 
 
 def test_canvas_context_menu_structure_and_presets(win):

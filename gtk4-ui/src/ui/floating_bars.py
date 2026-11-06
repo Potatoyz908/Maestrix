@@ -333,11 +333,10 @@ class CanvasBottomRightControls(Gtk.Box):
         self.set_margin_end(16)
         self.set_margin_bottom(16)
 
-        # Retained compatibility button for floors (delegates to window.floor_button)
-        img_floors = Gtk.Image.new_from_icon_name("maestri-layers-symbolic")
-        img_floors.set_pixel_size(15)
-        self.btn_floors = Gtk.Button(child=img_floors)
-        self.btn_floors.connect("clicked", self._on_floors_clicked)
+        # Pill 1: Floor Button Capsule (holds FloorButton from install_floors)
+        self.pill_floor = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.btn_floors = None
+        self.append(self.pill_floor)
 
         # Pill 2: Agent Activity Rings (Claude Code, Codex, Gemini CLI)
         self.pill_agents = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
@@ -411,9 +410,10 @@ class CanvasBottomRightControls(Gtk.Box):
         self._update_zoom_label(zoom)
 
     def _on_floors_clicked(self, _btn) -> None:
-        if hasattr(self.window, "floors") and hasattr(self.window.floors, "button"):
-            # Trigger the floors popover directly
-            self.window.floors.button.emit("clicked")
+        if self.btn_floors:
+            self.btn_floors.emit("clicked")
+        elif hasattr(self.window, "floor_button") and self.window.floor_button:
+            self.window.floor_button.emit("clicked")
 
     def _on_minimap_clicked(self, _btn) -> None:
         # Reset zoom to fit or toggle overview

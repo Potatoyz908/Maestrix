@@ -181,8 +181,8 @@ class TestFloorsUI:
     def test_button_overlays_canvas_lists_floors_and_switches(self, win):
         w, core = win
         btn = w.floor_button
-        assert isinstance(btn, FloorButton) and btn.get_parent() is w.canvas_widget.get_parent()
-        assert btn.get_halign() == Gtk.Align.END and btn.get_valign() == Gtk.Align.END
+        assert isinstance(btn, FloorButton) and (btn.get_parent() is w.canvas_widget.get_parent() or btn.get_ancestor(Gtk.Overlay) is w.canvas_widget.get_parent())
+        assert (btn.get_halign() == Gtk.Align.END and btn.get_valign() == Gtk.Align.END) or btn.get_parent() is getattr(w.bottom_controls, "pill_floor", None)
         assert btn.get_sensitive() and btn.get_label() == "🏢 Ground"
         assert not btn.land_btn.get_sensitive(), "Land only from a floor"
         rows = _rows(btn)

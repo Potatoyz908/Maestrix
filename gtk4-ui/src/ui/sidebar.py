@@ -16,6 +16,7 @@ Matches the official macOS Maestri sidebar design (Sources/Workspace/WorkspaceSi
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import threading
@@ -35,6 +36,7 @@ from .workspace_dialogs import (
     DeleteWorkspaceDialog,
     EditWorkspaceDialog,
     GroupDialog,
+    create_workspace_record,
 )
 
 
@@ -169,6 +171,16 @@ class SidebarView(Gtk.Box):
                 workspaces = self.client.get_workspaces()
             except Exception:
                 workspaces = []
+            if not workspaces:
+                manifest_path = os.path.expanduser("~/.open-maestri/manifest.json")
+                if os.path.isfile(manifest_path):
+                    try:
+                        with open(manifest_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        ws_list = data.get("workspaces", [])
+                        workspaces = [WorkspaceEntry.from_dict(item) for item in ws_list]
+                    except Exception:
+                        pass
             try:
                 layout = self.client.get_sidebar_layout()
             except Exception:
@@ -595,12 +607,20 @@ class SidebarView(Gtk.Box):
         menu_vbox.set_margin_start(6)
         menu_vbox.set_margin_end(6)
 
-        btn_new_ws = self._make_menu_item("➕  New Workspace…", lambda: self._on_header_new_workspace(popover))
+        btn_new_ws = self._make_menu_item(
+            "maestri-plus-symbolic",
+            "New Workspace…",
+            lambda: self._on_header_new_workspace(popover),
+        )
         menu_vbox.append(btn_new_ws)
 
         menu_vbox.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
-        btn_new_grp = self._make_menu_item("📁  New Group…", lambda: self._on_header_new_group(popover))
+        btn_new_grp = self._make_menu_item(
+            "maestri-folder-symbolic",
+            "New Group…",
+            lambda: self._on_header_new_group(popover),
+        )
         menu_vbox.append(btn_new_grp)
 
         popover.set_child(menu_vbox)
@@ -612,8 +632,13 @@ class SidebarView(Gtk.Box):
 
         def handle_created(name: str, wd: str, icon: str):
             def worker():
-                self.client.create_workspace(name=name, working_directory=wd, icon=icon)
-                self.refresh()
+                new_id = create_workspace_record(self.client, name, wd, icon)
+                def on_done():
+                    self.refresh()
+                    if window and hasattr(window, "_on_workspace_switched"):
+                        window._on_workspace_switched(None, new_id)
+                    return GLib.SOURCE_REMOVE
+                GLib.idle_add(on_done)
             threading.Thread(target=worker, daemon=True).start()
 
         dlg = CreateWorkspaceDialog(window, handle_created)

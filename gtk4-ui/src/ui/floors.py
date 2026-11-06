@@ -738,8 +738,7 @@ class FloorButton(Gtk.MenuButton):
     TOAST_MS = 4000
 
     def __init__(self, window, controller: FloorsController) -> None:
-        super().__init__(halign=Gtk.Align.END, valign=Gtk.Align.END, margin_end=244, margin_bottom=16,
-                         css_classes=["floor-button", "maestri-bottom-pill"], direction=Gtk.ArrowType.UP)
+        super().__init__(css_classes=["floor-button", "maestri-bottom-pill"], direction=Gtk.ArrowType.UP)
         _install_css()
         self.window, self.controller = window, controller
         self._toast_timer = 0
@@ -881,11 +880,22 @@ class FloorButton(Gtk.MenuButton):
 
 
 def install_floors(window) -> FloorsController:
-    """Wire floors into OpenMaestriWindow: the floating button on the overlay that holds the canvas, a reload on every
+    """Wire floors into OpenMaestriWindow: the floating button in bottom controls, a reload on every
     workspace load (initial load and switch) and the /ws/events subscription; both stop when the window closes."""
     controller = FloorsController(window)
     window.floor_button = FloorButton(window, controller)
-    window.canvas_widget.get_parent().add_overlay(window.floor_button)
+    if hasattr(window, "bottom_controls") and hasattr(window.bottom_controls, "pill_floor"):
+        window.bottom_controls.pill_floor.append(window.floor_button)
+        window.bottom_controls.btn_floors = window.floor_button
+    elif hasattr(window, "bottom_controls"):
+        window.bottom_controls.prepend(window.floor_button)
+        window.bottom_controls.btn_floors = window.floor_button
+    else:
+        window.floor_button.set_halign(Gtk.Align.END)
+        window.floor_button.set_valign(Gtk.Align.END)
+        window.floor_button.set_margin_end(16)
+        window.floor_button.set_margin_bottom(16)
+        window.canvas_widget.get_parent().add_overlay(window.floor_button)
 
     def loaded(*_args) -> None:
         controller.floors, controller.statuses, controller.active_floor_id = [], {}, None

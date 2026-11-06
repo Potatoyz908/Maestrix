@@ -43,7 +43,7 @@ from .core_link import CoreReconnector
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
 from .terminal_dialog import EditTerminalDialog, NewTerminalDialog, PRESETS
-from .workspace_dialogs import CreateWorkspaceDialog, GroupDialog
+from .workspace_dialogs import CreateWorkspaceDialog, GroupDialog, create_workspace_record
 from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
 
 
@@ -1606,8 +1606,12 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         """Opens macOS-matching 'New Workspace' modal sheet."""
         def handle_created(name: str, wd: str, icon: str):
             def worker():
-                self.client.create_workspace(name=name, working_directory=wd, icon=icon)
-                self.sidebar.refresh()
+                new_id = create_workspace_record(self.client, name, wd, icon)
+                def on_done():
+                    self.sidebar.refresh()
+                    self._on_workspace_switched(None, new_id)
+                    return GLib.SOURCE_REMOVE
+                GLib.idle_add(on_done)
             threading.Thread(target=worker, daemon=True).start()
 
         dlg = CreateWorkspaceDialog(self, handle_created)
@@ -1728,10 +1732,21 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             self.sync.flush()
 
         def switch_worker():
+            doc = None
             try:
                 doc = self.client.get_workspace(workspace_id)
             except Exception:
                 doc = None
+            if doc is None:
+                local_path = os.path.expanduser(f"~/.open-maestri/workspaces/{workspace_id}/workspace.json")
+                if os.path.isfile(local_path):
+                    try:
+                        with open(local_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        if isinstance(data, dict) and data.get("schemaVersion") == 2:
+                            doc = WorkspaceDocument.from_dict(data)
+                    except Exception:
+                        pass
             GLib.idle_add(self._apply_workspace_switched, doc)
 
         threading.Thread(target=switch_worker, daemon=True).start()

@@ -19,6 +19,99 @@ from gi.repository import GLib, Gtk  # noqa: E402
 from maestri_core.models.workspace import WorkspaceEntry
 
 
+def create_workspace_record(client, name: str, wd: str, icon: str = "folder") -> str:
+    """Create a workspace via the core client if available, or locally on filesystem when offline.
+    Returns the workspace id."""
+    import json
+    import uuid
+    from datetime import datetime, timezone
+
+    # 1. Try core client
+    try:
+        res = client.create_workspace(name=name, working_directory=wd, icon=icon)
+        if res and getattr(res, "id", None):
+            return str(res.id).upper()
+    except Exception:
+        pass
+
+    # 2. Offline fallback: local filesystem (~/.open-maestri)
+    new_id = str(uuid.uuid4()).upper()
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    manifest_dir = os.path.expanduser("~/.open-maestri")
+    manifest_path = os.path.join(manifest_dir, "manifest.json")
+    os.makedirs(manifest_dir, exist_ok=True)
+    manifest = {
+        "app": "open-maestri",
+        "appVersion": "1.0.0",
+        "dataFormat": 2,
+        "files": {},
+        "schemaVersion": 1,
+        "type": "appState",
+        "workspaces": [],
+    }
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict) and "workspaces" in loaded:
+                    manifest = loaded
+        except Exception:
+            pass
+
+    new_entry = {
+        "color": "blue",
+        "createdAt": now_iso,
+        "icon": icon or "folder",
+        "id": new_id,
+        "isPinned": False,
+        "locationType": "local",
+        "name": name,
+        "workingDirectory": wd or os.path.expanduser("~"),
+    }
+    manifest["workspaces"].append(new_entry)
+    tmp_path = manifest_path + f".tmp.{os.getpid()}"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    os.replace(tmp_path, manifest_path)
+
+    ws_dir = os.path.join(manifest_dir, "workspaces", new_id)
+    os.makedirs(os.path.join(ws_dir, "notes"), exist_ok=True)
+    ws_doc = {
+        "schemaVersion": 2,
+        "type": "workspace",
+        "payload": {
+            "id": new_id,
+            "name": name,
+            "workingDirectory": wd or os.path.expanduser("~"),
+            "icon": icon or "folder",
+            "color": "blue",
+            "isPinned": False,
+            "locationType": "local",
+            "canvasOrigin": [9800, 8500],
+            "canvasZoom": 1,
+            "nodes": [],
+            "connections": [],
+            "drawings": [],
+            "floors": [],
+            "crossFloorConnections": [],
+            "noteConnections": [],
+            "noteToNoteConnections": [],
+            "portalConnections": [],
+            "portalToPortalConnections": [],
+            "preferredIDE": "cursor",
+            "syncConfigFiles": False,
+            "createdAt": now_iso,
+            "lastModifiedAt": now_iso,
+        },
+    }
+    ws_file = os.path.join(ws_dir, "workspace.json")
+    ws_tmp = ws_file + f".tmp.{os.getpid()}"
+    with open(ws_tmp, "w", encoding="utf-8") as f:
+        json.dump(ws_doc, f, indent=2)
+    os.replace(ws_tmp, ws_file)
+    return new_id
+
+
 # 8 core icon options for creation (matching CreateWorkspaceSheet.swift)
 CREATE_ICON_OPTIONS = [
     ("📁", "folder"),
