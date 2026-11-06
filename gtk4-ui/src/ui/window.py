@@ -100,6 +100,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         self.canvas_widget.connect("delete-requested", self._on_canvas_delete_requested)
         self.canvas_widget.connect("duplicate-requested", self._on_canvas_duplicate_requested)
         self.canvas_widget.connect("connect-requested", self._on_canvas_connect_requested)
+        self.canvas_widget.connect("connection-rope-settled", self._on_rope_settled)
         self.canvas_widget.connect("note-meta-changed", self._on_note_meta_changed)
         self.canvas_widget.connect("portal-meta-changed", self._on_portal_meta_changed)
         self.canvas_widget.connect("file-activated", self._on_file_activated)
@@ -1420,6 +1421,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
     def _configure_notes_backend(self) -> None:
         """Managed notes go through the core REST API when it is reachable; offline they live in memory."""
         cw = self.canvas_widget
+        cw.connections_client = self.client if self.core_connected else None
+        cw.connections_workspace_id = self.document.payload.id
         if self.core_connected:
             cw.notes_client = CoreNotesClient(self.client.port, self.client.token, workspace_id=self.document.payload.id)
         from maestri_core.paths import data_dir
@@ -1634,7 +1637,14 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             self._add_node_to_canvas(node)
         for conn in self.document.payload.all_connections():
             if conn.a_id and conn.b_id:
-                self.canvas_widget.add_connection(ConnItem(conn.id, conn.a_id, conn.b_id))
+                self.canvas_widget.add_connection(ConnItem(conn.id, conn.a_id, conn.b_id), conn.rope_points)
+
+    def _on_rope_settled(self, _canvas, conn_id, points):
+        import json
+        conn = next((c for c in self.document.payload.all_connections() if c.id.upper() == conn_id.upper()), None)
+        if conn is not None and conn.rope_points != points:
+            conn.rope_points = points
+            bus.emit("connection-changed", conn.id, json.dumps(points))
 
     def _find_node(self, node_id: str):
         nid = node_id.upper()

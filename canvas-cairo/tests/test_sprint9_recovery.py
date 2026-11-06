@@ -234,3 +234,18 @@ class ClipboardRecoveryTests(unittest.TestCase):
         self.assertNotEqual(result[0].content.file_name, source.content.file_name)
         self.assertEqual(result[0].content.storage_mode, {'managed': {}})
         win._fill_note_when_loaded.assert_called_once_with(result[0].id, 'Keep this content')
+
+
+class RopeRecoveryTests(unittest.TestCase):
+    def test_settled_rope_updates_snapshot_before_autosave(self):
+        from maestri_core.models.connection import Connection
+        events = Mock()
+        settled = method('gtk4-ui/src/ui/window.py', 'OpenMaestriWindow', '_on_rope_settled', dict(bus=events))
+        conn = Connection(id='C', a_id='A', b_id='B')
+        win = NS(document=NS(payload=NS(all_connections=lambda: [conn])))
+        points = [[1, 2], [3, 4]]
+        settled(win, None, 'c', points)
+        self.assertEqual(conn.rope_points, points)
+        self.assertEqual(events.emit.call_count, 1)
+        settled(win, None, 'c', points)
+        self.assertEqual(events.emit.call_count, 1)

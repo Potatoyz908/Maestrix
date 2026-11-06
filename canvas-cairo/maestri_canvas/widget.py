@@ -714,8 +714,9 @@ class CanvasWidget(Gtk.Overlay):
         self.controller._reanchor({norm(node_id)})
         self.controller.dirty = True
 
-    def add_connection(self, conn: ConnItem) -> None:
-        self.controller.add_connection(conn)
+    def add_connection(self, conn: ConnItem, rope_points=None) -> None:
+        points = [Point(float(p[0]), float(p[1])) for p in rope_points] if rope_points else None
+        self.controller.add_connection(conn, points)
         self._sync_portal_sessions()
 
     def remove_connection(self, conn_id: str) -> bool:

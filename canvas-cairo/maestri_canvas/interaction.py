@@ -537,9 +537,9 @@ class CanvasController:
         return True
 
     # ---- connections confirmed by the core ------------------------------------------------------
-    def add_connection(self, c: ConnItem) -> None:
+    def add_connection(self, c: ConnItem, points=None) -> None:
         self.scene.add_connection(c)
         a = self.scene.anchors(c)
         if a:
-            self.ropes.add(c.id, *a)
+            self.ropes.add(c.id, *a, existing=points)
         self.dirty = True
