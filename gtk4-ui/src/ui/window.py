@@ -42,6 +42,8 @@ from .floors import install_floors
 from .core_link import CoreReconnector
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
+from .terminal_dialog import NewTerminalDialog
+from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
 
 
 class OpenMaestriWindow(Gtk.ApplicationWindow):
@@ -99,6 +101,14 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
                                        css_classes=["maestri-loading"])
         self.loading_label.set_can_target(False)
         canvas_stack.add_overlay(self.loading_label)
+
+        # Floating macOS Island Toolbar (Top Center) & Floating Controls (Bottom Right)
+        self.top_toolbar = CanvasTopToolbar(self)
+        canvas_stack.add_overlay(self.top_toolbar)
+
+        self.bottom_controls = CanvasBottomRightControls(self)
+        canvas_stack.add_overlay(self.bottom_controls)
+
         self.paned.set_end_child(canvas_stack)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         root.append(Gtk.PopoverMenuBar.new_from_model(self._build_menu_model()))
@@ -373,13 +383,13 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         css_provider = Gtk.CssProvider()
         css = """
         window {
-            background-color: #161618;
-            color: #e0e0e0;
+            background-color: #f4f4f6;
+            color: #1d1d1f;
         }
         headerbar {
-            background-color: #1f1f22;
-            border-bottom: 1px solid #2d2d30;
-            color: #ffffff;
+            background-color: #e8e8ed;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+            color: #1d1d1f;
         }
         .maestri-loading {
             font-size: 18px;
@@ -388,27 +398,178 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
             padding: 12px 24px;
             border-radius: 10px;
         }
-        .sidebar-view {
-            background-color: #1a1a1c;
-            border-right: 1px solid #2d2d30;
+        .maestri-sidebar {
+            background-color: #f7f7f9;
+            border-right: 1px solid #e2e2e6;
         }
-        listview, listbox {
-            background-color: transparent;
-            color: #d0d0d0;
+        .maestri-search-entry {
+            border-radius: 8px;
+            background-color: #e5e5ea;
+            border: none;
+            padding: 6px 8px;
         }
-        listbox row:selected {
-            background-color: #2b3b55;
+        .maestri-sidebar-header {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            color: #8e8e93;
+            margin-top: 6px;
+        }
+        .maestri-workspace-card {
+            background-color: #ffffff;
+            border: 1px solid #e5e5ea;
+            border-radius: 10px;
+            padding: 8px 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+        .maestri-workspace-card:hover {
+            border-color: #007AFF;
+        }
+        .maestri-card-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #1c1c1e;
+        }
+        .maestri-card-path {
+            font-size: 11px;
+            color: #8e8e93;
+        }
+        .maestri-card-badge {
+            font-size: 11px;
+            color: #636366;
+            background-color: #f2f2f7;
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+        .maestri-floor-card, .maestri-agent-card {
+            background-color: #ffffff;
+            border: 1px solid #e5e5ea;
+            border-radius: 8px;
+            padding: 6px 10px;
+        }
+        .maestri-floor-name, .maestri-agent-name {
+            font-size: 12px;
+            color: #1c1c1e;
+        }
+        .maestri-agent-role {
+            font-size: 11px;
+            color: #8e8e93;
+        }
+        .maestri-floating-pill {
+            background-color: rgba(255, 255, 255, 0.96);
+            border: 1px solid rgba(0, 0, 0, 0.12);
+            border-radius: 14px;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+            padding: 4px 8px;
+        }
+        .maestri-island-btn {
+            background: transparent;
+            border: none;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 15px;
+            color: #333336;
+        }
+        .maestri-island-btn:hover {
+            background-color: rgba(0, 0, 0, 0.06);
+        }
+        .maestri-island-btn.active {
+            background-color: #007AFF;
             color: #ffffff;
         }
-        button {
-            background-color: #262629;
-            color: #e5e5e5;
-            border: 1px solid #38383c;
-            border-radius: 6px;
-            padding: 4px 10px;
+        .maestri-island-btn.danger:hover {
+            background-color: #ff3b30;
+            color: #ffffff;
         }
-        button:hover {
-            background-color: #323236;
+        .maestri-zoom-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #555558;
+            padding: 0 6px;
+        }
+        .maestri-modal-dialog {
+            background-color: #ffffff;
+            border-radius: 16px;
+        }
+        .maestri-dialog-title {
+            font-size: 17px;
+            font-weight: 700;
+            color: #111113;
+        }
+        .maestri-section-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            color: #88888c;
+        }
+        .maestri-preset-btn {
+            background-color: #f2f2f7;
+            border: 2px solid transparent;
+            border-radius: 12px;
+            padding: 6px;
+        }
+        .maestri-preset-btn:hover {
+            background-color: #e5e5ea;
+        }
+        .maestri-preset-btn.active {
+            background-color: #eef5ff;
+            border-color: #007AFF;
+        }
+        .maestri-preset-icon {
+            font-size: 22px;
+        }
+        .maestri-preset-name {
+            font-size: 11px;
+            font-weight: 600;
+            color: #333336;
+        }
+        .maestri-segmented-control {
+            background-color: #e5e5ea;
+            border-radius: 8px;
+            padding: 2px;
+        }
+        .maestri-segment-btn {
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            padding: 4px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #333336;
+        }
+        .maestri-segment-btn.active {
+            background-color: #ffffff;
+            color: #007AFF;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+        }
+        .maestri-form-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333336;
+        }
+        .maestri-form-entry {
+            border: 1px solid #d1d1d6;
+            border-radius: 8px;
+            padding: 6px 10px;
+            background-color: #ffffff;
+        }
+        .maestri-form-entry:focus {
+            border-color: #007AFF;
+        }
+        .maestri-btn-primary {
+            background-color: #007AFF;
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            padding: 6px 18px;
+            font-weight: 600;
+        }
+        .maestri-btn-secondary {
+            background-color: #e5e5ea;
+            color: #333336;
+            border: none;
+            border-radius: 8px;
+            padding: 6px 16px;
         }
         """
         css_provider.load_from_string(css)
@@ -422,44 +583,31 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         header = Gtk.HeaderBar()
         self.set_titlebar(header)
 
+        # Quick Add (+) MenuButton
+        btn_quick_add = Gtk.MenuButton(label="＋ ▾")
+        btn_quick_add.set_tooltip_text("Quick Create Node")
+        quick_menu = Gio.Menu()
+        quick_menu.append("New Terminal…", "win.new-terminal")
+        quick_menu.append("New Sticky Note", "win.new-note")
+        quick_menu.append("New Web Portal", "win.new-portal")
+        quick_menu.append("New File Tree", "win.new-file-tree")
+        btn_quick_add.set_menu_model(quick_menu)
+        header.pack_start(btn_quick_add)
+
         # Toggle Sidebar button
         btn_sidebar = Gtk.Button(label="☰")
         btn_sidebar.set_tooltip_text("Toggle Sidebar")
         btn_sidebar.connect("clicked", self._on_toggle_sidebar)
         header.pack_start(btn_sidebar)
-
-        # Add Terminal button
-        btn_term = Gtk.Button(label="➕ Terminal")
-        btn_term.set_tooltip_text("Create new Terminal node")
-        btn_term.connect("clicked", lambda b: self._create_node("terminal"))
-        header.pack_start(btn_term)
-
-        # Add Note button
-        btn_note = Gtk.Button(label="📝 Nota")
-        btn_note.set_tooltip_text("Create new Sticky Note")
-        btn_note.connect("clicked", lambda b: self._create_node("stickyNote"))
-        header.pack_start(btn_note)
-
-        # Add Portal button
-        btn_portal = Gtk.Button(label="🌐 Portal")
-        btn_portal.set_tooltip_text("Create Web Portal")
-        btn_portal.connect("clicked", lambda b: self._create_node("portal"))
-        header.pack_start(btn_portal)
-
-        # Add FileTree button
-        btn_files = Gtk.Button(label="📁 Arquivos")
-        btn_files.set_tooltip_text("Create File Explorer")
-        btn_files.connect("clicked", lambda b: self._create_node("fileTree"))
-        header.pack_start(btn_files)
         self._header = header
 
-        # Reset Zoom button (Right side)
-        btn_zoom = Gtk.Button(label="🔍 100%")
-        btn_zoom.set_tooltip_text("Reset Zoom to 100%")
-        btn_zoom.connect("clicked", lambda b: self.reset_zoom())
-        header.pack_end(btn_zoom)
+        # Right: Settings button
+        btn_settings = Gtk.Button(label="⚙️")
+        btn_settings.set_tooltip_text("Preferences")
+        btn_settings.connect("clicked", lambda _b: self.show_preferences())
+        header.pack_end(btn_settings)
 
-        # Backend Connection status indicator (resolved by the asynchronous initial load)
+        # Backend Connection status indicator
         self.lbl_status = Gtk.Label(label="⚪ Conectando...")
         self.lbl_status.set_margin_end(8)
         header.pack_end(self.lbl_status)
@@ -541,7 +689,7 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         """Menu actions + accelerators: Ctrl+N new terminal, Ctrl+S save, Ctrl+0 reset zoom, Ctrl+Q quit,
         Ctrl+, preferences, Ctrl+B sidebar. Application accels run before focused widgets, so they work inside terminals."""
         handlers = {
-            "new-terminal": lambda: self._create_node("terminal"),
+            "new-terminal": lambda: self.open_new_terminal_dialog(),
             "new-note": lambda: self._create_node("stickyNote"),
             "new-portal": lambda: self._create_node("portal"),
             "new-file-tree": lambda: self._create_node("fileTree"),
@@ -897,6 +1045,31 @@ class OpenMaestriWindow(Gtk.ApplicationWindow):
         h = cw.get_height() or 800
         cw.viewport.set_zoom_at(Point(w / 2.0, h / 2.0), 1.0)
         cw.controller.dirty = True
+
+    def open_new_terminal_dialog(self, at: Point | None = None) -> None:
+        """Opens the macOS-matching 'New Terminal' modal dialog with Quick Start presets."""
+        def on_create(data: dict):
+            import uuid
+            cwd = data.get("cwd") or os.path.expanduser("~")
+            name = data.get("name") or "Terminal"
+            cmd = data.get("command") or "bash"
+            spawn_at = at or Point(
+                self.canvas_widget.viewport.origin.x + (self.canvas_widget.get_width() or 1000) / 2 / self.canvas_widget.viewport.zoom - 210,
+                self.canvas_widget.viewport.origin.y + (self.canvas_widget.get_height() or 700) / 2 / self.canvas_widget.viewport.zoom - 150,
+            )
+            node_id = str(uuid.uuid4()).upper()
+            frame = NodeFrame(x=spawn_at.x, y=spawn_at.y, width=420, height=300)
+            content = TerminalContent(name=name, command=cmd)
+            node = CanvasNode(id=node_id, frame=frame, node_type="terminal", content=content, z_index=len(self.document.payload.nodes) + 1)
+            self.document.payload.nodes.append(node)
+            self._add_node_to_canvas(node, cwd=cwd)
+            self.canvas_widget.controller.dirty = True
+            bus.emit("node-added", node_id)
+            if self.sync is not None:
+                self.sync.flush()
+
+        dlg = NewTerminalDialog(self, on_create=on_create, default_cwd=self.document.payload.working_directory)
+        dlg.present()
 
     def _create_node(self, node_type: str, at: Point = None, size: tuple = None, content=None):
         """Add a node of a valid kind (terminal | stickyNote | portal | fileTree).

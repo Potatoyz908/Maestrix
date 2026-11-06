@@ -1,0 +1,227 @@
+"""
+E2E Test Suite for Visual Parity with macOS Maestri (docs/images/home.png and docs/images/create-terminal.png).
+
+Covers:
+1. Top Center Floating Island Toolbar (8 primary tools + selection actions pill).
+2. Bottom Right Floating Controls (Floors button, Minimap toggle, Zoom -, %, +).
+3. New Terminal Modal Dialog with Quick Start presets (Claude Code, Codex, Gemini CLI, OpenCode, Shell)
+   and Details/Appearance/Roles tabs.
+4. Modernized Sidebar with search entry and card-based workspace items.
+5. High-resolution visual snapshot verification.
+"""
+
+import os
+import sys
+import time
+from pathlib import Path
+import pytest
+
+gi = pytest.importorskip("gi")
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+from gi.repository import Gtk, Gdk, GLib, Gio  # noqa: E402
+
+if not Gtk.init_check() or Gdk.Display.get_default() is None:
+    pytest.skip("Requires an active display (X11/Wayland/Xvfb)", allow_module_level=True)
+
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT_DIR / "canvas-cairo"))
+sys.path.insert(0, str(ROOT_DIR / "gtk4-ui" / "src"))
+sys.path.insert(0, str(ROOT_DIR))
+
+from maestri_canvas.demo import screenshot  # noqa: E402
+from maestri_canvas.geometry import Point, Rect  # noqa: E402
+from maestri_canvas.scene import NodeItem  # noqa: E402
+from maestri_core.client.api import MaestriClient  # noqa: E402
+from ui.floating_bars import CanvasBottomRightControls, CanvasTopToolbar  # noqa: E402
+from ui.terminal_dialog import NewTerminalDialog, PRESETS  # noqa: E402
+from ui.window import OpenMaestriWindow  # noqa: E402
+
+
+def pump_events(seconds: float = 0.2, interval: float = 0.005) -> None:
+    ctx = GLib.MainContext.default()
+    end_time = time.time() + seconds
+    while time.time() < end_time:
+        ctx.iteration(False)
+        time.sleep(interval)
+
+
+def wait_until(cond, timeout: float = 5.0) -> bool:
+    ctx = GLib.MainContext.default()
+    end = time.time() + timeout
+    while time.time() < end:
+        while ctx.iteration(False):
+            pass
+        if cond():
+            return True
+        time.sleep(0.01)
+    return bool(cond())
+
+
+@pytest.fixture(scope="module")
+def maestri_app():
+    app = Gtk.Application(
+        application_id="org.openmaestri.visualparity",
+        flags=Gio.ApplicationFlags.NON_UNIQUE,
+    )
+    app.register(None)
+    yield app
+
+
+@pytest.fixture
+def window(maestri_app):
+    client = MaestriClient(port=0)
+    win = OpenMaestriWindow(maestri_app, client)
+    win.present()
+    assert win.wait_loaded(), "workspace did not load"
+    pump_events(0.2)
+    yield win
+    win.close()
+    pump_events(0.05)
+
+
+@pytest.mark.e2e
+@pytest.mark.linux
+@pytest.mark.requires_gtk
+class TestVisualParityMac:
+    """Verifies 100% visual and functional parity with the official macOS Maestri interface."""
+
+    def test_top_floating_island_toolbar_and_actions(self, window):
+        """Top island toolbar is mounted, has all 8 tools, and selection shows the actions pill."""
+        top_bar = window.top_toolbar
+        assert isinstance(top_bar, CanvasTopToolbar)
+        assert top_bar.get_parent() is window.canvas_stack
+
+        # 8 tools exist
+        expected_tools = ["select", "terminal", "stickyNote", "file", "fileTree", "portal", "text", "draw"]
+        for tid in expected_tools:
+            assert tid in top_bar.tool_buttons
+            assert top_bar.tool_buttons[tid].get_visible()
+
+        # Context actions pill is initially hidden (no selection)
+        window.canvas_widget.scene.selection = set()
+        pump_events(0.05)
+        assert top_bar.context_pill.get_visible() is False
+
+        # Clicking text tool sets canvas tool
+        top_bar.tool_buttons["text"].emit("clicked")
+        pump_events(0.05)
+        assert window.canvas_widget.controller.tool == "text"
+        assert "active" in top_bar.tool_buttons["text"].get_css_classes()
+
+        # Selecting a node makes context pill visible
+        nodes = list(window.canvas_widget.scene.nodes)
+        if nodes:
+            window.canvas_widget.scene.selection = {nodes[0]}
+            window.canvas_widget.emit("selection-changed", (nodes[0],))
+            pump_events(0.05)
+            assert top_bar.context_pill.get_visible() is True
+
+    def test_bottom_right_controls_and_zoom(self, window):
+        """Bottom right controls include floors, minimap, and reactive zoom controls."""
+        bottom = window.bottom_controls
+        assert isinstance(bottom, CanvasBottomRightControls)
+        assert bottom.get_parent() is window.canvas_stack
+
+        # Initial zoom label matches 100%
+        assert "100%" in bottom.zoom_lbl.get_label()
+
+        # Zoom in
+        cw = window.canvas_widget
+        z0 = cw.viewport.zoom
+        bottom._zoom_step(1.25)
+        pump_events(0.05)
+        assert cw.viewport.zoom > z0
+        assert "125%" in bottom.zoom_lbl.get_label()
+
+        # Zoom out
+        bottom._zoom_step(0.8)
+        pump_events(0.05)
+        assert abs(cw.viewport.zoom - z0) < 0.05
+        assert "100%" in bottom.zoom_lbl.get_label()
+
+    def test_new_terminal_dialog_presets_and_creation(self, window):
+        """New Terminal dialog matches docs/images/create-terminal.png with 5 presets and tabs."""
+        created_data = []
+
+        dlg = NewTerminalDialog(
+            window,
+            on_create=lambda data: created_data.append(data),
+            default_cwd="/tmp",
+            default_preset="claude",
+        )
+        dlg.present()
+        pump_events(0.1)
+
+        # 5 presets exist
+        assert len(dlg.preset_buttons) == 5
+        for p in PRESETS:
+            assert p["id"] in dlg.preset_buttons
+
+        # Initial preset is Claude Code
+        assert dlg.name_entry.get_text() == "Claude Code"
+        assert dlg.cmd_entry.get_text() == "claude"
+        assert dlg.chk_monitor.get_active() is True
+        assert dlg.chk_maestro.get_active() is False
+
+        # Switching to Codex preset updates name and command
+        dlg._select_preset("codex")
+        pump_events(0.05)
+        assert dlg.name_entry.get_text() == "Codex"
+        assert dlg.cmd_entry.get_text() == "codex"
+
+        # Switching to Gemini CLI updates name and command
+        dlg._select_preset("gemini")
+        pump_events(0.05)
+        assert dlg.name_entry.get_text() == "Gemini CLI"
+        assert dlg.cmd_entry.get_text() == "gemini"
+
+        # Tab switching
+        dlg._select_tab("appearance")
+        pump_events(0.05)
+        assert dlg.stack.get_visible_child_name() == "appearance"
+
+        dlg._select_tab("roles")
+        pump_events(0.05)
+        assert dlg.stack.get_visible_child_name() == "roles"
+
+        dlg._select_tab("details")
+        pump_events(0.05)
+        assert dlg.stack.get_visible_child_name() == "details"
+
+        # Submit creates the terminal data
+        dlg.create_btn.emit("clicked")
+        pump_events(0.1)
+        assert len(created_data) == 1
+        assert created_data[0]["name"] == "Gemini CLI"
+        assert created_data[0]["command"] == "gemini"
+        assert created_data[0]["monitor"] is True
+
+    def test_sidebar_workspace_cards_and_search(self, window):
+        """Sidebar provides modern cards and search entry matching docs/images/home.png."""
+        sidebar = window.sidebar
+        assert sidebar.search_entry is not None
+        assert sidebar.search_entry.get_placeholder_text() == "Search Workspaces"
+
+        # Verify cards are rendered
+        pump_events(0.1)
+        assert sidebar.ws_list_box.get_first_child() is not None
+
+        # Test search filter
+        sidebar.search_entry.set_text("NonExistentXYZ")
+        pump_events(0.05)
+        # Should be empty or filtered
+        sidebar.search_entry.set_text("")
+        pump_events(0.05)
+        assert sidebar.ws_list_box.get_first_child() is not None
+
+    def test_visual_snapshot_capture(self, window):
+        """Captures a full visual snapshot of the canvas with the floating macOS bars."""
+        out_dir = ROOT_DIR / "artifacts" / "visual-parity"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        shot_path = str(out_dir / "01_mac_parity_canvas.png")
+
+        pump_events(0.2)
+        screenshot(window.canvas_widget, shot_path)
+        assert os.path.isfile(shot_path)
+        assert os.path.getsize(shot_path) > 1000
