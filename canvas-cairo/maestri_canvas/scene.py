@@ -195,6 +195,38 @@ class Scene:
     def connections_of(self, node_ids: set[str]) -> list[ConnItem]:
         return [c for c in self.connections.values() if c.a in node_ids or c.b in node_ids]
 
+    def hit_connection(self, p: Point, tol: float = 8.0, points_for=None) -> ConnItem | None:
+        """K9: the connection whose rope passes within `tol` (canvas units) of `p`, topmost (latest) first. The rope is the live
+        simulation polyline when `points_for(conn_id)` gives one, else the resting catenary between its anchors."""
+        best: tuple[float, ConnItem] | None = None
+        for c in reversed(list(self.connections.values())):
+            pts = points_for(c.id) if points_for is not None else None
+            if not pts:
+                a = self.anchors(c)
+                if a is None:
+                    continue
+                pts = static_catenary(*a)
+            d = _polyline_distance(p, pts)
+            if d <= tol and (best is None or d < best[0]):
+                best = (d, c)
+        return best[1] if best else None
+
     # ---- selection --------------------------------------------------------------------------
     def selected_nodes(self) -> list[NodeItem]:
         return [n for n in self.ascending() if n.id in self.selection]
+
+    def select_only(self, node_id: str) -> None:
+        self.selection = {norm(node_id)}
+
+
+def _segment_distance(p: Point, a: Point, b: Point) -> float:
+    dx, dy = b.x - a.x, b.y - a.y
+    l2 = dx * dx + dy * dy
+    t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2))
+    return math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+
+
+def _polyline_distance(p: Point, pts: list[Point]) -> float:
+    if len(pts) == 1:
+        return math.hypot(p.x - pts[0].x, p.y - pts[0].y)
+    return min(_segment_distance(p, pts[i], pts[i + 1]) for i in range(len(pts) - 1))

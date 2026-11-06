@@ -18,7 +18,7 @@ from .drawn import DRAWN_KINDS, FREEHAND_PADDING, FREEHAND_TOOLS, SHAPE_TOOLS, T
 from .geometry import Point, Rect, round_half_away
 from .resize import Edge, resize_frame
 from .rope import RopeSimulation
-from .scene import ConnItem, PinSide, Scene, WIDGET_KINDS, norm, pin_point
+from .scene import CONNECTABLE_KINDS, ConnItem, PinSide, Scene, WIDGET_KINDS, norm, pin_point
 from .alignment_guides import align, align_resize, candidates
 from .snapping import GuideLine, snap
 from .viewport import Viewport
@@ -49,7 +49,10 @@ class NodeEdge: id: str; edge: Edge  # resize handle
 class NodePin: id: str; side: PinSide
 @dataclass(frozen=True, slots=True)
 class NodeContent: id: str           # terminal/note/... body: the child widget handles the pointer
-Target = Union[Background, NodeHeader, NodeEdge, NodePin, NodeContent]
+@dataclass(frozen=True, slots=True)
+class ConnectionTarget(Background):   # K9: empty canvas over a rope (a Background, so every background rule still applies)
+    conn_id: str = ""
+Target = Union[Background, ConnectionTarget, NodeHeader, NodeEdge, NodePin, NodeContent]
 
 
 # ---- events emitted to the application -----------------------------------------------------------
@@ -73,8 +76,16 @@ class DrawRequested: kind: str; frame: Rect   # kind = the tool: a widget kind, 
 class FreehandDrawn: tool: str; frame: Rect; points: tuple[tuple[float, float], ...]   # points normalised 0..1 in frame
 @dataclass(frozen=True, slots=True)
 class ToolChanged: tool: str
+@dataclass(frozen=True, slots=True)
+class CopyRequested: ids: tuple[str, ...]      # Ctrl+C on the canvas (K9/K10: the window copies the elements)
+@dataclass(frozen=True, slots=True)
+class PasteRequested: at: Point | None         # Ctrl+V on the canvas; `at` = pointer in canvas units when known
+@dataclass(frozen=True, slots=True)
+class JumpToTerminal: number: int              # Ctrl+1..9
+@dataclass(frozen=True, slots=True)
+class NodeZChanged: id: str; z: int            # a node was raised to the front (persisted as zIndex)
 Event = Union[NodesMoved, NodeResized, SelectionChanged, ViewportChanged, ConnectRequested, DeleteRequested, DuplicateRequested, DrawRequested,
-              FreehandDrawn, ToolChanged]
+              FreehandDrawn, ToolChanged, CopyRequested, PasteRequested, JumpToTerminal, NodeZChanged]
 
 
 # ---- gesture states (CanvasInteraction) -----------------------------------------------------------
@@ -88,7 +99,7 @@ class _Resizing: id: str; edge: Edge; start_frame: Rect; start: Point; min_size:
 @dataclass(slots=True)
 class _Marquee: start: Point; base: frozenset[str]; moved: bool = False
 @dataclass(slots=True)
-class _Connecting: src: str; side: PinSide
+class _Connecting: src: str; side: PinSide; tracking: bool = False   # tracking = connect mode: the rope follows the pointer
 @dataclass(slots=True)
 class _Drawing:
     kind: str
@@ -117,6 +128,7 @@ class CanvasController:
         self.scene, self.vp = scene, viewport
         self.ropes = ropes if ropes is not None else RopeSimulation()
         self.overlay = Overlay()
+        self.pointer_canvas: Point | None = None   # last pointer position in canvas units (Ctrl+V pastes there)
         self.tool = "select"
         self.cursor: str | None = None
         self.size = (1.0, 1.0)            # widget size in px, set by the widget (for focus_on / zoom-at-center)
@@ -150,6 +162,42 @@ class CanvasController:
             if a:
                 self.ropes.update_anchors(c.id, *a)
 
+    # ---- K9: connect mode ("L" / toolbar Connection) ------------------------------------------
+    def begin_connect_mode(self, node_id: str | None = None) -> bool:
+        """Start a rope at `node_id` (default: the single selected node) that follows the pointer; clicking a second node
+        emits ConnectRequested (the same event as dragging from a pin), Esc / a click elsewhere cancels."""
+        src_id = node_id or (next(iter(self.scene.selection)) if len(self.scene.selection) == 1 else None)
+        src = self.scene.get(src_id) if src_id else None
+        if src is None or src.kind not in CONNECTABLE_KINDS:
+            return False
+        start = pin_point(src.frame, "right")
+        self._state = _Connecting(src.id, "right", tracking=True)
+        self.overlay.connecting = (start, start, None)
+        self.cursor = "crosshair"
+        self.dirty = True
+        return True
+
+    @property
+    def connect_mode(self) -> bool:
+        st = self._state
+        return isinstance(st, _Connecting) and st.tracking
+
+    def hover(self, pt: Point) -> None:
+        """Pointer motion with no button held: remembers the pointer (paste target); in connect mode the rope follows it."""
+        self.pointer_canvas = self.vp.to_canvas(pt)
+        st = self._state
+        if not (isinstance(st, _Connecting) and st.tracking):
+            return
+        src = self.scene.get(st.src)
+        if src is None:
+            self.cancel()
+            return
+        canvas = self.vp.to_canvas(pt)
+        hit = self.scene.hit_connect_target(canvas, self.vp.zoom, st.src)
+        target = (hit[0].id, hit[1]) if hit and self.scene.can_connect(st.src, hit[0].id) else None
+        self.overlay.connecting = (pin_point(src.frame, st.side), canvas, target)
+        self.dirty = True
+
     def set_tool(self, tool: str) -> None:
         if tool != self.tool:
             self.tool = tool
@@ -160,6 +208,16 @@ class CanvasController:
         """Returns True when the engine claims the gesture (the widget then denies it to children)."""
         self.dirty = True
         canvas = self.vp.to_canvas(pt)
+        st = self._state
+        if isinstance(st, _Connecting) and st.tracking:
+            # connect mode: a click on a valid node finishes the connection, anywhere else cancels it
+            hit = self.scene.hit_connect_target(canvas, self.vp.zoom, st.src) if button == 1 else None
+            if hit and self.scene.can_connect(st.src, hit[0].id):
+                self._emit(ConnectRequested(st.src, st.side, hit[0].id, hit[1]))
+            self._state = None
+            self._clear_overlay()
+            self.cursor = None
+            return True
         if isinstance(target, NodeContent):
             self._select_on_press(target.id, mods)
             return False  # the child widget (terminal, text view, ...) keeps the pointer
@@ -221,6 +279,9 @@ class CanvasController:
         self._set_selection(sel)
         if self.scene.raise_to_front(k):
             self.dirty = True
+            node = self.scene.get(k)
+            if node is not None:
+                self._emit(NodeZChanged(k, node.z))
 
     def move(self, pt: Point, mods: Mods) -> None:
         st = self._state
@@ -420,9 +481,15 @@ class CanvasController:
             # Ctrl+W deletes only from the canvas: inside a terminal it is readline's word-rubout, and a stray delete would destroy a
             # node (and kill its shell) mid-typing. From inside a node use Ctrl+Shift+W (the usual terminal "close" chord).
             if name == "w" and self.scene.selection and (canvas_focused or mods & Mods.SHIFT):
-                self._emit(DeleteRequested(tuple(sorted(self.scene.selection)))); return True
+                return self._delete_selection()
             if name == "a" and canvas_focused:
                 self._set_selection(set(self.scene.nodes)); return True
+            if name == "c" and canvas_focused and self.scene.selection and not mods & Mods.SHIFT:
+                self._emit(CopyRequested(tuple(sorted(self.scene.selection)))); return True
+            if name == "v" and canvas_focused and not mods & Mods.SHIFT:
+                self._emit(PasteRequested(self.pointer_canvas)); return True
+            if len(name) == 1 and name in "123456789":
+                self._emit(JumpToTerminal(int(name))); return True
             return False
         if not canvas_focused:
             return False
@@ -432,7 +499,9 @@ class CanvasController:
             self.space_held = True
             return True
         if name in ("delete", "backspace") and self.scene.selection:
-            self._emit(DeleteRequested(tuple(sorted(self.scene.selection)))); return True
+            return self._delete_selection()
+        if name == "l" and len(self.scene.selection) == 1:
+            return self.begin_connect_mode()
         if name == "backslash" and self.scene.selection:
             sel = self.scene.selected_nodes()
             r = sel[0].frame
@@ -459,6 +528,13 @@ class CanvasController:
                 self._emit(NodesMoved(frames, True))
             return True
         return False
+
+    def _delete_selection(self) -> bool:
+        """Delete keys: locked nodes are kept (macOS disables Delete on a locked node)."""
+        ids = tuple(sorted(i for i in self.scene.selection if not getattr(self.scene.get(i), "locked", False)))
+        if ids:
+            self._emit(DeleteRequested(ids))
+        return True
 
     # ---- connections confirmed by the core ------------------------------------------------------
     def add_connection(self, c: ConnItem) -> None:

@@ -39,9 +39,10 @@ from .portal_model import PortalMeta
 from .note_storage import CoreNotesClient, CoreNoteStorage, LocalNoteStorage, MemoryNoteStorage
 from .sticky_note import StickyNoteView
 from .terminal_features import TerminalFeatures
-from .interaction import (WHEEL_NOTCH_PX, Background, CanvasController, ConnectRequested, DeleteRequested, DrawRequested,
-                          DuplicateRequested, Event, FreehandDrawn, Mods, NodeContent, NodeEdge, NodeHeader, NodePin, NodeResized, NodesMoved,
-                          SelectionChanged, Target, ToolChanged, ViewportChanged)
+from .interaction import (WHEEL_NOTCH_PX, Background, CanvasController, ConnectionTarget, ConnectRequested, CopyRequested, DeleteRequested,
+                          DrawRequested, DuplicateRequested, Event, FreehandDrawn, JumpToTerminal, Mods, NodeContent, NodeEdge, NodeHeader,
+                          NodePin, NodeResized, NodesMoved, NodeZChanged, PasteRequested, SelectionChanged, Target, ToolChanged,
+                          ViewportChanged)
 from .renderer import CairoRenderer
 from .resize import Edge
 from .scene import WIDGET_KINDS, ConnItem, NodeItem, Scene, norm
@@ -478,6 +479,11 @@ class CanvasWidget(Gtk.Overlay):
         "viewport-changed": (GObject.SignalFlags.RUN_FIRST, None, (float, float, float)),
         "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
         "terminal-activity": (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),                         # id, busy (False = idle)
+        "copy-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),                              # K9/K10 Ctrl+C: tuple[str]
+        "paste-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),                             # K9/K10 Ctrl+V: Point | None
+        "node-lock-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),                         # K9: id, locked
+        "node-z-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                             # K9: id, zIndex
+        "connection-rope-settled": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                 # id, [[x, y], ...] (21 pts)
         "file-activated": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                             # fileTree id, path
         "file-tree-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),                       # fileTree id, {rootPath, viewMode}
         "ask-requested": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),                              # fileTree id, question + quoted diff
@@ -548,8 +554,14 @@ class CanvasWidget(Gtk.Overlay):
         keys = Gtk.EventControllerKey()
         keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._key_pressed)
-        keys.connect("key-released", lambda _c, kv, *_: self.controller.key_release((Gdk.keyval_name(kv) or "").lower()))
+        keys.connect("key-released", self._key_released)
         self.add_controller(keys)
+        self._numbers_shown = False
+        # Rope points are persisted when the simulation falls asleep (ConnectionOverlay -> ropePoints, audit 3.2).
+        self.connections_client = None   # set by the window: any object with update_connection(id, points, workspace_id=)
+        self.connections_workspace_id: str | None = None
+        self._settled_points: dict[str, list] = {}
+        self.controller.ropes.on_sleep = self._ropes_slept
 
         self._install_file_drop()
         self.add_tick_callback(self._tick)
@@ -884,6 +896,20 @@ class CanvasWidget(Gtk.Overlay):
             self.emit("tool-changed", e.tool)
         elif isinstance(e, ViewportChanged):
             self.emit("viewport-changed", e.x, e.y, e.zoom)
+        elif isinstance(e, NodeZChanged):
+            self.emit("node-z-changed", e.id, e.z)
+        elif isinstance(e, JumpToTerminal):
+            self.jump_to_terminal(e.number)
+        elif isinstance(e, CopyRequested):
+            self.emit("copy-requested", e.ids)
+            fn = getattr(self.get_root(), "copy_selected_nodes", None)   # K10 (window)
+            if callable(fn):
+                fn()
+        elif isinstance(e, PasteRequested):
+            self.emit("paste-requested", e.at)
+            fn = getattr(self.get_root(), "paste_nodes", None)
+            if callable(fn):
+                fn(at=e.at)
 
     def _sync_selection_css(self) -> None:
         for i, f in self.frames.items():
@@ -955,7 +981,12 @@ class CanvasWidget(Gtk.Overlay):
             if isinstance(w, NodeFrame):
                 return NodeContent(w.node_id)   # padding/border of a frame that is not tagged: leave it to GTK
             w = w.get_parent()
-        return self._drawn_target(x, y) or Background()
+        drawn = self._drawn_target(x, y)
+        if drawn is not None:
+            return drawn
+        conn = self.scene.hit_connection(self.viewport.to_canvas(Point(x, y)), tol=8.0 / self.viewport.zoom,
+                                         points_for=self.controller.ropes.points)
+        return ConnectionTarget(conn.id) if conn is not None else Background()
 
     def _note_name_taken(self, node_id: str, name: str) -> bool:
         return any(isinstance(f.content, StickyNoteView) and f.node_id != node_id and f.content.meta.name.lower() == name.lower()
@@ -1007,6 +1038,10 @@ class CanvasWidget(Gtk.Overlay):
 
     def _motion(self, _c: Gtk.EventControllerMotion, x: float, y: float) -> None:
         self._pointer = Point(x, y)
+        self.controller.hover(self._pointer)
+        if self.controller.connect_mode:
+            self.set_cursor_from_name("crosshair")
+            return
         if not self.controller.busy:
             t = self.target_at(x, y)
             self.set_cursor_from_name({NodeHeader: "grab", NodePin: "crosshair"}.get(type(t)) or (t.edge.cursor if isinstance(t, NodeEdge) else
@@ -1047,15 +1082,106 @@ class CanvasWidget(Gtk.Overlay):
             f = f.get_parent()
         return False
 
-    _TERMINAL_PASSTHROUGH = frozenset({"equal", "plus", "minus", "underscore", "0"})   # Ctrl+=/-/0 still zoom the canvas
+    # Ctrl+=/-/0 still zoom the canvas and Ctrl+1..9 jump between terminals, even from inside a shell (macOS: Cmd+number)
+    _TERMINAL_PASSTHROUGH = frozenset({"equal", "plus", "minus", "underscore", "0", *"123456789"})
 
     def _key_pressed(self, _c: Gtk.EventControllerKey, keyval: int, _code: int, state: Gdk.ModifierType) -> bool:
         name = (Gdk.keyval_name(keyval) or "").lower()
         mods = self._mods(state)
+        if name in ("control_l", "control_r"):
+            self.show_number_badges(True)   # macOS: holding Cmd shows each terminal's number
+            return False
         # A focused shell owns the keyboard (Ctrl+W = delete word, Ctrl+A = line start...): only canvas zoom chords are taken.
         if self._focus_in_terminal() and not (mods & Mods.CTRL and name in self._TERMINAL_PASSTHROUGH):
             return False
         return self.controller.key(name, mods, canvas_focused=not self._focus_in_node())
+
+    def _key_released(self, _c, keyval: int, _code: int, _state) -> None:
+        name = (Gdk.keyval_name(keyval) or "").lower()
+        if name in ("control_l", "control_r"):
+            self.show_number_badges(False)
+        self.controller.key_release(name)
+
+    # ---- K9: connect mode, terminal numbers, lock, rope persistence -----------------------------------------------
+    def begin_connect_mode(self, node_id: str | None = None) -> bool:
+        """Toolbar "Connection" / key L: a rope from `node_id` (default: the selected node) follows the pointer until a second node
+        is clicked (-> "connect-requested") or Esc."""
+        ok = self.controller.begin_connect_mode(norm(node_id) if node_id else None)
+        if ok:
+            self.grab_focus()   # Esc must reach the canvas
+            self.set_cursor_from_name("crosshair")
+        return ok
+
+    def terminal_order(self) -> list[str]:
+        """Terminal node ids in creation order (the order of the Ctrl+number shortcuts)."""
+        return [nid for nid, n in self.scene.nodes.items() if n.kind == "terminal" and nid in self.frames]
+
+    def show_number_badges(self, on: bool) -> None:
+        if on == self._numbers_shown:
+            return
+        self._numbers_shown = on
+        for i, nid in enumerate(self.terminal_order()):
+            self.frames[nid].set_number_badge(i + 1 if on and i < 9 else None)
+
+    def jump_to_terminal(self, n: int) -> bool:
+        """Ctrl+n: select the n-th terminal (1-9), bring it into view if needed and give it the keyboard."""
+        order = self.terminal_order()
+        if not 1 <= n <= min(9, len(order)):
+            return False
+        nid = order[n - 1]
+        node = self.scene.nodes[nid]
+        self.controller._set_selection({nid})
+        if self.scene.raise_to_front(nid):
+            self.emit("node-z-changed", nid, node.z)
+        w, h = max(1, self.get_width()), max(1, self.get_height())
+        view = self.viewport.visible_rect(w, h, margin=0)
+        f = node.frame
+        if not (view.contains(Point(f.x, f.y)) and view.contains(Point(f.max_x, f.max_y))):
+            c = node.frame.center
+            self.viewport.origin = Point(c.x - w / (2 * self.viewport.zoom), c.y - h / (2 * self.viewport.zoom))
+            self.controller._viewport_changed()
+        self.controller.dirty = True
+        term = terminal_of(self.frames[nid].content)
+        (term or self.frames[nid].content).grab_focus()
+        return True
+
+    def set_node_locked(self, node_id: str, locked: bool) -> None:
+        """Lock / Unlock (menu): a locked node can't be moved, resized or deleted; "node-lock-changed" lets the window persist it."""
+        node = self.scene.get(node_id)
+        if node is None or node.locked == locked:
+            return
+        node.locked = locked
+        frame = self.frames.get(node.id)
+        if frame is not None:
+            frame.set_badge("lock", "" if locked else None, tooltip="Locked", icon="maestri-lock-symbolic" if locked else None)
+        self.emit("node-lock-changed", node.id, locked)
+
+    def _ropes_slept(self, ropes: dict) -> None:
+        """Rope simulation at rest: report connections whose points changed, and PUT them when a client is attached."""
+        changed = {}
+        for cid, pts in ropes.items():
+            if cid.startswith("local-") or cid not in self.scene.connections:
+                continue   # optimistic ropes have no server id yet
+            flat = [[round(p.x, 2), round(p.y, 2)] for p in pts]
+            if self._settled_points.get(cid) != flat:
+                self._settled_points[cid] = flat
+                changed[cid] = flat
+        for cid, flat in changed.items():
+            self.emit("connection-rope-settled", cid, flat)
+        client = self.connections_client
+        if client is None or not changed:
+            return
+        ws = self.connections_workspace_id
+
+        def push() -> None:
+            for cid, flat in changed.items():
+                try:
+                    client.update_connection(cid, flat, workspace_id=ws)
+                except Exception:   # offline / unknown id: the next sleep retries with fresh points
+                    self._settled_points.pop(cid, None)
+
+        import threading
+        threading.Thread(target=push, daemon=True).start()
 
     def _install_css(self) -> None:
         display = Gdk.Display.get_default()
