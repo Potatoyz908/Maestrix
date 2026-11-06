@@ -625,7 +625,7 @@ class NodeContextMenu(_StackMenu):
 
     def _delete(self) -> None:
         if not self.locked:
-            self.cw.emit("delete-requested", (self.node_id,))
+            self.cw.request_delete((self.node_id,))
 
     def _save_defaults(self, kind: str, what: Optional[str]) -> None:
         save_new_element_defaults(self.window, kind, self.node, what)

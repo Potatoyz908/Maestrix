@@ -187,7 +187,7 @@ class CanvasTopToolbar(Gtk.Box):
     def _on_delete_clicked(self, _btn) -> None:
         sel = tuple(self.cw.scene.selection)
         if sel:
-            self.cw.emit("delete-requested", sel)
+            self.cw.request_delete(sel)
 
     def _choose_and_attach_file(self) -> None:
         dialog = Gtk.FileChooserNative.new(
