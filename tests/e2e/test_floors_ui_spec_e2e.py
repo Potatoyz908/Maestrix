@@ -250,7 +250,7 @@ class TestFloorsUI:
         assert pump_until(lambda: dlg.preview_data is not None)
         assert ("preview", "floor/fix-login") in core.calls, "default target = the floor's own branch"
         assert dlg.selected_target == "floor/fix-login" and not dlg.merge_btn.get_sensitive()
-        assert "própria branch do floor" in dlg.summary.get_label()
+        assert "floor's own branch" in dlg.summary.get_label()
 
         def pick(branch):
             dlg.target.set_selected(dlg._branches.index(branch))
@@ -259,24 +259,24 @@ class TestFloorsUI:
         # 1. Merge conflicts -> Merge disabled, red conflict file list shown
         pick("release")
         assert not dlg.merge_btn.get_sensitive()
-        assert dlg.reason.get_label() == "Resolva os conflitos no terminal/IDE"
+        assert dlg.reason.get_label() == "Resolve conflicts in terminal/IDE"
         assert dlg.conflicts.get_visible()
-        assert "✗ src/app.py" in dlg.conflicts.get_label() and "✗ src/auth.py" in dlg.conflicts.get_label()
+        assert "src/app.py" in dlg.conflicts.get_label() and "src/auth.py" in dlg.conflicts.get_label()
         save_dual_screenshot(dlg, "floor_04_land_dialog_conflicts.png", "10b_land_floor_conflicts.png")
 
         # 2. Uncommitted dirty changes -> Merge disabled with commit warning
         pick("dirty")
         assert not dlg.merge_btn.get_sensitive()
-        assert dlg.reason.get_label() == "Faça commit antes de pousar: src/login.py"
+        assert dlg.reason.get_label() == "Commit changes before landing: src/login.py"
 
         # 3. Target checked out in Ground -> Merge disabled with checkout warning
         pick("main")
-        assert not dlg.merge_btn.get_sensitive() and "checkout de outra branch" in dlg.reason.get_label()
+        assert not dlg.merge_btn.get_sensitive() and "check out another branch" in dlg.reason.get_label()
 
         # 4. Clean non-fast-forward merge commit -> Merge enabled
         pick("merge-commit")
         assert dlg.merge_btn.get_sensitive() and not dlg.reason.get_visible()
-        assert "2 commits → merge-commit (commit de merge)" in dlg.summary.get_label()
+        assert "2 commits → merge-commit (merge commit)" in dlg.summary.get_label()
         assert "+10 −2" in dlg.summary.get_label()
 
         # 5. Clean fast-forward merge -> Merge enabled, error recovery (L2), then successful land
@@ -293,7 +293,7 @@ class TestFloorsUI:
 
         dlg.submit()
         assert pump_until(lambda: ("land", FLOOR_ID, "dev") in core.calls)
-        assert pump_until(lambda: w.floor_button.status.get_label() == "Floor pousado em dev")
+        assert pump_until(lambda: w.floor_button.status.get_label() == "Floor landed onto dev")
 
     def test_delete_dialog_three_buttons_keep_vs_delete_branch_and_back_to_ground(self, win):
         w, core = win
@@ -309,12 +309,12 @@ class TestFloorsUI:
         # 1. Verify 3-button contract, warning detail (L3), and Cancel (0)
         dlg1 = w.floor_button.open_delete(floor1)
         assert isinstance(dlg1, DeleteFloorDialog)
-        assert list(dlg1.alert.get_buttons()) == ["Cancelar", "Manter branch", "Apagar branch"]
+        assert list(dlg1.alert.get_buttons()) == ["Cancel", "Keep branch", "Delete branch"]
         assert dlg1.alert.get_cancel_button() == DeleteFloorDialog.CANCEL
         assert dlg1.alert.get_default_button() == DeleteFloorDialog.KEEP_BRANCH
         detail = dlg1.alert.get_detail() or ""
         assert floor1["worktreePath"] in detail and floor1["branchName"] in detail
-        assert "Manter branch" in detail
+        assert "Keep branch" in detail
 
         dlg1.choose(DeleteFloorDialog.CANCEL)
         pump_until(lambda: False, 0.1)
@@ -325,7 +325,7 @@ class TestFloorsUI:
         dlg1.choose(DeleteFloorDialog.KEEP_BRANCH)
         assert pump_until(lambda: len(w.floors.floors) == 1)
         assert ("delete", floor1["id"], False) in core.calls
-        assert w.floor_button.status.get_label() == f"Floor “{floor1['name']}” apagado"
+        assert w.floor_button.status.get_label() == f"Floor “{floor1['name']}” deleted"
         assert [f["id"] for f in w.document.payload.floors] == [floor2["id"]]
 
         # 3. Delete Branch (2 -> delete_branch=True) on active floor: deletes branch and returns to Ground
@@ -335,6 +335,6 @@ class TestFloorsUI:
         dlg2.choose(DeleteFloorDialog.DELETE_BRANCH)
         assert pump_until(lambda: w.floors.floors == [])
         assert ("delete", floor2["id"], True) in core.calls
-        assert w.floor_button.status.get_label() == f"Floor “{floor2['name']}” e a branch apagado"
+        assert w.floor_button.status.get_label() == f"Floor “{floor2['name']}” and its branch deleted"
         assert w.floors.active_floor_id is None and w.floor_button.get_label() == "Ground"
         assert w.document.payload.floors == []

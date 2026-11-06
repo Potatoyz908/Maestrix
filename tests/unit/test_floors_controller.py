@@ -59,16 +59,16 @@ def test_badge_and_preview_texts():
     assert badge_text({"insertions": 0, "deletions": 0}) == "" and badge_text(None) == ""
     base = {"floorBranch": "floor/x", "target": "main", "insertions": 2, "deletions": 0}
     assert "1 commit → main (fast-forward)" in describe_preview({**base, "ahead": 1, "fastForward": True})
-    assert "3 commits → main (commit de merge)" in describe_preview({**base, "ahead": 3})
+    assert "3 commits → main (merge commit)" in describe_preview({**base, "ahead": 3})
     assert "+2 −0" in describe_preview({**base, "ahead": 3})
-    assert "Nada para pousar" in describe_preview({**base, "ahead": 0})
-    assert "própria branch" in describe_preview({**base, "sameBranch": True})
+    assert "Nothing to land" in describe_preview({**base, "ahead": 0})
+    assert "own branch" in describe_preview({**base, "sameBranch": True})
 
 
 def test_blocking_reasons_use_spec_wording():
-    assert blocking_reason({"dirty": True, "dirtyFiles": ["a"]}).startswith("Faça commit antes de pousar")
-    assert blocking_reason({"conflicts": ["a"]}) == "Resolva os conflitos no terminal/IDE"
-    assert "checkout de outra branch" in blocking_reason({"targetCheckedOut": True, "target": "main"})
+    assert blocking_reason({"dirty": True, "dirtyFiles": ["a"]}).startswith("Commit changes before landing")
+    assert blocking_reason({"conflicts": ["a"]}) == "Resolve conflicts in terminal/IDE"
+    assert "check out another branch" in blocking_reason({"targetCheckedOut": True, "target": "main"})
     assert blocking_reason({"canLand": True}) is None and blocking_reason(None) is None
 
 
@@ -165,7 +165,7 @@ def test_deleting_active_floor_returns_to_ground(ctl):
     assert pump_until(lambda: len(ctl.floors) == 1)
     assert ctl.active_floor_id is None
     assert ("delete", FLOOR_A["id"], True) in ctl.window.client.calls
-    assert any("apagado" in t for t, ok in ctl.toasts if ok)
+    assert any("deleted" in t for t, ok in ctl.toasts if ok)
 
 
 def test_floor_vanishing_elsewhere_resets_active(ctl):
@@ -194,7 +194,7 @@ def test_events_subscription_and_coalesced_reload(ctl):
 def test_delete_warning_says_unlanded_commits_are_discarded():
     from ui.floors import delete_warning
     w = delete_warning(FLOOR_A, {"ahead": 3})
-    assert "Apagar branch" in w and "DESCARTA 3 commits ainda não pousados" in w and FLOOR_A["branchName"] in w
-    assert "DESCARTA 1 commit ainda não pousado:" in delete_warning(FLOOR_A, {"ahead": 1})
-    assert "todos os commits que ainda não foram pousados" in delete_warning(FLOOR_A, None)
-    assert "Manter branch" in w and FLOOR_A["worktreePath"] in w
+    assert "Delete branch" in w and "DISCARDS 3 unlanded commits" in w and FLOOR_A["branchName"] in w
+    assert "DISCARDS 1 unlanded commit:" in delete_warning(FLOOR_A, {"ahead": 1})
+    assert "all commits that have not been landed yet" in delete_warning(FLOOR_A, None)
+    assert "Keep branch" in w and FLOOR_A["worktreePath"] in w

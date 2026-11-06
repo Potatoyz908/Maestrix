@@ -273,4 +273,4 @@ class TestWindowResilience:
         dlg.close()
 
         delete = w.floor_button.open_delete(w.floors.floors[0])
-        assert "DESCARTA" in delete.alert.get_detail()
+        assert "DISCARDS" in delete.alert.get_detail()

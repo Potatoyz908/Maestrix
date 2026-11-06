@@ -84,9 +84,9 @@ def branch_error(branch: str) -> Optional[str]:
     """None when `branch` is a valid local branch name (gitops._valid_ref, the subset of `git check-ref-format --branch`)."""
     b = branch.strip()
     if not b:
-        return "Informe o nome da branch"
+        return "Enter a branch name"
     if b == "@" or not _valid_ref(b):
-        return "Nome de branch inválido (sem espaços, '..', ~ ^ : ? * [ \\ nem '.' no início de um componente)"
+        return "Invalid branch name (no spaces, '..', ~ ^ : ? * [ \\ or leading '.' in a component)"
     return None
 
 
@@ -102,16 +102,16 @@ def describe_preview(p: Dict[str, Any]) -> str:
     """Summary of a land-preview response (the conflicts list is rendered separately)."""
     floor_branch, target = p.get("floorBranch", "?"), p.get("target", "?")
     if p.get("sameBranch"):
-        return (f"{floor_branch} é a própria branch do floor: os commits já estão no repositório (o worktree compartilha "
-                f"as refs com o Ground). Escolha outra branch de destino para fazer merge.")
+        return (f"{floor_branch} is the floor's own branch: commits are already in the repository (the worktree shares "
+                f"refs with Ground). Choose another target branch to merge.")
     lines = []
     ahead = int(p.get("ahead") or 0)
     if ahead == 0:
-        lines.append(f"Nada para pousar: {floor_branch} não tem commits que {target} não tenha.")
+        lines.append(f"Nothing to land: {floor_branch} has no commits ahead of {target}.")
     else:
-        kind = "fast-forward" if p.get("fastForward") else "commit de merge"
+        kind = "fast-forward" if p.get("fastForward") else "merge commit"
         lines.append(f"{ahead} commit{'s' if ahead != 1 else ''} → {target} ({kind})")
-    ins, dels = int(p.get("insertions") or 0), int(p.get("deletions") or 0)
+    ins, dels = int(p.get("insertions") or 0), int(status_val if (status_val := p.get("deletions")) else 0)
     if ins or dels:
         lines.append(f"+{ins} −{dels}")
     elif p.get("stat"):
@@ -126,24 +126,24 @@ def blocking_reason(p: Optional[Dict[str, Any]]) -> Optional[str]:
     if p.get("dirty"):
         files = p.get("dirtyFiles") or []
         shown = ", ".join(files[:5]) + (f" (+{len(files) - 5})" if len(files) > 5 else "")
-        return "Faça commit antes de pousar" + (f": {shown}" if shown else "")
+        return "Commit changes before landing" + (f": {shown}" if shown else "")
     if p.get("conflicts"):
-        return "Resolva os conflitos no terminal/IDE"
+        return "Resolve conflicts in terminal/IDE"
     if p.get("targetCheckedOut"):
-        return f"{p.get('target')} está em uso no Ground: faça checkout de outra branch ou use o terminal"
+        return f"{p.get('target')} is checked out in Ground: check out another branch or use the terminal"
     return None
 
 
 def delete_warning(floor: Floor, status: Optional[Dict[str, Any]] = None) -> str:
-    """DeleteFloorDialog body (L3): what is always lost, and the explicit warning that "Apagar branch" discards the commits
+    """DeleteFloorDialog body (L3): what is always lost, and the explicit warning that "Delete branch" discards the commits
     that were never landed (with their count when the floor status is known)."""
     branch = floor.get("branchName", "")
     ahead = int((status or {}).get("ahead") or 0)
-    unlanded = (f"{ahead} commit{'s' if ahead != 1 else ''} ainda não pousado{'s' if ahead != 1 else ''}" if ahead
-                else "todos os commits que ainda não foram pousados (Land)")
-    return (f"O diretório {floor.get('worktreePath', '')} é sempre removido, inclusive mudanças sem commit.\n\n"
-            f"⚠ “Apagar branch” apaga também a branch {branch} e DESCARTA {unlanded}: eles não poderão ser recuperados "
-            f"por esta interface. Escolha “Manter branch” para voltar a esses commits depois.")
+    unlanded = (f"{ahead} unlanded commit{'s' if ahead != 1 else ''}" if ahead
+                else "all commits that have not been landed yet")
+    return (f"The directory {floor.get('worktreePath', '')} is always removed, including uncommitted changes.\n\n"
+            f"“Delete branch” also deletes branch {branch} and DISCARDS {unlanded}: they cannot be recovered "
+            f"from this interface. Choose “Keep branch” to return to those commits later.")
 
 
 def error_text(exc: BaseException) -> str:
@@ -246,7 +246,7 @@ class FloorsController:
         gen, ws = self._generation, self.workspace_id
         self.run(lambda: self.client.get_floors(ws),
                  lambda floors: self._applied(gen, ws, floors),
-                 lambda exc: self._status(f"Não foi possível listar os floors: {error_text(exc)}", False))
+                 lambda exc: self._status(f"Could not list floors: {error_text(exc)}", False))
 
     def _applied(self, gen: int, ws: str, floors) -> None:
         if gen != self._generation or ws != self.workspace_id:
@@ -297,7 +297,7 @@ class FloorsController:
         floor = self.find(floor_id)
         self.active_floor_id = floor.get("id") if floor else None
         if floor:
-            self._status(f"Floor ativo: {floor.get('name')}. Novos terminais abrem em {floor.get('worktreePath')}", True)
+            self._status(f"Active floor: {floor.get('name')}. New terminals open in {floor.get('worktreePath')}", True)
         self._changed()
 
     def terminal_cwd(self, default: str = "") -> str:
@@ -348,7 +348,7 @@ class FloorsController:
         ws = self.workspace_id
 
         def ok(floor: Floor) -> None:
-            self._status(f"Floor “{floor.get('name', name)}” criado em {floor.get('branchName', branch)}", True)
+            self._status(f"Floor “{floor.get('name', name)}” created on {floor.get('branchName', branch)}", True)
             self.refresh()
             done(floor)
 
@@ -360,14 +360,14 @@ class FloorsController:
         ws = self.workspace_id
 
         def ok(_res) -> None:
-            what = " e a branch" if delete_branch else ""
-            self._status(f"Floor “{floor.get('name')}”{what} apagado", True)
+            what = " and its branch" if delete_branch else ""
+            self._status(f"Floor “{floor.get('name')}”{what} deleted", True)
             if self.active_floor_id and self.active_floor_id.upper() == str(floor.get("id", "")).upper():
                 self.switch_to(None)   # T2.6: deleting the active floor returns to Ground
             self.refresh()
 
         self.run(lambda: self.client.delete_floor(floor["id"], workspace_id=ws, delete_branch=delete_branch),
-                 ok, lambda exc: self._status(f"Falha ao apagar: {error_text(exc)}", False))
+                 ok, lambda exc: self._status(f"Failed to delete: {error_text(exc)}", False))
 
     def preview(self, floor: Floor, target: Optional[str], done: Callable[[Dict[str, Any]], None],
                 failed: Callable[[str], None]) -> None:
@@ -379,7 +379,7 @@ class FloorsController:
         ws = self.workspace_id
 
         def ok(res: Dict[str, Any]) -> None:
-            self._status(f"Floor pousado em {target}", True)
+            self._status(f"Floor landed onto {target}", True)
             self.refresh()
             done(res)
 
@@ -413,13 +413,13 @@ def _escape_closes(win: Gtk.Window) -> None:
 
 
 class NewFloorDialog(Gtk.Window):
-    """T2.4 — modal "Novo floor": nome, nova branch (nome pré-preenchido floor/<slug> + base) ou branch existente."""
-    MODES = ("Nova branch", "Branch existente")
-    HEAD_LABEL = "(branch atual do Ground)"
+    """T2.4 — modal "New Floor": name, new branch (pre-filled floor/<slug> + base) or existing branch."""
+    MODES = ("New Branch", "Existing Branch")
+    HEAD_LABEL = "(Ground current branch)"
 
     def __init__(self, parent: Gtk.Window, controller: FloorsController,
                  on_created: Optional[Callable[[Floor], None]] = None) -> None:
-        super().__init__(title="Novo floor", transient_for=parent, modal=True, resizable=False)
+        super().__init__(title="New Floor", transient_for=parent, modal=True, resizable=False)
         self.set_default_size(460, -1)
         self.controller, self.on_created = controller, on_created
         self.branches: List[str] = []
@@ -427,17 +427,17 @@ class NewFloorDialog(Gtk.Window):
         self._auto_branch = ""
 
         grid = _form_grid()
-        self.name_entry = Gtk.Entry(placeholder_text="ex.: Corrigir login", hexpand=True, activates_default=True)
+        self.name_entry = Gtk.Entry(placeholder_text="e.g. Fix login bug", hexpand=True, activates_default=True)
         self.mode = Gtk.DropDown(model=Gtk.StringList.new(list(self.MODES)))
-        self.branch_entry = Gtk.Entry(placeholder_text="floor/corrigir-login", activates_default=True)
+        self.branch_entry = Gtk.Entry(placeholder_text="floor/fix-login-bug", activates_default=True)
         self.base_model = Gtk.StringList.new([self.HEAD_LABEL])
         self.base_dropdown = Gtk.DropDown(model=self.base_model)
         self.existing_model = Gtk.StringList.new([])
         self.existing_dropdown = Gtk.DropDown(model=self.existing_model)
-        self.branch_label, self.base_label, self.existing_label = _label("Nome da branch"), _label("Base"), _label("Branch")
+        self.branch_label, self.base_label, self.existing_label = _label("Branch Name"), _label("Base"), _label("Branch")
         self.error_label = _label("", wrap=True, css_classes=["floor-error"])
         self.error_label.set_visible(False)
-        rows = ((_label("Nome"), self.name_entry), (_label("Tipo"), self.mode), (self.branch_label, self.branch_entry),
+        rows = ((_label("Floor Name"), self.name_entry), (_label("Mode"), self.mode), (self.branch_label, self.branch_entry),
                 (self.base_label, self.base_dropdown), (self.existing_label, self.existing_dropdown))
         for i, (lbl, widget) in enumerate(rows):
             grid.attach(lbl, 0, i, 1, 1)
@@ -445,8 +445,8 @@ class NewFloorDialog(Gtk.Window):
         grid.attach(self.error_label, 0, len(rows), 2, 1)
 
         self.spinner = Gtk.Spinner(visible=False)
-        self.cancel_btn = Gtk.Button(label="Cancelar")
-        self.create_btn = Gtk.Button(label="Criar", css_classes=["suggested-action"], sensitive=False)
+        self.cancel_btn = Gtk.Button(label="Cancel")
+        self.create_btn = Gtk.Button(label="Create", css_classes=["suggested-action"], sensitive=False)
         self.cancel_btn.connect("clicked", lambda _b: self.close())
         self.create_btn.connect("clicked", lambda _b: self.submit())
         buttons = Gtk.Box(spacing=8, halign=Gtk.Align.END, margin_bottom=12, margin_end=16)
@@ -513,9 +513,9 @@ class NewFloorDialog(Gtk.Window):
 
     def validation_error(self) -> Optional[str]:
         if not self.name_entry.get_text().strip():
-            return "Informe o nome do floor"
+            return "Enter a floor name"
         if self.existing:
-            return None if self.existing_branch else "Nenhuma branch existente encontrada"
+            return None if self.existing_branch else "No existing branch found"
         return branch_error(self.branch_entry.get_text())
 
     def _validate(self) -> None:
@@ -561,7 +561,7 @@ class NewFloorDialog(Gtk.Window):
 
 
 class LandFloorDialog(Gtk.Window):
-    """T2.5 — modal "Land": [branch do floor] (plane icon) [destino]. The target defaults to the floor's own branch; changing it reloads
+    """T2.5 — modal "Land": [floor branch] (plane icon) [target]. The target defaults to the floor's own branch; changing it reloads
     the preview (+ins −del, conflicts in red). Merge is enabled only when the core reports canLand."""
 
     def __init__(self, parent: Gtk.Window, controller: FloorsController, floor: Floor,
@@ -586,10 +586,12 @@ class LandFloorDialog(Gtk.Window):
         route.append(self.target)
 
         self.spinner = Gtk.Spinner(spinning=True)
-        self.summary = _label("Carregando prévia…", wrap=True, selectable=True)
+        self.summary = _label("Loading preview…", wrap=True, selectable=True)
         self.reason = _label("", wrap=True, css_classes=["floor-error"])
         self.reason.set_visible(False)
-        self.conflicts = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True, css_classes=["floor-conflict"])
+        self.conflicts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, css_classes=["floor-conflict"])
+        self._conflicts_text = ""
+        self.conflicts.get_label = lambda: self._conflicts_text
         self.conflicts.set_visible(False)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_start=16, margin_end=16, margin_top=12)
         head = Gtk.Box(spacing=8)
@@ -601,7 +603,7 @@ class LandFloorDialog(Gtk.Window):
         scroller.set_child(self.conflicts)
         body.append(scroller)
 
-        self.cancel_btn = Gtk.Button(label="Cancelar")
+        self.cancel_btn = Gtk.Button(label="Cancel")
         self.merge_btn = Gtk.Button(label="Merge", css_classes=["suggested-action"], sensitive=False)
         self.cancel_btn.connect("clicked", lambda _b: self.close())
         self.merge_btn.connect("clicked", lambda _b: self.submit())
@@ -616,7 +618,7 @@ class LandFloorDialog(Gtk.Window):
         self.set_child(box)
         self.target.connect("notify::selected", lambda *_: self._on_target_changed())
         _escape_closes(self)
-        self.load(floor.get("branchName"))   # "mesma branch do floor" is the default (T2.5)
+        self.load(floor.get("branchName"))   # "same branch as the floor" is the default (T2.5)
 
     @property
     def selected_target(self) -> Optional[str]:
@@ -661,8 +663,21 @@ class LandFloorDialog(Gtk.Window):
         reason = "\n".join(r for r in (self.land_error, blocking_reason(p)) if r)
         self.reason.set_label(reason)
         self.reason.set_visible(bool(reason))
-        conflicts = p.get("conflicts") or []
-        self.conflicts.set_label("\n".join(f"✗ {c}" for c in conflicts))
+        conflicts = list(p.get("conflicts") or [])
+        child = self.conflicts.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.conflicts.remove(child)
+            child = nxt
+        for c in conflicts:
+            row = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+            icon = Gtk.Image.new_from_icon_name("maestri-close-symbolic")
+            icon.set_pixel_size(14)
+            icon.add_css_class("floor-conflict")
+            row.append(icon)
+            row.append(Gtk.Label(label=str(c), xalign=0, selectable=True, css_classes=["floor-conflict"]))
+            self.conflicts.append(row)
+        self._conflicts_text = "\n".join(str(c) for c in conflicts)
         self.conflicts.set_visible(bool(conflicts))
         self.merge_btn.set_sensitive(bool(p.get("canLand")))
 
@@ -671,7 +686,7 @@ class LandFloorDialog(Gtk.Window):
             return
         self.spinner.set_visible(False)
         self.target.set_sensitive(bool(self._branches))
-        self.summary.set_label("Prévia indisponível.")
+        self.summary.set_label("Preview unavailable.")
         self.reason.set_label(message)
         self.reason.set_visible(True)
         self.merge_btn.set_sensitive(False)
@@ -703,27 +718,65 @@ class LandFloorDialog(Gtk.Window):
     def _failed_land(self, message: str) -> None:
         self.spinner.set_visible(False)
         self.target.set_sensitive(True)
-        self.land_error = f"Land falhou: {message}"
+        self.land_error = f"Land failed: {message}"
         self.reason.set_label(self.land_error)
         self.reason.set_visible(True)
         self.load(self.selected_target)   # fresh state; _previewed keeps land_error on top of it
 
 
-class DeleteFloorDialog:
-    """T2.6 — `Gtk.AlertDialog` ["Cancelar", "Manter branch", "Apagar branch"]. The worktree is always removed (reference)."""
+class DeleteFloorDialog(Gtk.Window):
+    """T2.6 — modal dialog ["Cancel", "Keep branch", "Delete branch"] with outline warning icon (no ⚠ glyph).
+    The worktree is always removed (reference)."""
     CANCEL, KEEP_BRANCH, DELETE_BRANCH = 0, 1, 2
-    BUTTONS = ["Cancelar", "Manter branch", "Apagar branch"]
+    BUTTONS = ["Cancel", "Keep branch", "Delete branch"]
 
     def __init__(self, parent: Gtk.Window, controller: FloorsController, floor: Floor) -> None:
+        msg = f"Delete floor “{floor.get('name', 'floor')}”?"
+        detail = delete_warning(floor, controller.statuses.get(floor.get("id")))
+        super().__init__(title=msg, transient_for=parent, modal=True, resizable=False)
+        self.set_default_size(460, -1)
         self.parent, self.controller, self.floor = parent, controller, floor
-        # GtkAlertDialog has no per-button style: "destructive" is conveyed by the wording and by not being the default.
         self.alert = Gtk.AlertDialog(
-            message=f"Apagar o floor “{floor.get('name', 'floor')}”?",
-            detail=delete_warning(floor, controller.statuses.get(floor.get("id"))),
+            message=msg,
+            detail=detail,
             buttons=list(self.BUTTONS), cancel_button=self.CANCEL, default_button=self.KEEP_BRANCH, modal=True)
 
+        self.warning_icon = Gtk.Image.new_from_icon_name("maestri-warning-symbolic")
+        self.warning_icon.set_pixel_size(24)
+        self.warning_icon.add_css_class("floor-dirty")
+        self.warning_icon.set_valign(Gtk.Align.START)
+
+        self.message_label = _label(msg, wrap=True)
+        self.detail_label = _label(detail, wrap=True, selectable=True)
+        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, hexpand=True)
+        text_box.append(self.message_label)
+        text_box.append(self.detail_label)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
+                          margin_top=16, margin_bottom=12, margin_start=16, margin_end=16)
+        content.append(self.warning_icon)
+        content.append(text_box)
+
+        self.cancel_btn = Gtk.Button(label=self.BUTTONS[self.CANCEL])
+        self.keep_btn = Gtk.Button(label=self.BUTTONS[self.KEEP_BRANCH], css_classes=["suggested-action"])
+        self.delete_btn = Gtk.Button(label=self.BUTTONS[self.DELETE_BRANCH], css_classes=["destructive-action"])
+        self.cancel_btn.connect("clicked", lambda _b: self.choose(self.CANCEL))
+        self.keep_btn.connect("clicked", lambda _b: self.choose(self.KEEP_BRANCH))
+        self.delete_btn.connect("clicked", lambda _b: self.choose(self.DELETE_BRANCH))
+
+        buttons = Gtk.Box(spacing=8, halign=Gtk.Align.END, margin_bottom=12, margin_end=16)
+        for btn in (self.cancel_btn, self.keep_btn, self.delete_btn):
+            buttons.append(btn)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        root.append(content)
+        root.append(buttons)
+        self.set_child(root)
+        self.set_default_widget(self.keep_btn)
+        _escape_closes(self)
+
     def present(self) -> None:
-        self.alert.choose(self.parent, None, self._chosen)
+        super().present()
 
     def _chosen(self, alert: Gtk.AlertDialog, result) -> None:
         try:
@@ -735,6 +788,16 @@ class DeleteFloorDialog:
     def choose(self, index: int) -> None:
         if index in (self.KEEP_BRANCH, self.DELETE_BRANCH):
             self.controller.delete(self.floor, delete_branch=index == self.DELETE_BRANCH)
+        self.close()
+
+    def close(self) -> None:
+        try:
+            self.set_visible(False)
+            self.set_modal(False)
+            self.set_transient_for(None)
+        except Exception:
+            pass
+        super().close()
 
 
 def _icon_exists(name: str) -> bool:
@@ -762,10 +825,10 @@ class FloorButton(Gtk.MenuButton):
         self.status = Gtk.Label(xalign=0, wrap=True, max_width_chars=44, margin_start=10, margin_end=10)
         self.status.set_visible(False)
 
-        self.new_btn = self._action_button("maestri-floor-new-symbolic", "Novo floor…")
+        self.new_btn = self._action_button("maestri-floor-new-symbolic", "New Floor…")
         self.new_btn.connect("clicked", lambda _b: self.open_new())
         self.land_btn = self._action_button("maestri-floor-land-symbolic", "Land…")
-        self.land_btn.set_tooltip_text("Pousar os commits do floor ativo de volta no repositório (Ground)")
+        self.land_btn.set_tooltip_text("Land commits from the active floor back into the Ground repository")
         self.land_btn.connect("clicked", lambda _b: self.controller.active_floor and self.open_land(self.controller.active_floor))
 
         actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, margin_start=4, margin_end=4)
@@ -819,11 +882,11 @@ class FloorButton(Gtk.MenuButton):
         self.btn_label.set_text(name)
         self.set_sensitive(c.available)
         if not c.available:
-            self.set_tooltip_text("Floors precisam do core do Open Maestri (desconectado)")
+            self.set_tooltip_text("Floors require the Open Maestri core (disconnected)")
         elif active is not None:
             self.set_tooltip_text(f"Floor “{name}” · {active.get('branchName', '')}")
         else:
-            self.set_tooltip_text("Floors: worktrees git isolados deste workspace")
+            self.set_tooltip_text("Floors: isolated git worktrees for this workspace")
         self.land_btn.set_sensitive(active is not None)   # Land only from a floor, never from Ground (T2.3)
         child = self.list_box.get_first_child()
         while child is not None:
@@ -856,7 +919,7 @@ class FloorButton(Gtk.MenuButton):
         if floor is not None:
             st = c.statuses.get(floor.get("id"))
             row.floor_badge = Gtk.Label(label=badge_text(st), css_classes=["floor-badge"], valign=Gtk.Align.CENTER)
-            row.floor_dirty = Gtk.Box(css_classes=["floor-dot"], tooltip_text="Mudanças sem commit", valign=Gtk.Align.CENTER,
+            row.floor_dirty = Gtk.Box(css_classes=["floor-dot"], tooltip_text="Uncommitted changes", valign=Gtk.Align.CENTER,
                                       visible=bool(st and st.get("dirty")))
             h.append(row.floor_badge)
             h.append(row.floor_dirty)
@@ -867,7 +930,7 @@ class FloorButton(Gtk.MenuButton):
         h.append(check)
         if floor is not None:
             delete = Gtk.Button(child=Gtk.Image.new_from_icon_name("maestri-close-symbolic"), has_frame=False,
-                                tooltip_text="Apagar floor…", css_classes=["flat", "floor-row-delete"], valign=Gtk.Align.CENTER)
+                                tooltip_text="Delete floor…", css_classes=["flat", "floor-row-delete"], valign=Gtk.Align.CENTER)
             delete.connect("clicked", lambda _b, f=floor: self.open_delete(f))
             h.append(delete)
         row.set_child(h)
