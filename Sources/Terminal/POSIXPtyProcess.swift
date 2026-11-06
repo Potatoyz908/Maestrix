@@ -16,6 +16,8 @@ final class POSIXPtyProcess: @unchecked Sendable {
     let terminalId: UUID
     let command: String
     let workingDirectory: String
+    /// Extra variables for the child (K12 floor variables etc.); applied after the defaults.
+    let extraEnvironment: [String: String]
 
     private(set) var childPid: pid_t = -1
     private(set) var masterFd: Int32 = -1
@@ -41,10 +43,11 @@ final class POSIXPtyProcess: @unchecked Sendable {
     /// 进程退出回调
     var onProcessExit: ((Int32?) -> Void)?
 
-    init(terminalId: UUID, command: String, workingDirectory: String) {
+    init(terminalId: UUID, command: String, workingDirectory: String, extraEnvironment: [String: String] = [:]) {
         self.terminalId = terminalId
         self.command = command
         self.workingDirectory = workingDirectory
+        self.extraEnvironment = extraEnvironment
 
         let term = Terminal(delegate: terminalDelegate)
         term.resize(cols: 80, rows: 24)
@@ -164,7 +167,17 @@ final class POSIXPtyProcess: @unchecked Sendable {
             }
         }
 
+        // K5/C1: the `omaestri` CLI is reachable as $MAESTRI_CLI and through PATH (its directory first).
+        if let cli = Self.omaestriPath() {
+            env["MAESTRI_CLI"] = cli
+            env["OMAESTRI_CLI"] = cli
+            let dir = (cli as NSString).deletingLastPathComponent
+            resolvedPaths.removeAll { $0 == dir }
+            resolvedPaths.insert(dir, at: 0)
+        }
+
         env["PATH"] = resolvedPaths.joined(separator: ":")
+        for (k, v) in extraEnvironment { env[k] = v }
 
         #if canImport(Glibc)
         let pid = fork()
@@ -351,6 +364,25 @@ final class POSIXPtyProcess: @unchecked Sendable {
         _ = Darwin.ioctl(masterFd, UInt(TIOCSWINSZ), &ws)
         #endif
         headlessTerminal?.resize(cols: cols, rows: rows)
+    }
+
+    /// Restored scrollback (K13): fed to the headless buffer before the shell starts, so the replay to a reconnecting
+    /// window shows the previous session first.
+    func preload(_ text: String) {
+        guard !text.isEmpty else { return }
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\r\n")
+        headlessTerminal?.feed(text: normalized + "\r\n")
+    }
+
+    /// `omaestri` to expose to the shell: $OMAESTRI_PATH, next to this server binary, then ~/.local/bin.
+    static func omaestriPath() -> String? {
+        let fm = FileManager.default
+        var candidates: [String] = []
+        if let env = ProcessInfo.processInfo.environment["OMAESTRI_PATH"], !env.isEmpty { candidates.append(env) }
+        let exe = URL(fileURLWithPath: CommandLine.arguments.first ?? "").resolvingSymlinksInPath()
+        candidates.append(exe.deletingLastPathComponent().appendingPathComponent("omaestri").path)
+        candidates.append(fm.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/omaestri").path)
+        return candidates.first { fm.isExecutableFile(atPath: $0) }
     }
 
     /// 获取 headlessTerminal 当前缓冲区的完整纯文本快照

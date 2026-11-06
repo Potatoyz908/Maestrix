@@ -67,6 +67,12 @@ enum NexusWorkspaces {
         return (found.wsId, out.filter { seen.insert($0).inserted })
     }
 
+    /// JSON object of a model exactly as workspace.json stores it.
+    static func json<T: Encodable>(_ value: T) -> Any? {
+        guard let data = try? PersistenceManager.shared.encoder.encode(value) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
     /// Free spot to the right of `anchor` (or at the origin of the canvas when there is no anchor).
     static func placement(rightOf anchor: CanvasNode?, size: CGSize, in doc: WorkspaceDocument) -> CGRect {
         guard let a = anchor else {

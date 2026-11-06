@@ -65,6 +65,10 @@ let coreSources: [String] = [
     "InterAgent/NexusRoutes.swift",
     "Portal/LinuxPortalManager.swift",
     "Floor/FloorHookRunner.swift",
+    "Terminal/TerminalScrollbackFile.swift",
+    "Partitura/PartituraStore.swift",
+    "InterAgent/Handlers/PartituraHandler.swift",
+    "InterAgent/Handlers/NexusCLI.swift",
     "Terminal/POSIXPtyProcess.swift",
     "Terminal/LinuxTerminalManager.swift",
 ]

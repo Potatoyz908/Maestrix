@@ -36,6 +36,10 @@ case "role":
     RoleCommand.run(args, socketPath, terminalId)
 case "preset":
     PresetCommand.run(args, socketPath, terminalId)
+case "partitura", "routine", "workspace", "floor":
+    let response = Transport.send(args: args, socketPath: socketPath, terminalId: terminalId)
+    print(response)
+    if response.hasPrefix("error:") { exit(1) }
 case "debug":
     DebugCommand.run(args, socketPath, terminalId)
 case "-h", "--help", "help":

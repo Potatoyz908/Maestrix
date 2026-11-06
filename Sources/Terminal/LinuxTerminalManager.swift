@@ -11,6 +11,20 @@ final class LinuxTerminalManager: TerminalManaging {
     private(set) var terminalWorkspaceMap: [UUID: UUID] = [:]
     private(set) var processes: [UUID: POSIXPtyProcess] = [:]
 
+    /// Everything needed to spawn a terminal again (restart keeps the id, K13).
+    struct LaunchParams {
+        var command: String
+        var workingDirectory: String
+        var workspaceId: UUID?
+        var roleName: String?
+        var displayName: String?
+        var agentType: String
+        var environment: [String: String]
+    }
+    private(set) var launchParams: [UUID: LaunchParams] = [:]
+    /// Extra PTY variables for the NEXT createTerminal of that id (set by POST /api/terminals with `floorId`, K12).
+    var pendingEnvironment: [UUID: [String: String]] = [:]
+
     private init() {}
 
     @discardableResult
@@ -36,9 +50,16 @@ final class LinuxTerminalManager: TerminalManaging {
             terminalWorkspaceMap[id] = wsId
         }
 
+        let environment = pendingEnvironment.removeValue(forKey: id) ?? launchParams[id]?.environment ?? [:]
+        launchParams[id] = LaunchParams(command: command, workingDirectory: workingDirectory, workspaceId: workspaceId,
+                                        roleName: roleName, displayName: displayName, agentType: agentType,
+                                        environment: environment)
+
         // 创建并启动原生 POSIX PTY 进程
-        let proc = POSIXPtyProcess(terminalId: id, command: command, workingDirectory: workingDirectory)
+        let proc = POSIXPtyProcess(terminalId: id, command: command, workingDirectory: workingDirectory,
+                                   extraEnvironment: environment)
         processes[id] = proc
+        if let wsId = workspaceId { proc.preload(TerminalScrollbackFile.load(terminalId: id, workspaceId: wsId)) }
 
         // 绑定输出流到 session
         proc.onDataReceived = { [weak session] text in
@@ -49,6 +70,7 @@ final class LinuxTerminalManager: TerminalManaging {
         proc.onProcessExit = { [weak session] code in
             Task { @MainActor in
                 session?.terminate()
+                self.saveScrollback(id)
                 EventBroadcaster.shared.publish(
                     type: "terminalExited",
                     workspaceId: self.terminalWorkspaceMap[id],
@@ -89,6 +111,43 @@ final class LinuxTerminalManager: TerminalManaging {
         if existed {
             EventBroadcaster.shared.publish(type: "terminalRemoved", workspaceId: wsId, payload: ["terminalId": id.uuidString])
         }
+    }
+
+    // MARK: - K13: restart / unload / scrollback on disk
+
+    /// Kill the PTY and spawn it again with the same id and launch parameters (the scrollback is kept).
+    @discardableResult
+    func restart(id: UUID) -> Bool {
+        guard let params = launchParams[id] else { return false }
+        saveScrollback(id)
+        removeTerminal(id: id)
+        launchParams[id] = params
+        createTerminal(id: id, command: params.command, workingDirectory: params.workingDirectory,
+                       workspaceId: params.workspaceId, roleName: params.roleName, displayName: params.displayName,
+                       agentType: params.agentType)
+        return true
+    }
+
+    /// Save the scrollback and stop the PTY; the node stays on the canvas and a later create restores the history.
+    @discardableResult
+    func unload(id: UUID) -> Bool {
+        guard terminals[id] != nil else { return false }
+        let wsId = terminalWorkspaceMap[id]
+        saveScrollback(id)
+        removeTerminal(id: id)
+        EventBroadcaster.shared.publish(type: "terminalUnloaded", workspaceId: wsId, payload: ["terminalId": id.uuidString])
+        return true
+    }
+
+    /// `<dataDir>/workspaces/<wsId>/terminals/<terminalId>.scrollback` (macOS JSONL format).
+    func saveScrollback(_ id: UUID) {
+        guard let wsId = terminalWorkspaceMap[id] ?? launchParams[id]?.workspaceId,
+              let text = processes[id]?.bufferText() else { return }
+        TerminalScrollbackFile.save(text, terminalId: id, workspaceId: wsId)
+    }
+
+    func saveAllScrollback() {
+        for id in processes.keys { saveScrollback(id) }
     }
 
     func write(to terminalId: UUID, text: String) {
