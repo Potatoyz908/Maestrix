@@ -18,8 +18,12 @@ enum PlatformHooks {
         return s
     }
     static var portals: any PortalManaging {
-        guard let s = portalsService else { fatalError("PlatformHooks.portals 未注入（须在 InterAgentServer 启动前设置）") }
-        return s
+        // K3: never crash the server (all PTYs would die) — without an injected service, use the Linux bridge, which
+        // answers "portal view unavailable" when no window is connected.
+        if let s = portalsService { return s }
+        let bridge = LinuxPortalManager.shared
+        portalsService = bridge
+        return bridge
     }
     /// InterAgent 服务器当前监听端口（CLIRouter debug、连接注入用）
     nonisolated(unsafe) static var serverPort: () -> UInt16 = { 0 }

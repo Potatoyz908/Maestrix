@@ -66,6 +66,21 @@ enum NexusRoutes {
             return NexusHTTP.text("error: floor not found", status: 404, origin: origin)
         }
 
+        // R13: POST /api/routines/:id/run-now — separate Enter, waits between chained prompts (RoutineRunNow)
+        if method == "POST" && cleanPath.hasPrefix("/api/routines/") && cleanPath.hasSuffix("/run-now") {
+            let raw = String(cleanPath.dropFirst("/api/routines/".count).dropLast("/run-now".count))
+            guard let rid = UUID(uuidString: raw) else { return NexusHTTP.text("error: invalid routine ID", status: 400, origin: origin) }
+            let pm = PersistenceManager.shared
+            let container = (try? pm.load(RoutinesContainer.self, from: pm.routinesURL)) ?? RoutinesContainer()
+            guard let routine = container.routines.first(where: { $0.id == rid }) else {
+                return NexusHTTP.text("error: routine not found", status: 404, origin: origin)
+            }
+            let started = await MainActor.run { RoutineRunNow.start(routine) }
+            return started
+                ? NexusHTTP.json(["status": "ok", "id": rid.uuidString], origin: origin)
+                : NexusHTTP.text("error: the routine's target terminal is not running", status: 404, origin: origin)
+        }
+
         // K11: partituras
         if cleanPath == "/api/partituras" || cleanPath.hasPrefix("/api/partituras/") {
             return await partituras(method: method, cleanPath: cleanPath, pathParts: pathParts, body: body, origin: origin)
