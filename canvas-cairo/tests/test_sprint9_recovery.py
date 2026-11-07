@@ -249,3 +249,51 @@ class RopeRecoveryTests(unittest.TestCase):
         self.assertEqual(events.emit.call_count, 1)
         settled(win, None, 'c', points)
         self.assertEqual(events.emit.call_count, 1)
+
+
+class LiveEventRecoveryTests(unittest.TestCase):
+    def test_k2_lifecycle_is_idempotent_scoped_and_has_no_mutation_echo(self):
+        from typing import Dict, Any, Optional
+        from maestri_core.models.connection import Connection
+        from maestri_core.models.workspace import WorkspacePayload
+        from maestri_canvas.connection_rules import KINDS, LIST_ATTRS, plan_connection, purge_node
+        from maestri_canvas.scene import Scene, ConnItem, NodeItem, norm
+        from maestri_canvas.geometry import Rect
+        tree = ast.parse((ROOT / 'gtk4-ui/src/ui/live_events.py').read_text())
+        klass = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'LiveEvents')
+        events = Mock()
+        ns = dict(globals(), Dict=Dict, Any=Any, Optional=Optional, Connection=Connection, ConnItem=ConnItem,
+                  norm=norm, LIST_ATTRS=LIST_ATTRS, plan_connection=plan_connection, purge_node=purge_node,
+                  KIND_LIST={k: a for k, a in KINDS.values()}, KIND_ALIASES={}, bus=events,
+                  _upper=lambda v: str(v or '').upper())
+        exec(compile(ast.Module(body=[klass], type_ignores=[]), 'live_events.py', 'exec'), ns)
+        payload = WorkspacePayload(id='WS', nodes=[])
+        scene = Scene()
+        cw = NS(scene=scene, controller=NS(dirty=False), queue_draw=Mock(), frames={},
+                add_connection=scene.add_connection, remove_node=scene.remove_node,
+                # CanvasWidget.remove_connection (Scene has none): drop the rope from the scene, True when it existed
+                remove_connection=lambda cid: scene.connections.pop(norm(cid), None) is not None)
+        win = NS(document=NS(payload=payload), canvas_widget=cw, loaded=True, client=Mock(), sync=Mock())
+        win._find_node = lambda nid: next((n for n in payload.nodes if n.id == nid.upper()), None)
+        win._add_node_to_canvas = lambda n: scene.add_node(NodeItem(n.id, Rect(0, 0, 100, 100), kind=n.node_type))
+        live = ns['LiveEvents'](win)
+        live._recount = Mock()  # sidebar presentation is outside this mutation test
+        a = CanvasNode(id='A', node_type='terminal', content=TerminalContent(id='A'), frame=NodeFrame())
+        b = CanvasNode(id='B', node_type='terminal', content=TerminalContent(id='B'), frame=NodeFrame())
+        self.assertFalse(live.handle('nodeAdded', dict(workspaceId='OTHER', node=a.to_dict())))
+        for node in [a, b]:
+            event = dict(workspaceId='WS', node=node.to_dict())
+            self.assertTrue(live.handle('nodeAdded', event))
+            self.assertFalse(live.handle('nodeAdded', event))
+        conn = Connection(id='C', a_id='A', b_id='B')
+        event = dict(workspaceId='WS', connection=conn.to_dict(), kind='terminal')
+        self.assertTrue(live.handle('connectionCreated', event))
+        self.assertFalse(live.handle('connectionCreated', event))
+        self.assertEqual(len(payload.connections), 1)
+        self.assertTrue(live.handle('connectionRemoved', dict(workspaceId='WS', connectionId='C')))
+        self.assertTrue(live.handle('nodeRemoved', dict(workspaceId='WS', nodeId='A')))
+        self.assertEqual([n.id for n in payload.nodes], ['B'])
+        self.assertEqual(payload.connections, [])
+        events.emit.assert_not_called()
+        self.assertEqual(win.client.mock_calls, [])
+        self.assertEqual(win.sync.mock_calls, [])
