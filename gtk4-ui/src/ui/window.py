@@ -555,16 +555,21 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             padding: 0;
         }
         .maestri-sidebar-menubar item {
-            min-height: 22px;
-            padding: 2px 6px;
+            min-height: 24px;
+            padding: 2px 7px;
             border-radius: 4px;
             font-size: 12px;
             font-weight: 500;
-            color: #3a3a3c;
+            color: rgba(255, 255, 255, 0.88);
         }
         .maestri-sidebar-menubar item:hover {
-            background-color: rgba(0, 0, 0, 0.08);
-            color: #1c1c1e;
+            background-color: rgba(255, 255, 255, 0.16);
+            color: #ffffff;
+        }
+        .maestri-sidebar-menubar item:active,
+        .maestri-sidebar-menubar item:checked {
+            background-color: rgba(255, 255, 255, 0.24);
+            color: #ffffff;
         }
         .maestri-traffic-lights {
             margin-right: 6px;
@@ -1132,6 +1137,23 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         headerbar button.dot-max:active,
         button.dot-max:active {
             background-color: #1B5E20;
+        }
+        .maestri-sidebar-menubar item {
+            min-height: 24px;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.88);
+        }
+        .maestri-sidebar-menubar item:hover {
+            background-color: rgba(255, 255, 255, 0.16);
+            color: #ffffff;
+        }
+        .maestri-sidebar-menubar item:active,
+        .maestri-sidebar-menubar item:checked {
+            background-color: rgba(255, 255, 255, 0.24);
+            color: #ffffff;
         }
         """
         traffic_provider.load_from_string(traffic_css)
