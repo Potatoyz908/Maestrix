@@ -350,6 +350,132 @@ def terminal_activity_counts(nodes, frames):
     return counts
 
 
+AGENT_KINDS = (("claude_code", "Claude Code"), ("codex", "Codex"), ("gemini_cli", "Gemini CLI"),
+               ("antigravity", "Antigravity"), ("open_code", "OpenCode"))
+ACTIVITY_POLL_MS = 2000
+
+
+def agent_activity_rows(nodes, frames) -> list[tuple[str, list[dict]]]:
+    """(label, terminals) per agent kind, in AGENT_KINDS order; each terminal = {id, name, state, cwd}, state in
+    busy / idle / exited. Same source as the rings: observed output activity, never quotas."""
+    import os
+    from maestri_core.models.node import agent_type_for_command
+    by_kind: dict[str, list[dict]] = {k: [] for k, _ in AGENT_KINDS}
+    for node in nodes:
+        if node.node_type != "terminal":
+            continue
+        c = node.content
+        kind = getattr(c, "agent_type", "") or ""
+        if kind not in by_kind:
+            kind = agent_type_for_command(getattr(c, "command", "") or "")
+        if kind not in by_kind:
+            words = (getattr(c, "command", "") or "").split()
+            kind = "antigravity" if any(os.path.basename(w).lower() == "antigravity" for w in words[:3]) else ""
+        if kind not in by_kind:
+            continue
+        f = getattr(frames.get(node.id.upper()), "terminal_features", None)
+        state = "exited" if f is not None and f.exited is not None else ("busy" if f is not None and f.busy else "idle")
+        by_kind[kind].append({"id": node.id.upper(), "name": getattr(c, "name", "") or "Terminal", "state": state,
+                              "cwd": getattr(c, "working_directory", "") or ""})
+    return [(label, by_kind[k]) for k, label in AGENT_KINDS]
+
+
+class AgentActivityPopover(Gtk.Popover):
+    """What the activity capsule opens: per agent kind, "N of M active" and each terminal (name, busy/idle, directory).
+    Refreshed on "terminal-activity" and, only while open, every ACTIVITY_POLL_MS; both stop when it closes."""
+
+    def __init__(self, window) -> None:
+        super().__init__(position=Gtk.PositionType.TOP, css_classes=["maestri-activity-popover"])
+        self.window = window
+        self._timer = 0
+        self._handler = 0
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=8, margin_bottom=8,
+                           margin_start=8, margin_end=8, width_request=300)
+        self.set_child(self.box)
+        self.connect("show", self._opened)
+        self.connect("closed", lambda _p: self._stop())
+
+    def _opened(self, *_a) -> None:
+        self.rebuild()
+        cw = getattr(self.window, "canvas_widget", None)
+        if cw is not None and not self._handler:
+            self._handler = cw.connect("terminal-activity", lambda *_x: self.rebuild())
+        if not self._timer:
+            self._timer = GLib.timeout_add(ACTIVITY_POLL_MS, self._tick)
+
+    def _tick(self) -> bool:
+        self.rebuild()
+        return GLib.SOURCE_CONTINUE
+
+    def _stop(self) -> None:
+        if self._timer:
+            GLib.source_remove(self._timer)
+            self._timer = 0
+        cw = getattr(self.window, "canvas_widget", None)
+        if self._handler and cw is not None:
+            if cw.handler_is_connected(self._handler):
+                cw.disconnect(self._handler)
+        self._handler = 0
+
+    cleanup = _stop
+
+    def rows(self) -> list[tuple[str, list[dict]]]:
+        w = self.window
+        if w is None:
+            return [(label, []) for _k, label in AGENT_KINDS]
+        return agent_activity_rows(w.document.payload.nodes, w.canvas_widget.frames)
+
+    def rebuild(self) -> None:
+        child = self.box.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.box.remove(child)
+            child = nxt
+        self.box.append(Gtk.Label(label="AGENT ACTIVITY", xalign=0, css_classes=["maestri-activity-title"]))
+        groups = self.rows()
+        if not any(terms for _l, terms in groups):
+            self.box.append(Gtk.Label(label="No agent terminals in this workspace", xalign=0,
+                                      css_classes=["maestri-activity-empty"]))
+        for label, terms in groups:
+            if not terms:
+                continue
+            active = sum(1 for t in terms if t["state"] == "busy")
+            head = Gtk.Box(spacing=6, css_classes=["maestri-activity-kind"])
+            head.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+            head.append(Gtk.Label(label=f"{active} of {len(terms)} active", css_classes=["maestri-activity-count"]))
+            self.box.append(head)
+            for t in terms:
+                self.box.append(self._row(t))
+        self.box.append(Gtk.Label(label="Activity = recent terminal output. Token quotas are not available.",
+                                  xalign=0, wrap=True, max_width_chars=40, css_classes=["maestri-activity-note"]))
+
+    def _row(self, t: dict) -> Gtk.Widget:
+        dot = Gtk.Image.new_from_icon_name("maestri-circle-symbolic")
+        dot.set_pixel_size(8)
+        dot.add_css_class("maestri-activity-dot")
+        dot.add_css_class(t["state"])
+        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+        texts.append(Gtk.Label(label=t["name"], xalign=0, ellipsize=3))
+        if t["cwd"]:
+            texts.append(Gtk.Label(label=t["cwd"], xalign=0, ellipsize=2, css_classes=["maestri-activity-cwd"]))
+        state = Gtk.Label(label={"busy": "Busy", "idle": "Idle", "exited": "Exited"}[t["state"]],
+                          css_classes=["maestri-activity-state", t["state"]])
+        row = Gtk.Box(spacing=8)
+        for w in (dot, texts, state):
+            row.append(w)
+        btn = Gtk.Button(child=row, has_frame=False, css_classes=["flat", "maestri-activity-row"],
+                         tooltip_text="Show this terminal")
+        btn.connect("clicked", lambda _b, nid=t["id"]: self._show(nid))
+        return btn
+
+    def _show(self, node_id: str) -> None:
+        cw = self.window.canvas_widget
+        order = cw.terminal_order()
+        if node_id in order and order.index(node_id) < 9:
+            cw.jump_to_terminal(order.index(node_id) + 1)
+        self.popdown()
+
+
 class AgentActivityRingsWidget(CairoPaintArea):
     """Live output activity of Claude, Codex and Gemini terminals in this workspace."""
     def __init__(self, window=None) -> None:
@@ -503,6 +629,20 @@ BOTTOM_CSS = """
 .maestri-bottom-controls .maestri-floor-label { font-size: 12px; font-weight: 500; }
 .maestri-bottom-controls .maestri-capsule-sep { background-color: rgba(255, 255, 255, 0.10); min-width: 1px; margin: 8px 1px; }
 .maestri-zoom-preset { padding: 4px 10px; border-radius: 6px; min-width: 140px; }
+popover.maestri-activity-popover > contents { background-color: rgba(28, 28, 31, 0.97); color: #ececf0; border-radius: 12px;
+                                              border: 1px solid rgba(255, 255, 255, 0.10); }
+popover.maestri-activity-popover label { color: #ececf0; }
+.maestri-activity-row:hover { background-color: rgba(255, 255, 255, 0.08); }
+.maestri-activity-title { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; opacity: 0.6; margin: 0 4px 4px 4px; }
+.maestri-activity-kind { font-weight: 600; font-size: 12px; margin: 6px 4px 2px 4px; }
+.maestri-activity-count { font-size: 11px; font-feature-settings: "tnum"; opacity: 0.7; }
+.maestri-activity-row { padding: 4px 6px; border-radius: 6px; }
+.maestri-activity-cwd { font-family: monospace; font-size: 10px; opacity: 0.6; }
+.maestri-activity-state { font-size: 11px; opacity: 0.75; }
+.maestri-activity-state.busy, .maestri-activity-dot.busy { color: #30D158; opacity: 1; }
+.maestri-activity-dot.idle { color: alpha(currentColor, 0.35); }
+.maestri-activity-state.exited, .maestri-activity-dot.exited { color: #FF453A; }
+.maestri-activity-empty, .maestri-activity-note { font-size: 11px; opacity: 0.6; margin: 4px; }
 .maestri-zoom-preset label { font-feature-settings: "tnum"; }
 .maestri-minimap-empty { opacity: 0.6; font-size: 12px; }
 """
@@ -680,7 +820,10 @@ class CanvasBottomRightControls(Gtk.Box):
         self.rings_widget.set_valign(Gtk.Align.CENTER)
         self.rings_widget.set_margin_start(4)
         self.rings_widget.set_margin_end(4)
-        self.pill_agents.append(self.rings_widget)
+        self.activity_popover = AgentActivityPopover(window)
+        self.btn_activity = Gtk.MenuButton(child=self.rings_widget, popover=self.activity_popover, direction=Gtk.ArrowType.UP,
+                                           css_classes=["maestri-capsule-btn"], valign=Gtk.Align.CENTER)
+        self.pill_agents.append(self.btn_activity)
         self.pill_agents.set_tooltip_text(self.rings_widget.get_tooltip_text())
 
         # Capsule 3: minimap
@@ -849,6 +992,7 @@ class CanvasBottomRightControls(Gtk.Box):
         self.btn_minimap.popup()
 
     def _cleanup(self) -> None:
+        self.activity_popover.cleanup()
         if self._tick_id:
             self.remove_tick_callback(self._tick_id)
             self._tick_id = 0
