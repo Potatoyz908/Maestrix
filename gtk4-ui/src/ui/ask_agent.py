@@ -225,7 +225,7 @@ class AskAgentRouter:
 
 
 def install_ask_agent(window) -> AskAgentRouter:
-    """Wire 'Ask agent' for OpenMaestriWindow (uses window.canvas_widget and window.document)."""
+    """Wire 'Ask agent' for MaestrixWindow (uses window.canvas_widget and window.document)."""
     from maestri_core.signals.bus import bus
 
     def pid_lookup(terminal_id: str) -> Optional[int]:

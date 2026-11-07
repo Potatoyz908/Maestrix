@@ -1,5 +1,5 @@
 """
-GObject signal bus for Open Maestri GTK 4 Native.
+GObject signal bus for Maestrix GTK 4 Native.
 Provides decoupled event communication across UI, Canvas, and Backend.
 Ensures thread-safe emission on the GTK main thread via GLib.idle_add.
 """
@@ -12,7 +12,7 @@ from gi.repository import GObject, GLib
 
 class SignalBus(GObject.Object):
     """
-    Central event dispatcher for Open Maestri Native GTK.
+    Central event dispatcher for Maestrix Native GTK.
     """
     __gsignals__ = {
         # Workspace lifecycle

@@ -1,5 +1,5 @@
 """
-Routines for Open Maestri GTK 4 (spec: docs/linux-gtk-sprint4-spec.md §2, reference docs/reference/official/11-routines.md).
+Routines for Maestrix GTK 4 (spec: docs/linux-gtk-sprint4-spec.md §2, reference docs/reference/official/11-routines.md).
 
 * `Routine` mirrors the Swift model field for field (`id, name, prompts[], intervalSeconds, targetTerminalId, isActive,
   createdAt`), and `dump_container` / `load_container` match `RoutinesContainer` (writes `payload`, reads `payload` or the

@@ -1,5 +1,5 @@
 """
-Cairo Canvas package for Open Maestri GTK 4 Native.
+Cairo Canvas package for Maestrix GTK 4 Native.
 """
 
 from .viewport import Viewport

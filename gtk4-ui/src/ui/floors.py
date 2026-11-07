@@ -1720,7 +1720,7 @@ class FloorButton(Gtk.MenuButton):
 
 
 def install_floors(window) -> FloorsController:
-    """Wire floors into OpenMaestriWindow: the floating button in bottom controls, a reload on every
+    """Wire floors into MaestrixWindow: the floating button in bottom controls, a reload on every
     workspace load (initial load and switch) and the /ws/events subscription; both stop when the window closes."""
     controller = FloorsController(window)
     window.floor_button = FloorButton(window, controller)

@@ -1,5 +1,5 @@
 """
-Real-time workspace synchronisation for Open Maestri GTK 4 Native.
+Real-time workspace synchronisation for Maestrix GTK 4 Native.
 
 Listens to SignalBus events (node moved / resized / added / removed,
 connections, selection z-order, viewport) and persists the active

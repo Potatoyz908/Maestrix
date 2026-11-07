@@ -520,7 +520,7 @@ def apply_routine_badges(canvas, controller: "RoutinesController", terminals: Ca
 # window hook
 # ---------------------------------------------------------------------------------------------------------------------
 def install_routines(window) -> RoutinesController:
-    """Wire routines into OpenMaestriWindow: scheduler + `win.routines` / `win.new-routine` actions (Ctrl+Shift+R).
+    """Wire routines into MaestrixWindow: scheduler + `win.routines` / `win.new-routine` actions (Ctrl+Shift+R).
     Uses window.client, window.document and window.canvas_widget; stops the scheduler when the window closes."""
 
     def terminals() -> List[TerminalInfo]:

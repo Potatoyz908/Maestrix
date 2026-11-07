@@ -1,5 +1,5 @@
 """
-Cairo Canvas Renderer for Open Maestri GTK 4 Native.
+Cairo Canvas Renderer for Maestrix GTK 4 Native.
 Renders dot grid, catenary ropes, and node cards with selection and resize handles.
 Designed for 60 FPS performance (<16ms frame budget).
 """
@@ -256,7 +256,7 @@ class CairoCanvasRenderer:
         if node.node_type == "terminal":
             lines = [
                 f"$ {getattr(node.content, 'command', 'bash')}",
-                "Open Maestri Terminal Session",
+                "Maestrix Terminal Session",
                 f"Directory: {getattr(node.content, 'working_directory', '~')}",
                 "● Process active (PTY streaming)",
             ]

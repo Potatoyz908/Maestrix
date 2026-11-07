@@ -22,18 +22,18 @@ npm --version
 
 ## 🖥️ 1. Como Executar o Maestrix como Aplicativo Desktop no Linux
 
-O Maestrix no Linux foi empacotado como um executável de desktop nativo (GTK3 + WebKit2 com aceleração WebGL) integrado ao backend Swift Core e terminais PTY:
+O Maestrix no Linux foi empacotado como um executável de desktop nativo (GTK 4 + Cairo) integrado ao backend Swift Core e terminais PTY:
 
 ### 1.1 Instalação rápida no sistema (user space)
 ```bash
 ./scripts/install-desktop.sh
 ```
 Isso instala:
-- O executável `open-maestri` em `~/.local/bin/open-maestri`
-- O CLI `omaestri` em `~/.local/bin/omaestri`
-- O daemon `open-maestri-server` em `~/.local/bin/open-maestri-server`
-- O ícone oficial de alta resolução em `~/.local/share/icons/hicolor/512x512/apps/open-maestri.png`
-- O atalho `.desktop` em `~/.local/share/applications/open-maestri.desktop` (aparece no menu de aplicativos do Ubuntu/GNOME)
+- O executável `open-maestri` em `~/.local/bin/maestrix`
+- O CLI `omaestri` em `~/.local/bin/maestrix-cli`
+- O daemon `open-maestri-server` em `~/.local/bin/maestrix-server`
+- O ícone oficial de alta resolução em `~/.local/share/icons/hicolor/512x512/apps/maestrix.png`
+- O atalho `.desktop` em `~/.local/share/applications/maestrix.desktop` (aparece no menu de aplicativos do Ubuntu/GNOME)
 
 ### 1.2 Rodar pelo terminal ou menu
 ```bash

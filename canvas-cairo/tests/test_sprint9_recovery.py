@@ -29,7 +29,7 @@ def method(path, cls, name, namespace):
 
 class CreationRecoveryTests(unittest.TestCase):
     def setUp(self):
-        self.create = method('gtk4-ui/src/ui/window.py', 'OpenMaestriWindow', '_create_node',
+        self.create = method('gtk4-ui/src/ui/window.py', 'MaestrixWindow', '_create_node',
                              dict(globals(), WIDGET_KINDS={'terminal', 'stickyNote', 'portal', 'fileTree'}, bus=Mock()))
         self.win = NS(loaded=True, preferences=NS(_extra={}), document=NS(payload=NS(nodes=[], working_directory='/workspace')),
                       canvas_widget=NS(get_width=lambda: 1000, get_height=lambda: 800),
@@ -240,7 +240,7 @@ class RopeRecoveryTests(unittest.TestCase):
     def test_settled_rope_updates_snapshot_before_autosave(self):
         from maestri_core.models.connection import Connection
         events = Mock()
-        settled = method('gtk4-ui/src/ui/window.py', 'OpenMaestriWindow', '_on_rope_settled', dict(bus=events))
+        settled = method('gtk4-ui/src/ui/window.py', 'MaestrixWindow', '_on_rope_settled', dict(bus=events))
         conn = Connection(id='C', a_id='A', b_id='B')
         win = NS(document=NS(payload=NS(all_connections=lambda: [conn])))
         points = [[1, 2], [3, 4]]

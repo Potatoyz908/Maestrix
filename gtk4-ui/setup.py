@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Setup script for Open Maestri GTK 4.0 UI
+Setup script for Maestrix GTK 4.0 UI
 """
 
 from setuptools import setup, find_packages
 
 setup(
-    name="open-maestri-gtk4",
+    name="maestrix-gtk4",
     version="0.1.0",
-    description="GTK 4.0 user interface for Open Maestri",
-    author="Open Maestri Team",
+    description="GTK 4.0 user interface for Maestrix",
+    author="Euller",
     python_requires=">=3.9",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
@@ -18,7 +18,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "open-maestri-gtk4=ui.main:main",
+            "maestrix-gtk4=ui.main:main",
         ],
     },
     classifiers=[

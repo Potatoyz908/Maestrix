@@ -1,5 +1,5 @@
 """
-FileTree backend model for Open Maestri GTK 4 Native.
+FileTree backend model for Maestrix GTK 4 Native.
 
 Connects a `FileTreeContent` node (rootPath) to the REST endpoints
 `GET /api/files` (directory listing, folders-first, with git badges) and

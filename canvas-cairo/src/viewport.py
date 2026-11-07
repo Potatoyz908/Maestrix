@@ -1,5 +1,5 @@
 """
-Viewport and coordinate system for Open Maestri Cairo Canvas.
+Viewport and coordinate system for Maestrix Cairo Canvas.
 Handles coordinate translation, zoom scale, and canvas bounds.
 Canvas origin is (9800, 8500) per Maestri standard.
 """

@@ -1,5 +1,5 @@
 """
-Canvas Interaction Handler for Open Maestri GTK 4 Native.
+Canvas Interaction Handler for Maestrix GTK 4 Native.
 Handles hit testing, selection, drag & drop, resize handles, pan, and zoom.
 """
 

@@ -1,5 +1,5 @@
 """
-Connection models for Open Maestri GTK 4 Native.
+Connection models for Maestrix GTK 4 Native.
 Compatible with schemaVersion: 2 connections.
 """
 

@@ -26,7 +26,7 @@ swift build
 maestrix
 ```
 
-O menu de aplicativos passa a mostrar **Maestrix**, com o ícone deste repositório. O comando `open-maestri` continua disponível como alias de compatibilidade; `omaestri` continua sendo o CLI dos agentes.
+O menu de aplicativos passa a mostrar **Maestrix**, com o ícone deste repositório. O comando `open-maestri` continua disponível como alias de compatibilidade; `maestrix-cli` é o CLI dos agentes, com `omaestri` mantido como alias. O backend é exposto como `maestrix-server` e o lançador como `maestrix.desktop`.
 
 ## Compatibilidade
 

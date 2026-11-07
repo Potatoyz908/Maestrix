@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch Open Maestri without the desktop's global GTK theme overrides."""
+"""Launch Maestrix without the desktop's global GTK theme overrides."""
 import os
 from pathlib import Path
 
@@ -20,5 +20,5 @@ css = Path(__file__).resolve().parent / 'maestrix-gtk.css'
 os.environ['XDG_CONFIG_HOME'] = str(isolated)
 os.environ['GTK_THEME'] = 'Adwaita'
 os.environ.pop('GTK2_RC_FILES', None)
-os.execv(str(Path(__file__).resolve().parent / 'open-maestri'),
-         [str(Path(__file__).resolve().parent / 'open-maestri'), *os.sys.argv[1:]])
+os.execv(str(Path(__file__).resolve().parent / 'maestrix-runtime'),
+         [str(Path(__file__).resolve().parent / 'maestrix-runtime'), *os.sys.argv[1:]])

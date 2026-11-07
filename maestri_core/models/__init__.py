@@ -1,5 +1,5 @@
 """
-Models package for Open Maestri GTK 4 Native.
+Models package for Maestrix GTK 4 Native.
 """
 
 from .node import (

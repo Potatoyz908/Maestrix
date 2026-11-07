@@ -1,5 +1,5 @@
 """
-User preferences for Open Maestri GTK 4 Native.
+User preferences for Maestrix GTK 4 Native.
 Reads/writes <data_dir>/preferences.json (~/.open-maestri unless OPEN_MAESTRI_DATA_DIR is set) (schemaVersion 1, camelCase keys, shared with the macOS app).
 Only the fields the Linux UI edits are modelled; every other key (agentPresets, shortcuts, ...) is preserved on save.
 """

@@ -60,7 +60,7 @@ from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
 from .iconography import StatusIndicator, gicon, icon_label, icon_name, install_css as install_icon_css
 
 
-class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
+class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, client: MaestriClient):
         super().__init__(application=app, title="Maestrix")
         self.client = client
@@ -1391,7 +1391,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def _build_menu_model(self) -> Gio.Menu:
-        """The macOS menu bar (Sources/OpenMaestriApp.swift + Localizable.xcstrings English strings), Cmd mapped to Ctrl:
+        """The macOS menu bar (Sources/MaestrixApp.swift + Localizable.xcstrings English strings), Cmd mapped to Ctrl:
         File: New Workspace (Ctrl+Shift+N) / new nodes / Routines… (Ctrl+Alt+R); View: Zoom In/Out/Reset Zoom, Open in Editor
         (Ctrl+Shift+E), Snap; Window: Next/Previous Workspace (Ctrl+Down/Up), Next/Previous Terminal (Ctrl+Tab)."""
         def section(items):

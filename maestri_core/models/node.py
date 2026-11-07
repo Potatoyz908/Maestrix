@@ -1,5 +1,5 @@
 """
-Canvas node models for Open Maestri GTK 4 Native.
+Canvas node models for Maestrix GTK 4 Native.
 Strictly compatible with Maestri schemaVersion: 2 format:
   frame: [[x, y], [w, h]]
   content: { "<type>": { "_0": <payload> } }

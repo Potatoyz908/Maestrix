@@ -1,5 +1,5 @@
 """
-Open Maestri GTK 4.0 Native - REST & WebSocket API Client
+Maestrix GTK 4.0 Native - REST & WebSocket API Client
 Consumes InterAgentServer with Bearer authentication and full PTY stream management.
 """
 
@@ -590,12 +590,12 @@ EventStreamClient = EventsWebSocketClient
 
 
 # ============================================================================
-# Main Open Maestri REST & PTY Client
+# Main Maestrix REST & PTY Client
 # ============================================================================
 
 class MaestriClient:
     """
-    High-level REST client consuming the Open Maestri InterAgentServer.
+    High-level REST client consuming the Maestrix InterAgentServer.
     Handles Bearer token authentication, CORS / Origin headers, workspace lifecycle,
     PTY creation and stream handling.
     """

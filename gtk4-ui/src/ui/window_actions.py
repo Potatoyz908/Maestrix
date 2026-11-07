@@ -1,6 +1,6 @@
 """Window-level actions the menus, keys and canvas call (Sprint 9 Vertice §4, contracts K9 / K10 / K11 / K2).
 
-Mixed into OpenMaestriWindow (window.py), which owns `document`, `canvas_widget`, `client`, `sync`, `core_connected`.
+Mixed into MaestrixWindow (window.py), which owns `document`, `canvas_widget`, `client`, `sync`, `core_connected`.
 
   K9   delete_connection(conn_id) · node-lock-changed / node-z-changed persistence · locked nodes refuse delete
   K10  copy_selected_nodes() · copy_node(node_id) · paste_nodes(at=None)   (mime application/x-maestri-element)

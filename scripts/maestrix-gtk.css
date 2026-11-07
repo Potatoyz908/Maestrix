@@ -1,4 +1,4 @@
-/* Keep menu labels readable with Open Maestri's original light surfaces.
+/* Keep menu labels readable with Maestrix's original light surfaces.
  * The app sets white on parent items; explicit label colors avoid inheritance.
  */
 .maestri-sidebar-menubar > item > label,

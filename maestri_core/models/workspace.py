@@ -1,5 +1,5 @@
 """
-Workspace models for Open Maestri GTK 4 Native.
+Workspace models for Maestrix GTK 4 Native.
 Strictly compatible with Maestri schemaVersion: 2.
 Preserves unknown fields on round-trip for lossless compatibility.
 """

@@ -1,5 +1,5 @@
 """
-Persistence manager for Open Maestri GTK 4 Native.
+Persistence manager for Maestrix GTK 4 Native.
 Atomic reading and writing of workspace.json conforming to schemaVersion: 2.
 """
 

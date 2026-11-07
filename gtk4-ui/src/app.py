@@ -16,13 +16,13 @@ sys.path.insert(0, str(ROOT_DIR / "canvas-cairo"))
 sys.path.insert(0, str(ROOT_DIR))
 
 from maestri_core.client.api import MaestriClient
-from ui.window import OpenMaestriWindow
+from ui.window import MaestrixWindow
 
 
-APP_ID = "org.openmaestri.desktop.native"   # also the .desktop StartupWMClass (Wayland app_id / X11 WM_CLASS)
+APP_ID = "org.maestrix.desktop"   # also the .desktop StartupWMClass (Wayland app_id / X11 WM_CLASS)
 
 
-class OpenMaestriApp(Gtk.Application):
+class MaestrixApp(Gtk.Application):
     def __init__(self, port: int = 0, token: str = ""):
         super().__init__(
             application_id=APP_ID,
@@ -36,7 +36,7 @@ class OpenMaestriApp(Gtk.Application):
         if not self.window:
             Gtk.Window.set_default_icon_name("maestrix")
             client = MaestriClient(port=self.port, token=self.token)
-            self.window = OpenMaestriWindow(self, client)
+            self.window = MaestrixWindow(self, client)
             self.window.set_icon_name("maestrix")
         self.window.present()
 
@@ -54,7 +54,7 @@ def main():
     port = args.port or int(port_env)
     token = args.token or os.environ.get("MAESTRI_AUTH_TOKEN", "")
 
-    app = OpenMaestriApp(port=port, token=token)
+    app = MaestrixApp(port=port, token=token)
     return app.run(sys.argv[:1])   # GApplication without HANDLES_OPEN would refuse URI arguments
 
 

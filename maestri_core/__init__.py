@@ -1,5 +1,5 @@
 """
-Maestri Core Python package for Open Maestri GTK 4 Native.
+Maestri Core Python package for Maestrix GTK 4 Native.
 """
 
 __version__ = "0.1.0"

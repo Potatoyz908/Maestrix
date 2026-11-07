@@ -1,4 +1,4 @@
-"""Where Open Maestri keeps its data (shared contract with the Swift core).
+"""Where Maestrix keeps its data (shared contract with the Swift core).
 
 `OPEN_MAESTRI_DATA_DIR` (an absolute path) replaces ~/.open-maestri for EVERY read and write: manifest.json, workspaces/,
 run/ (agent.sock, auth.token), preferences.json, routines.json, sidebar-layout.json, notes/, roles/. Without it the data
@@ -16,7 +16,7 @@ DATA_DIR_NAME = ".open-maestri"
 
 
 def data_dir() -> Path:
-    override = os.environ.get(DATA_DIR_ENV, "").strip()
+    override = (os.environ.get("MAESTRIX_DATA_DIR") or os.environ.get(DATA_DIR_ENV, "")).strip()
     if override:
         return Path(override).expanduser()
     return Path.home() / DATA_DIR_NAME

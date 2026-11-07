@@ -35,7 +35,7 @@ def guard_finish(session) -> None:
         reporter = session.config.pluginmanager.get_plugin("terminalreporter")
         (reporter.write_line if reporter else print)(
             f"\nERROR: the test run touched the REAL {isolation.REAL_DATA_DIR} ({len(changes)} change(s)); tests must use "
-            f"{isolation.DATA_DIR_ENV} (if you were using Open Maestri meanwhile, re-run to confirm):\n  {listing}")
+            f"{isolation.DATA_DIR_ENV} (if you were using Maestrix meanwhile, re-run to confirm):\n  {listing}")
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
     while _TMP_ROOT:
         shutil.rmtree(_TMP_ROOT.pop(), ignore_errors=True)
