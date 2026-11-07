@@ -466,6 +466,8 @@ class WindowActionsMixin:
     def close_workspace(self) -> None:
         """Back to the empty state: drop pending saves, clear the canvas, keep no document that autosave could re-create."""
         from maestri_core.models.workspace import WorkspaceDocument, WorkspacePayload
+        if getattr(self, "config_sync", None) is not None:
+            self.config_sync.detach()
         if self.sync is not None:
             self.sync.close()
             self.sync = None

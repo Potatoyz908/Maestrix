@@ -346,9 +346,11 @@ class EditWorkspaceDialog(Gtk.Window):
         parent: Gtk.Window,
         entry: WorkspaceEntry,
         on_save: Callable[[WorkspaceEntry], None],
+        sync_config_files: bool = False,
     ) -> None:
         super().__init__(transient_for=parent, modal=True, title="Edit Workspace")
         self.entry = entry
+        self.sync_config_files = bool(sync_config_files)
         self.on_save = on_save
         self.set_default_size(480, 520)
         self.set_resizable(False)
@@ -476,6 +478,22 @@ class EditWorkspaceDialog(Gtk.Window):
 
         body.append(dir_box)
 
+        # Keep CLAUDE.md and AGENTS.md in sync (payload.syncConfigFiles; ui/config_sync.py does the copying)
+        sync_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        sync_row.add_css_class("maestri-sync-row")
+        sync_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        sync_text.set_hexpand(True)
+        sync_title = Gtk.Label(label="Keep CLAUDE.md and AGENTS.md in sync", xalign=0.0, wrap=True)
+        sync_help = Gtk.Label(label="When either file is modified, automatically sync to the other", xalign=0.0, wrap=True)
+        sync_help.add_css_class("dim-label")
+        sync_text.append(sync_title)
+        sync_text.append(sync_help)
+        sync_row.append(sync_text)
+        self.sync_switch = Gtk.Switch(active=self.sync_config_files, valign=Gtk.Align.CENTER)
+        self.sync_switch.set_tooltip_text("CLAUDE.md ↔ AGENTS.md in the working directory")
+        sync_row.append(self.sync_switch)
+        body.append(sync_row)
+
         scrolled.set_child(body)
         root.append(scrolled)
         self.set_child(root)
@@ -531,6 +549,7 @@ class EditWorkspaceDialog(Gtk.Window):
         updated.working_directory = self.working_directory
         updated.icon = self.selected_icon
         updated.color = self.selected_color
+        updated.sync_config_files = self.sync_switch.get_active()   # not a manifest field: persisted in workspace.json
         self.on_save(updated)
         self._close_dialog()
 

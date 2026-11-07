@@ -179,6 +179,8 @@ class WorkspaceStore:
     def update_workspace(self, ws_id: str, **fields: Any) -> bool:
         """fields: name, working_directory, icon, color, is_pinned (None = unchanged). True when persisted somewhere."""
         fields = {k: v for k, v in fields.items() if v is not None}
+        if "sync_config_files" in fields:   # a workspace.json option: older cores ignore it, so also write it ourselves
+            self.set_sync_config(ws_id, fields["sync_config_files"])
         try:
             if self.client.update_workspace(ws_id, **fields) is not None:
                 return True
@@ -203,6 +205,23 @@ class WorkspaceStore:
         doc = _read_json(self.workspace_file(ws_id))   # the core mirrors name/directory/icon into the document as well
         if isinstance(doc, dict) and isinstance(doc.get("payload"), dict):
             doc["payload"].update({k: v for k, v in patch.items() if k in ("name", "workingDirectory", "icon", "color", "isPinned")})
+            _write_json(self.workspace_file(ws_id), doc)
+        return True
+
+    def read_sync_config(self, ws_id: str) -> bool:
+        """payload.syncConfigFiles from workspaces/<id>/workspace.json (False when absent)."""
+        doc = _read_json(self.workspace_file(ws_id))
+        payload = doc.get("payload") if isinstance(doc, dict) else None
+        return bool(payload.get("syncConfigFiles", False)) if isinstance(payload, dict) else False
+
+    def set_sync_config(self, ws_id: str, on: bool) -> bool:
+        doc = _read_json(self.workspace_file(ws_id))
+        if not (isinstance(doc, dict) and isinstance(doc.get("payload"), dict)):
+            return False
+        if bool(doc["payload"].get("syncConfigFiles", False)) == bool(on):
+            return True
+        doc["payload"]["syncConfigFiles"] = bool(on)
+        with self._lock:
             _write_json(self.workspace_file(ws_id), doc)
         return True
 

@@ -46,6 +46,7 @@ from .routines_window import install_routines
 from .floors import install_floors
 from .core_link import CoreReconnector
 from .live_events import LiveEvents
+from .config_sync import ConfigFileSync
 from .window_actions import WindowActionsMixin
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
@@ -111,6 +112,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         self.canvas_widget.connect("node-title-changed", self._on_node_title_changed)
         self._connect_k9_signals()                 # node-lock-changed / node-z-changed -> isLocked / zIndex (K9)
         self.live_events = LiveEvents(self)        # K2: server-created nodes/connections on the open canvas
+        self.config_sync = ConfigFileSync()        # CLAUDE.md <-> AGENTS.md while the workspace's syncConfigFiles is on
         self._events_stream = None
         self.portal_bridge = None                  # K3 executor (canvas-cairo portal_bridge.PortalBridge), when installed
         self._setup_context_menu()
@@ -166,6 +168,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         self.ask_agent = install_ask_agent(self)  # DiffView 'Ask agent' -> bus 'ask-agent' -> active terminal
 
         self._bus_handlers.append((bus, bus.connect("workspace-switched", self._on_workspace_switched)))
+        self._bus_handlers.append((bus, bus.connect("workspace-loaded", lambda _b, p: self.config_sync.attach(p))))
         self.connect("close-request", self._on_close_request)
         self.connect("destroy", self._on_destroy)
 
@@ -2021,6 +2024,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                 pass
             self._sidebar_tick = 0
         self._core_link.dispose()
+        self.config_sync.detach()
         if self._events_stream is not None:
             try:
                 self._events_stream.close()

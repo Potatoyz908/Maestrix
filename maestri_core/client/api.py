@@ -788,6 +788,7 @@ class MaestriClient:
         icon: Optional[str] = None,
         color: Optional[str] = None,
         is_pinned: Optional[bool] = None,
+        sync_config_files: Optional[bool] = None,
     ) -> Optional[WorkspaceEntry]:
         """Updates workspace metadata on the server."""
         payload: Dict[str, Any] = {}
@@ -801,6 +802,8 @@ class MaestriClient:
             payload["color"] = color
         if is_pinned is not None:
             payload["isPinned"] = is_pinned
+        if sync_config_files is not None:
+            payload["syncConfigFiles"] = bool(sync_config_files)   # workspace.json option (CLAUDE.md <-> AGENTS.md)
 
         try:
             resp = self.session.put(

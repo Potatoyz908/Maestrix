@@ -678,9 +678,24 @@ class SidebarView(Gtk.Box):
             store, ws_id = self.store, updated.id
             fields = dict(name=updated.name, working_directory=updated.working_directory, icon=updated.icon,
                           color=updated.color, is_pinned=updated.is_pinned)
+            sync_on = getattr(updated, "sync_config_files", None)
+            window = self.get_root()
+            is_active = self._active_payload is not None and ws_id.upper() == (self._active_workspace_id or "").upper()
+            if sync_on is not None and is_active:   # the open document is saved from memory: set it there and (re)attach
+                self._active_payload._extra["syncConfigFiles"] = bool(sync_on)
+                if getattr(window, "sync", None) is not None:
+                    window.sync._on_dirty()   # a payload option changed: mark the document dirty so the flush saves it
+                    window.sync.flush()
+                if hasattr(window, "config_sync"):
+                    window.config_sync.attach(self._active_payload)
+            elif sync_on is not None:
+                fields["sync_config_files"] = bool(sync_on)
             self._persist(lambda: store.update_workspace(ws_id, **fields))
 
-        EditWorkspaceDialog(self.get_root(), entry, handle_save).present()
+        active = self._active_payload is not None and entry.id.upper() == (self._active_workspace_id or "").upper()
+        sync_now = (bool((getattr(self._active_payload, "_extra", {}) or {}).get("syncConfigFiles", False)) if active
+                    else self.store.read_sync_config(entry.id))
+        EditWorkspaceDialog(self.get_root(), entry, handle_save, sync_config_files=sync_now).present()
 
     def _on_duplicate_workspace(self, entry: WorkspaceEntry, popover: Gtk.Popover) -> None:
         popover.popdown()
