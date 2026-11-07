@@ -37,6 +37,7 @@ from maestri_core.models.workspace import SidebarGroup, SidebarLayout, Workspace
 from maestri_core.signals.bus import bus
 
 from . import core_link
+from .ssh_dialog import card_location
 from .core_link import WorkspaceStore, count_terminals
 from .workspace_dialogs import (
     CreateWorkspaceDialog,
@@ -452,7 +453,8 @@ class SidebarView(Gtk.Box):
 
         name_lbl = Gtk.Label(label=f"<b>{GLib.markup_escape_text(entry.name)}</b>", use_markup=True, xalign=0.0, ellipsize=3)
         name_lbl.add_css_class("maestri-card-title")
-        path_str = (entry.working_directory or "").replace(os.path.expanduser("~"), "~", 1)
+        remote = card_location(entry)   # SSH workspace: user@host:path instead of a local path
+        path_str = remote or (entry.working_directory or "").replace(os.path.expanduser("~"), "~", 1)
         path_lbl = Gtk.Label(label=path_str, xalign=0.0, ellipsize=3)
         path_lbl.add_css_class("maestri-card-path")
         row_box.set_tooltip_text(f"{entry.name}\n{path_str}" if path_str else entry.name)
@@ -463,6 +465,12 @@ class SidebarView(Gtk.Box):
 
         # Right Badges (Pin + Terminal count capsule)
         badges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        if remote is not None:   # SSH badge
+            ssh_badge = Gtk.Image.new_from_icon_name("maestri-network-symbolic")
+            ssh_badge.set_tooltip_text("Remote SSH")
+            ssh_badge.add_css_class("maestri-card-ssh")
+            badges_box.append(ssh_badge)
+            row_box.ssh_badge = ssh_badge
         badges_box.set_valign(Gtk.Align.CENTER)
 
         if getattr(entry, "is_pinned", False):
@@ -760,6 +768,15 @@ class SidebarView(Gtk.Box):
     def _on_add_header_clicked(self, btn: Gtk.Button) -> None:
         popover, menu = self._new_popover(btn)
         menu.append(self._make_menu_item("maestri-plus-symbolic", "New Workspace…", lambda: self._on_header_new_workspace(popover)))
+        from .ssh_dialog import open_connect_to_host, ssh_unavailable_reason
+        window = self.get_root()
+        ssh_item = self._make_menu_item("maestri-network-symbolic", "Connect to Host…",
+                                        lambda: (popover.popdown(), open_connect_to_host(window)))
+        reason = ssh_unavailable_reason(window)
+        ssh_item.set_sensitive(reason is None)
+        ssh_item.set_tooltip_text(reason or "Open a workspace on a remote machine over SSH")
+        self.ssh_menu_item = ssh_item
+        menu.append(ssh_item)
         menu.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         menu.append(self._make_menu_item("maestri-folder-symbolic", "New Group…", lambda: self._on_header_new_group(popover)))
         popover.popup()

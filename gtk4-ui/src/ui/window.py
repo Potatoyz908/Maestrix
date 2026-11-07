@@ -50,6 +50,7 @@ from .window_actions import WindowActionsMixin
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
 from .terminal_dialog import EditTerminalDialog, NewTerminalDialog, PRESETS, agent_presets
+from .ssh_dialog import open_connect_to_host
 from .workspace_dialogs import CreateWorkspaceDialog, GroupDialog, create_workspace_record
 from .floating_bars import CanvasTopToolbar, CanvasBottomRightControls
 from .iconography import StatusIndicator, gicon, icon_label, icon_name, install_css as install_icon_css
@@ -1048,6 +1049,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         quick_menu = Gio.Menu()
         quick_menu.append("New Workspace…", "win.new-workspace")
         quick_menu.append("New Group…", "win.new-group")
+        quick_menu.append("Connect to Host…", "win.connect-ssh")   # Remote SSH workspace (ui/ssh_dialog.py)
         term_submenu = Gio.Menu()
         for preset in agent_presets(self):
             preset_item = Gio.MenuItem.new(preset["name"], None)
@@ -1151,7 +1153,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
 
         menubar = Gio.Menu()
         file_menu = Gio.Menu()
-        file_menu.append_section(None, section([("New Workspace", "win.new-workspace"), ("New Group…", "win.new-group")]))
+        file_menu.append_section(None, section([("New Workspace", "win.new-workspace"), ("New Group…", "win.new-group"),
+                                                ("Connect to Host…", "win.connect-ssh")]))
         file_menu.append_section(None, section([
             ("New Terminal…", "win.new-terminal"), ("New Note", "win.new-note"),
             ("New Portal", "win.new-portal"), ("New File Tree", "win.new-file-tree"),
@@ -1208,6 +1211,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         Ctrl+, preferences, Ctrl+B sidebar. Application accels run before focused widgets, so they work inside terminals."""
         handlers = {
             "new-workspace": lambda: self._on_new_workspace(),
+            "connect-ssh": lambda: open_connect_to_host(self),
             "new-group": lambda: self._on_new_group(),
             "new-terminal": lambda: self.open_new_terminal_dialog(),
             "new-terminal-claude": lambda: self.create_terminal_preset("claude"),
