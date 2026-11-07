@@ -50,6 +50,30 @@ final class LinuxPtyAndServerTests: IsolatedDataDirTestCase {
         await MainActor.run { session.terminate() }
     }
 
+    func testTerminalUnloadRestartAndScrollbackSprint9() async throws {
+        let terminalID = UUID(), workspaceID = UUID()
+        await MainActor.run {
+            LinuxTerminalManager.shared.createTerminal(id: terminalID,
+                command: "printf SPRINT9_SCROLLBACK_TOKEN; sleep 30", workingDirectory: "/tmp", workspaceId: workspaceID)
+        }
+        var seen = false
+        for _ in 0..<50 {
+            seen = await MainActor.run { LinuxTerminalManager.shared.bufferText(for: terminalID)?.contains("SPRINT9_SCROLLBACK_TOKEN") == true }
+            if seen { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(seen)
+        let unloaded = await MainActor.run { LinuxTerminalManager.shared.unload(id: terminalID) }
+        XCTAssertTrue(unloaded)
+        let saved = TerminalScrollbackFile.load(terminalId: terminalID, workspaceId: workspaceID)
+        XCTAssertTrue(saved.contains("SPRINT9_SCROLLBACK_TOKEN"))
+        let restarted = await MainActor.run { LinuxTerminalManager.shared.restart(id: terminalID) }
+        XCTAssertTrue(restarted)
+        let replay = await MainActor.run { LinuxTerminalManager.shared.bufferText(for: terminalID) ?? "" }
+        XCTAssertTrue(replay.contains("SPRINT9_SCROLLBACK_TOKEN"))
+        _ = await MainActor.run { LinuxTerminalManager.shared.unload(id: terminalID) }
+    }
+
     func testSkillInstallationIsolatedFallbackSprint9() throws {
         let pm = PersistenceManager.shared
         var prefs = Preferences()
@@ -159,16 +183,18 @@ final class LinuxPtyAndServerTests: IsolatedDataDirTestCase {
     }
 
     func testRESTEndpoints() async throws {
-        try await MainActor.run {
-            let server = InterAgentServer.shared
+        let server = InterAgentServer.shared
+        let (port, auth): (UInt16, String) = try await MainActor.run {
             try server.start()
-            defer { server.stop() }
+            return (server.port, "Authorization: Bearer \(server.authToken)\r\n")
+        }
+        defer {
+            Task { @MainActor in server.stop() }
+        }
 
-            let port = server.port
-            XCTAssertGreaterThan(port, 0)
-            let auth = "Authorization: Bearer \(server.authToken)\r\n"
+        XCTAssertGreaterThan(port, 0)
 
-            // 1. GET /api/workspace
+        // 1. GET /api/workspace
             let getWsReq = "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
             let getWsResp = try self.tcpExchange(port: port, request: getWsReq)
             XCTAssertTrue(getWsResp.hasPrefix("HTTP/1.1 200 OK"), "GET /api/workspace should return 200 OK")
@@ -267,7 +293,6 @@ final class LinuxPtyAndServerTests: IsolatedDataDirTestCase {
             // Verify connection removed
             let verifyDelConnResp = try self.tcpExchange(port: port, request: getConnReq)
             XCTAssertFalse(verifyDelConnResp.contains(connId), "Deleted connection should not appear in GET /api/connections")
-        }
     }
 
     func testISO8601WithMillisecondsDecodable() throws {
@@ -400,81 +425,83 @@ final class LinuxPtyAndServerTests: IsolatedDataDirTestCase {
     }
 
     func testConnectionKindAnd21PointsInterpolation() async throws {
-        try await MainActor.run {
-            let server = InterAgentServer.shared
+        let server = InterAgentServer.shared
+        let (port, auth): (UInt16, String) = try await MainActor.run {
             try server.start()
-            defer { server.stop() }
-
-            let auth = "Authorization: Bearer \(server.authToken)\r\n"
-            let idA = UUID()
-            let idB = UUID()
-            // Connections attach to the active workspace: make sure one exists (fresh isolated data dir).
-            _ = try self.tcpExchange(port: server.port, request: "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
-
-            // Pass 2 endpoints and kind="terminalToNote"
-            let body = "{\"a\":\"\(idA.uuidString)\",\"b\":\"\(idB.uuidString)\",\"kind\":\"terminalToNote\",\"ropePoints\":[[100,200],[300,400]]}"
-            let postReq = "POST /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
-            let postResp = try self.tcpExchange(port: server.port, request: postReq)
-            XCTAssertTrue(postResp.hasPrefix("HTTP/1.1 200 OK"))
-
-            let getReq = "GET /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
-            let getResp = try self.tcpExchange(port: server.port, request: getReq)
-            XCTAssertTrue(getResp.contains("\"type\" : \"terminalToNote\"") || getResp.contains("\"type\":\"terminalToNote\""))
+            return (server.port, "Authorization: Bearer \(server.authToken)\r\n")
         }
+        defer {
+            Task { @MainActor in server.stop() }
+        }
+
+        let idA = UUID()
+        let idB = UUID()
+        // Connections attach to the active workspace: make sure one exists (fresh isolated data dir).
+        _ = try self.tcpExchange(port: port, request: "GET /api/workspace HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n")
+
+        // Pass 2 endpoints and kind="terminalToNote"
+        let body = "{\"a\":\"\(idA.uuidString)\",\"b\":\"\(idB.uuidString)\",\"kind\":\"terminalToNote\",\"ropePoints\":[[100,200],[300,400]]}"
+        let postReq = "POST /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+        let postResp = try self.tcpExchange(port: port, request: postReq)
+        XCTAssertTrue(postResp.hasPrefix("HTTP/1.1 200 OK"))
+
+        let getReq = "GET /api/connections HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+        let getResp = try self.tcpExchange(port: port, request: getReq)
+        XCTAssertTrue(getResp.contains("\"type\" : \"terminalToNote\"") || getResp.contains("\"type\":\"terminalToNote\""))
     }
 
     func testPhase4Endpoints() async throws {
-        try await MainActor.run {
-            let server = InterAgentServer.shared
+        let server = InterAgentServer.shared
+        let (port, auth): (UInt16, String) = try await MainActor.run {
             try server.start()
-            defer { server.stop() }
+            return (server.port, "Authorization: Bearer \(server.authToken)\r\n")
+        }
+        defer {
+            Task { @MainActor in server.stop() }
+        }
 
-            let auth = "Authorization: Bearer \(server.authToken)\r\n"
-            let port = server.port
+        // 1. GET /api/sidebar-layout
+        let getLayoutReq = "GET /api/sidebar-layout HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+        let getLayoutResp = try self.tcpExchange(port: port, request: getLayoutReq)
+        XCTAssertTrue(getLayoutResp.hasPrefix("HTTP/1.1 200 OK"))
+        XCTAssertTrue(getLayoutResp.contains("\"schemaVersion\":2") || getLayoutResp.contains("\"schemaVersion\" : 2"))
 
-            // 1. GET /api/sidebar-layout
-            let getLayoutReq = "GET /api/sidebar-layout HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
-            let getLayoutResp = try self.tcpExchange(port: port, request: getLayoutReq)
-            XCTAssertTrue(getLayoutResp.hasPrefix("HTTP/1.1 200 OK"))
-            XCTAssertTrue(getLayoutResp.contains("\"schemaVersion\":2") || getLayoutResp.contains("\"schemaVersion\" : 2"))
+        // 2. PUT /api/sidebar-layout
+        let putLayoutBody = "{\"schemaVersion\":2,\"topLevelItems\":[],\"groups\":[{\"id\":\"\(UUID().uuidString)\",\"name\":\"TestGroup\",\"isCollapsed\":false,\"items\":[]}]}"
+        let putLayoutReq = "PUT /api/sidebar-layout HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(putLayoutBody.utf8.count)\r\nConnection: close\r\n\r\n\(putLayoutBody)"
+        let putLayoutResp = try self.tcpExchange(port: port, request: putLayoutReq)
+        XCTAssertTrue(putLayoutResp.hasPrefix("HTTP/1.1 200 OK"))
 
-            // 2. PUT /api/sidebar-layout
-            let putLayoutBody = "{\"schemaVersion\":2,\"topLevelItems\":[],\"groups\":[{\"id\":\"\(UUID().uuidString)\",\"name\":\"TestGroup\",\"isCollapsed\":false,\"items\":[]}]}"
-            let putLayoutReq = "PUT /api/sidebar-layout HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(putLayoutBody.utf8.count)\r\nConnection: close\r\n\r\n\(putLayoutBody)"
-            let putLayoutResp = try self.tcpExchange(port: port, request: putLayoutReq)
-            XCTAssertTrue(putLayoutResp.hasPrefix("HTTP/1.1 200 OK"))
+        // 3. GET /api/workspaces
+        let getWorkspacesReq = "GET /api/workspaces HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+        let getWorkspacesResp = try self.tcpExchange(port: port, request: getWorkspacesReq)
+        XCTAssertTrue(getWorkspacesResp.hasPrefix("HTTP/1.1 200 OK"))
 
-            // 3. GET /api/workspaces
-            let getWorkspacesReq = "GET /api/workspaces HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
-            let getWorkspacesResp = try self.tcpExchange(port: port, request: getWorkspacesReq)
-            XCTAssertTrue(getWorkspacesResp.hasPrefix("HTTP/1.1 200 OK"))
+        // 4. POST /api/workspaces
+        let postWorkspaceBody = "{\"name\":\"Linux Parity Test Workspace\",\"workingDirectory\":\"/tmp\"}"
+        let postWorkspaceReq = "POST /api/workspaces HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(postWorkspaceBody.utf8.count)\r\nConnection: close\r\n\r\n\(postWorkspaceBody)"
+        let postWorkspaceResp = try self.tcpExchange(port: port, request: postWorkspaceReq)
+        XCTAssertTrue(postWorkspaceResp.hasPrefix("HTTP/1.1 201 Created"))
+        XCTAssertTrue(postWorkspaceResp.contains("Linux Parity Test Workspace"))
 
-            // 4. POST /api/workspaces
-            let postWorkspaceBody = "{\"name\":\"Linux Parity Test Workspace\",\"workingDirectory\":\"/tmp\"}"
-            let postWorkspaceReq = "POST /api/workspaces HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(postWorkspaceBody.utf8.count)\r\nConnection: close\r\n\r\n\(postWorkspaceBody)"
-            let postWorkspaceResp = try self.tcpExchange(port: port, request: postWorkspaceReq)
-            XCTAssertTrue(postWorkspaceResp.hasPrefix("HTTP/1.1 201 Created"))
-            XCTAssertTrue(postWorkspaceResp.contains("Linux Parity Test Workspace"))
+        // 5. GET /api/files
+        let getFilesReq = "GET /api/files?root=\(FileManager.default.currentDirectoryPath)&path=Sources HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+        let getFilesResp = try self.tcpExchange(port: port, request: getFilesReq)
+        XCTAssertTrue(getFilesResp.hasPrefix("HTTP/1.1 200 OK"))
+        XCTAssertTrue(getFilesResp.contains("InterAgent"))
 
-            // 5. GET /api/files
-            let getFilesReq = "GET /api/files?root=\(FileManager.default.currentDirectoryPath)&path=Sources HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
-            let getFilesResp = try self.tcpExchange(port: port, request: getFilesReq)
-            XCTAssertTrue(getFilesResp.hasPrefix("HTTP/1.1 200 OK"))
-            XCTAssertTrue(getFilesResp.contains("InterAgent"))
+        // 6. GET /api/git/status
+        let getGitReq = "GET /api/git/status?root=\(FileManager.default.currentDirectoryPath) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
+        let getGitResp = try self.tcpExchange(port: port, request: getGitReq)
+        XCTAssertTrue(getGitResp.hasPrefix("HTTP/1.1 200 OK"))
 
-            // 6. GET /api/git/status
-            let getGitReq = "GET /api/git/status?root=\(FileManager.default.currentDirectoryPath) HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Connection: close\r\n\r\n"
-            let getGitResp = try self.tcpExchange(port: port, request: getGitReq)
-            XCTAssertTrue(getGitResp.hasPrefix("HTTP/1.1 200 OK"))
-
-            // 7. POST /api/nodes (terminal, portal, stickyNote, fileTree)
-            for nodeType in ["terminal", "stickyNote", "portal", "fileTree"] {
-                let postNodeBody = "{\"nodeType\":\"\(nodeType)\",\"frame\":[[50,50],[400,300]]}"
-                let postNodeReq = "POST /api/nodes HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(postNodeBody.utf8.count)\r\nConnection: close\r\n\r\n\(postNodeBody)"
-                let postNodeResp = try self.tcpExchange(port: port, request: postNodeReq)
-                XCTAssertTrue(postNodeResp.hasPrefix("HTTP/1.1 201 Created"), "POST /api/nodes for \(nodeType) should return 201 Created")
-                XCTAssertTrue(postNodeResp.contains("\"\(nodeType)\"") || postNodeResp.contains("\"id\""), "POST /api/nodes for \(nodeType) should serialize node")
-            }
+        // 7. POST /api/nodes (terminal, portal, stickyNote, fileTree)
+        for nodeType in ["terminal", "stickyNote", "portal", "fileTree"] {
+            let postNodeBody = "{\"nodeType\":\"\(nodeType)\",\"frame\":[[50,50],[400,300]]}"
+            let postNodeReq = "POST /api/nodes HTTP/1.1\r\nHost: 127.0.0.1\r\n\(auth)Content-Length: \(postNodeBody.utf8.count)\r\nConnection: close\r\n\r\n\(postNodeBody)"
+            let postNodeResp = try self.tcpExchange(port: port, request: postNodeReq)
+            XCTAssertTrue(postNodeResp.hasPrefix("HTTP/1.1 201 Created"), "POST /api/nodes for \(nodeType) should return 201 Created")
+            XCTAssertTrue(postNodeResp.contains("\"\(nodeType)\"") || postNodeResp.contains("\"id\""), "POST /api/nodes for \(nodeType) should serialize node")
         }
     }
 
