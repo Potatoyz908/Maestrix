@@ -274,6 +274,12 @@ class NodeFrame(Gtk.Overlay):
         setattr(self.badges, _ROLE, ("header", item.id))   # dragging over a badge still moves the node
         self._badges: dict[str, Gtk.Label] = {}
         header.append(self.badges)
+        close = Gtk.Button(icon_name="maestri-close-symbolic", tooltip_text="Close")   # outline icon, not a "×" glyph
+        close.add_css_class("flat")
+        close.add_css_class("maestri-node-close")
+        close.connect("clicked", lambda _b: self.on_close(self.node_id))
+        setattr(close, _ROLE, ("content", item.id))   # a real button: it keeps its own click
+        header.append(close)
         content.set_vexpand(True)
         content.set_hexpand(True)
         setattr(content, _ROLE, ("content", item.id))
