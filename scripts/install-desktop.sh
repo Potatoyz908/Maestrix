@@ -29,12 +29,20 @@ fi
 
 # 2. Install App Icon
 cp "$REPO_DIR/Sources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png" "$ICON_DIR/open-maestri.png"
+cp "$REPO_DIR/Sources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png" "$ICON_DIR/org.openmaestri.desktop.native.png"
 
-for size in 16 32 128 256; do
+for size in 16 24 32 48 64 128 256 512 1024; do
     target_dir="$HOME/.local/share/icons/hicolor/${size}x${size}/apps"
     mkdir -p "$target_dir"
+    src_icon=""
     if [ -f "$REPO_DIR/Sources/Assets.xcassets/AppIcon.appiconset/icon_${size}x${size}.png" ]; then
-        cp "$REPO_DIR/Sources/Assets.xcassets/AppIcon.appiconset/icon_${size}x${size}.png" "$target_dir/open-maestri.png"
+        src_icon="$REPO_DIR/Sources/Assets.xcassets/AppIcon.appiconset/icon_${size}x${size}.png"
+    elif [ "$size" -eq 1024 ] && [ -f "$REPO_DIR/Sources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png" ]; then
+        src_icon="$REPO_DIR/Sources/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png"
+    fi
+    if [ -n "$src_icon" ]; then
+        cp "$src_icon" "$target_dir/open-maestri.png"
+        cp "$src_icon" "$target_dir/org.openmaestri.desktop.native.png"
     fi
 done
 
@@ -42,6 +50,12 @@ done
 # Absolute Exec path: GNOME does not always have ~/.local/bin in the PATH of the session that launches .desktop files
 sed "s|@OPEN_MAESTRI_BIN@|$BIN_DIR/open-maestri|g" "$REPO_DIR/scripts/open-maestri.desktop" > "$APP_DIR/open-maestri.desktop"
 chmod +x "$APP_DIR/open-maestri.desktop"
+
+if [ -d "$HOME/Desktop" ]; then
+    cp "$APP_DIR/open-maestri.desktop" "$HOME/Desktop/open-maestri.desktop"
+    chmod +x "$HOME/Desktop/open-maestri.desktop"
+    gio set "$HOME/Desktop/open-maestri.desktop" metadata::trusted true 2>/dev/null || true
+fi
 
 # 4. Update desktop & icon caches if tools exist
 if command -v update-desktop-database >/dev/null 2>&1; then

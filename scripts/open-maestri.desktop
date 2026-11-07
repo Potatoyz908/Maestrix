@@ -11,3 +11,4 @@ Categories=Development;IDE;
 StartupWMClass=org.openmaestri.desktop.native
 Keywords=AI;Canvas;Terminal;Agent;Maestri;
 MimeType=x-scheme-handler/maestri;
+StartupNotify=true

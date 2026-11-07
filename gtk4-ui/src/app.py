@@ -34,8 +34,10 @@ class OpenMaestriApp(Gtk.Application):
 
     def do_activate(self):
         if not self.window:
+            Gtk.Window.set_default_icon_name("open-maestri")
             client = MaestriClient(port=self.port, token=self.token)
             self.window = OpenMaestriWindow(self, client)
+            self.window.set_icon_name("open-maestri")
         self.window.present()
 
 
