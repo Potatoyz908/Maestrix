@@ -96,6 +96,15 @@ tooltip, tooltip.background { background-color: #182239; color: #edf1ff; border:
 .maestri-segmented-control { background-color: #101729; }
 .maestri-segment-btn { color: #a9b7d5; background-color: transparent; background-image: none; }
 .maestri-segment-btn.active { background-color: #2d3d5e; color: white; }
+/* File Tree node */
+.maestri-file-tree, .maestri-file-tree scrolledwindow, .maestri-file-tree-list, .maestri-file-grid,
+.maestri-file-tree listview, .maestri-file-tree gridview, .maestri-file-tree-list > row, .maestri-file-grid > child {
+  background-color: #101729; color: #edf1ff;
+}
+.maestri-file-tree .toolbar { background-color: #151c2e; border-bottom: 1px solid #303956; }
+.maestri-file-tree .dim-label, .maestri-file-tree .caption { color: #8fa0c8; }
+.maestri-file-tree-list > row:hover, .maestri-file-grid > child:hover { background-color: rgba(113, 220, 236, 0.08); }
+.maestri-file-tree-list > row:selected, .maestri-file-grid > child:selected { background-color: rgba(22, 139, 241, 0.28); color: white; }
 .maestri-menu-item-btn.danger { color: #ff746f; }
 .maestri-menu-item-btn.danger:hover { background: #a62937; color: white; }
 """
