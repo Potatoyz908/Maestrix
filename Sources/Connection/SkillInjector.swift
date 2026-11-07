@@ -52,9 +52,14 @@ public final class SkillInjector {
         for skill in Self.skills {
             let dir = "\(skillsRoot)/\(skill.name)"
             let file = "\(dir)/SKILL.md"
-            guard !fm.fileExists(atPath: file) else {
-                logger.debug("SkillInjector: '\(skill.name)' already exists at \(skillsRoot), skipping")
-                continue
+            // These skills are ours (open-maestri-*): an older copy must not stay forever, or agents keep reading stale
+            // instructions (wrong CLI name, no Maestro-mode guidance). Rewrite only when the content differs.
+            if fm.fileExists(atPath: file) {
+                if (try? String(contentsOfFile: file, encoding: .utf8)) == skill.content {
+                    logger.debug("SkillInjector: '\(skill.name)' is up to date at \(skillsRoot), skipping")
+                    continue
+                }
+                logger.info("SkillInjector: updating '\(skill.name)' at \(skillsRoot)")
             }
             do {
                 try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -272,10 +277,22 @@ public final class SkillInjector {
     ---
     name: open-maestri-manager
     description: Create new connected agent terminals on the open-maestri canvas and assign them roles. Use when the user asks to assemble a team, delegate parallel work, or spin up additional agents or terminals to help, or to invoke Maestro Mode.
-    user-invocable: false
+    user-invocable: true
     ---
 
     # open-maestri Team Orchestration
+
+    You are running inside **open-maestri** (the Linux Maestri), on a canvas that connects agents, terminals, notes and portals.
+    The CLI here is **`omaestri`** (never `maestri`: that is a different app). If `omaestri` is not on PATH use `"$MAESTRI_CLI"`.
+
+    ## Maestro Mode
+
+    When the user asks you to create/recruit/spin up an agent, assemble a team, or delegate to a teammate, DO IT with the
+    commands below — do not answer that you cannot. If a command says "not in Maestro mode", tell the user to enable Maestro
+    mode for this terminal (terminal edit dialog → Maestro mode). Typical flow:
+    1. `omaestri list` (who is connected already)
+    2. `omaestri recruit "Name" --preset "Claude Code"` (or `--command "agy --dangerously-skip-permissions"`)
+    3. `omaestri ask "Name" "the task"` and read the reply it returns; `omaestri check "Name"` shows their screen.
 
     The commands below spawn new agent terminals on the canvas, assign them roles, and wire them together.
     Recruits are auto-connected to your terminal — once a recruit exists you can `omaestri ask "Name" "..."` to delegate work and `omaestri check "Name"` to read their output.

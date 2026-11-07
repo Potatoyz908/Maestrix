@@ -46,6 +46,19 @@ finally:
 PY
 }
 
+# A server from before the run/server.port file existed cannot be found by the app: it would open OFFLINE (local shells with
+# no MAESTRI_SOCKET, so `omaestri ask`/recruit fail inside agents). Replace THAT server (the one that owns this data dir's
+# socket) with the current build.
+if server_alive && [ ! -s "$RUN_DIR/server.port" ]; then
+    OLD_PID="$(ss -xlpn 2>/dev/null | grep -F "$SOCK_PATH" | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)"
+    if [ -n "$OLD_PID" ] && [ "$(cat /proc/$OLD_PID/comm 2>/dev/null)" = "open-maestri-se" ]; then
+        echo "♻️  Restarting the outdated Open Maestri server (pid $OLD_PID)..."
+        kill "$OLD_PID" 2>/dev/null
+        for i in $(seq 1 30); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.1; done
+        rm -f "$SOCK_PATH"
+    fi
+fi
+
 # Start background server if not currently running
 if [ -n "$SERVER_BIN" ] && ! server_alive; then
     rm -f "$SOCK_PATH"   # stale socket from a dead server
