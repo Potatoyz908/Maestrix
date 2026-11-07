@@ -338,12 +338,18 @@ class FloorsController:
         return next((f for f in self.floors if str(f.get("id", "")).upper() == floor_id.upper()), None)
 
     # -- active floor ----------------------------------------------------------------------------------------------
-    def switch_to(self, floor_id: Optional[str]) -> None:
+    def switch_to(self, floor_id: Optional[str], notify: bool = True) -> None:
         """None = Ground. Terminals created afterwards start in the floor's worktree (terminal_cwd / terminal_env)."""
         floor = self.find(floor_id)
         self.active_floor_id = floor.get("id") if floor else None
-        if floor:
-            self._status(f"Active floor: {floor.get('name')}. New terminals open in {floor.get('worktreePath')}", True)
+        if notify:
+            if floor:
+                self._status(f"Active floor: {floor.get('name')}. New terminals open in {floor.get('worktreePath')}", True)
+            else:
+                self._status(f"Active floor: Ground. Terminals open in {self.root or 'workspace root'}", True)
+        if hasattr(self.window, "document") and getattr(self.window, "document", None) and hasattr(self.window.document, "payload"):
+            self.window.document.payload.active_floor_id = self.active_floor_id
+        bus.emit("floor-switched", self.active_floor_id)
         self._changed()
 
     def terminal_cwd(self, default: str = "") -> str:
@@ -409,7 +415,7 @@ class FloorsController:
             what = " and its branch" if delete_branch else ""
             self._status(f"Floor “{floor.get('name')}”{what} deleted", True)
             if self.active_floor_id and self.active_floor_id.upper() == str(floor.get("id", "")).upper():
-                self.switch_to(None)   # T2.6: deleting the active floor returns to Ground
+                self.switch_to(None, notify=False)   # T2.6: deleting the active floor returns to Ground
             self.refresh()
 
         self.run(lambda: self.client.delete_floor(floor["id"], workspace_id=ws, delete_branch=delete_branch),
@@ -1488,6 +1494,10 @@ class FloorButton(Gtk.MenuButton):
         active = c.active_floor
         name = active.get('name') if active else 'Ground'
         self.btn_label.set_text(name)
+        if active is None:
+            self.btn_icon.set_from_icon_name("maestri-layers-symbolic" if _icon_exists("maestri-layers-symbolic") else "maestri-floor-symbolic")
+        else:
+            self.btn_icon.set_from_icon_name("maestri-floor-symbolic")
         self.set_sensitive(c.available)
         if not c.available:
             self.set_tooltip_text("Floors require the Open Maestri core (disconnected)")
@@ -1548,7 +1558,8 @@ class FloorButton(Gtk.MenuButton):
         row = Gtk.ListBoxRow(activatable=True, css_classes=["floor-row"] + (["active"] if is_active else []))
         row.floor_id = floor.get("id") if floor else None
         h = Gtk.Box(spacing=8)
-        kind = Gtk.Image.new_from_icon_name("maestri-floor-symbolic" if floor is None else "maestri-git-branch-symbolic"
+        kind = Gtk.Image.new_from_icon_name(("maestri-layers-symbolic" if _icon_exists("maestri-layers-symbolic") else "maestri-floor-symbolic")
+                                            if floor is None else "maestri-git-branch-symbolic"
                                             if _icon_exists("maestri-git-branch-symbolic") else "maestri-layers-symbolic")
         kind.set_pixel_size(16)
         kind.add_css_class("floor-row-icon")
