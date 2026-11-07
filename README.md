@@ -6,15 +6,38 @@ Software Linux desenvolvido por **Euller**, com interface nativa GTK 4 e canvas 
 
 O Maestrix é um projeto derivado do [OpenMaestri para macOS](https://github.com/zlh-428/open-maestri). O [Maestri original](https://maestriapp.com) é a referência de conceito, interface e funcionamento. Este projeto mantém os créditos dos autores originais e a licença GPL-3.0-or-later.
 
-## Interface e demonstração
+## Interface e Demonstração
 
-As imagens e o GIF abaixo são os arquivos já presentes no repositório. Podem mostrar a identidade anterior à mudança para Maestrix.
+Capturas de tela reais do **Maestrix** em execução nativa no Linux Ubuntu (GTK 4 + Cairo).
 
-![Demonstração rápida](docs/images/demo.gif)
-![Visão geral](docs/images/home.png)
-![Agentes no canvas](docs/images/agents.png)
-![Criação de terminal](docs/images/create-terminal.png)
-![Arquivos](docs/images/file.png)
+### 🌙 Tema Dark (Padrão Oficial Maestrix)
+Interface imersiva com paleta escura moderna baseada na identidade do Maestrix, otimizada para orquestração de múltiplos agentes de IA sem fadiga visual.
+
+![Visão Geral no Tema Dark](docs/images/maestrix-dark-home.png)
+
+#### Agentes Conectados com Cabos de Física (Verlet Ropes)
+Terminais VTE reais executando agentes paralelos (Claude Code, Codex CLI) com comunicação inter-agente autônoma (`omaestri ask`).
+
+![Agentes e Cabos no Canvas](docs/images/maestrix-dark-agents.png)
+
+#### Notas Markdown e Árvore de Arquivos GitOps
+Notas sticky sincronizadas com renderização Markdown ao vivo e explorador de arquivos com badges de status Git e diffs.
+
+![FileTree e Notas no Canvas](docs/images/maestrix-dark-files.png)
+
+#### Assistente de Criação de Terminais e Agentes
+Diálogo modal nativo para configuração de comandos, papéis (*Lead*, *Coder*, *Reviewer*, *Tester*) e presets de IA.
+
+![Novo Terminal](docs/images/create-terminal.png)
+
+---
+
+### ☀️ Tema Claro (Light Theme)
+O Maestrix também suporta alternância rápida para o tema claro nas preferências (`Ctrl+,`):
+
+![Visão Geral no Tema Claro](docs/images/maestrix-light-home.png)
+
+![Agentes no Tema Claro](docs/images/maestrix-light-agents.png)
 
 ## Instalação no Linux (Ubuntu / Debian)
 
