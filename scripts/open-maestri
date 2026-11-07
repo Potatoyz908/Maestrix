@@ -79,5 +79,7 @@ elif [ -z "$SERVER_BIN" ]; then
     echo "⚠️  open-maestri-server not found (run 'swift build'); the app will run OFFLINE." >&2
 fi
 
+export OPEN_MAESTRI_SERVER_BIN="$SERVER_BIN"   # the app restarts the core itself if it dies while the app is open
+
 # Launch Native GTK 4 Desktop Application
 exec python3 "$REPO_DIR/gtk4-ui/src/app.py" "$@"

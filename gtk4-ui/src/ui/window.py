@@ -78,6 +78,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         self._autosave_id = 0
         self._cleaned_up = False
         self._core_link = CoreReconnector(client, self._on_core_probe)   # re-probes the core while it is unreachable (R1)
+        self._core_misses = 0
+        GLib.timeout_add_seconds(5, self._core_heartbeat)   # notices a core that dies while nothing is being saved
         self.document = WorkspaceDocument(payload=WorkspacePayload(name="Conectando...", working_directory=os.path.expanduser("~")))
         load_vte()   # so is_terminal()/terminal_of() recognise VTE widgets before the first terminal exists
 
@@ -351,10 +353,44 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         cw.controller.dirty = True
         cw.queue_draw()
 
+    def _maybe_restart_core(self) -> None:
+        """The launcher exports OPEN_MAESTRI_SERVER_BIN: if the core died while the app runs (nothing answers, Floors stay
+        disabled, terminals become local shells), start it again, at most once a minute. Never in tests (no env var)."""
+        import socket, subprocess, time
+        binary = os.environ.get("OPEN_MAESTRI_SERVER_BIN")
+        if not binary or not os.access(binary, os.X_OK):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_core_restart_at", -1e9) < 60:
+            return
+        self._core_restart_at = now
+        from maestri_core.paths import run_dir
+        sock_path = run_dir() / "agent.sock"
+        probe = socket.socket(socket.AF_UNIX)
+        probe.settimeout(1.0)
+        try:
+            probe.connect(str(sock_path))
+            return   # something listens there: it is just slow, not dead
+        except OSError:
+            pass
+        finally:
+            probe.close()
+        try:
+            sock_path.unlink()
+        except OSError:
+            pass
+        try:
+            log = open(run_dir() / "server.log", "ab")
+            subprocess.Popen([binary], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+        except OSError:
+            pass
+
     def _on_core_probe(self, status: str) -> None:
         """Periodic probe result while the core is unreachable."""
         if self._cleaned_up or self.auth_failed:
             return
+        if status != "connected":
+            self._maybe_restart_core()
         if status == "connected" and not self.core_connected:
             self._core_link.stop()
             self.core_connected = True
@@ -452,6 +488,31 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         self.floors.refresh()
         self.floors.start_events()
         return GLib.SOURCE_REMOVE
+
+    def _core_heartbeat(self) -> bool:
+        """While connected, check the core every few seconds; two misses in a row = lost (the reconnector then takes over and,
+        under the launcher, _maybe_restart_core starts it again). Otherwise a dead core went unnoticed until some save failed."""
+        if self._cleaned_up:
+            return GLib.SOURCE_REMOVE
+        if not self.core_connected or self.auth_failed:
+            self._core_misses = 0
+            return GLib.SOURCE_CONTINUE
+
+        def worker():
+            status = self.client.check_connection_status()
+
+            def apply():
+                if status == "offline":
+                    self._core_misses += 1
+                    if self._core_misses >= 2:
+                        self._core_misses = 0
+                        self._on_core_lost()
+                else:
+                    self._core_misses = 0
+                return GLib.SOURCE_REMOVE
+            GLib.idle_add(apply)
+        threading.Thread(target=worker, name="maestri-core-heartbeat", daemon=True).start()
+        return GLib.SOURCE_CONTINUE
 
     def _on_core_lost(self) -> None:
         """A save failed because the core went away: back to Standalone (not 'Falha ao Salvar') and keep probing."""
