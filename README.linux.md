@@ -1,4 +1,4 @@
-# open-maestri (Linux Ubuntu Port)
+# Maestrix para Linux
 
 Guia de execução, testes e arquitetura da versão Linux do **open-maestri** (branch `feat/linux-port`).
 
@@ -20,9 +20,9 @@ npm --version
 
 ---
 
-## 🖥️ 1. Como Executar o Open Maestri como Aplicativo Desktop no Linux
+## 🖥️ 1. Como Executar o Maestrix como Aplicativo Desktop no Linux
 
-O Open Maestri no Linux foi empacotado como um executável de desktop nativo (GTK3 + WebKit2 com aceleração WebGL) integrado ao backend Swift Core e terminais PTY:
+O Maestrix no Linux foi empacotado como um executável de desktop nativo (GTK3 + WebKit2 com aceleração WebGL) integrado ao backend Swift Core e terminais PTY:
 
 ### 1.1 Instalação rápida no sistema (user space)
 ```bash
@@ -40,10 +40,10 @@ Isso instala:
 # Rodar direto pelo terminal (já no PATH):
 open-maestri
 
-# Ou buscar por "Open Maestri" no Dash / menu de aplicativos do Ubuntu
+# Ou buscar por "Maestrix" no Dash / menu de aplicativos do Ubuntu
 ```
 
-Ao abrir, a janela nativa do Open Maestri carrega o Canvas interativo, inicia o Core Server e disponibiliza o socket Unix em `~/.open-maestri/run/agent.sock`.
+Ao abrir, a janela nativa do Maestrix carrega o Canvas interativo, inicia o Core Server e disponibiliza o socket Unix em `~/.open-maestri/run/agent.sock`.
 
 Pressione `F12` dentro do app a qualquer momento para abrir o Developer Tools / Inspector do WebKit.
 

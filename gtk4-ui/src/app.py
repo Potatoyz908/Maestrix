@@ -1,5 +1,5 @@
 """
-Open Maestri GTK 4 Native Application Entry Point.
+Maestrix GTK 4 Native Application Entry Point.
 """
 
 import gi
@@ -34,15 +34,15 @@ class OpenMaestriApp(Gtk.Application):
 
     def do_activate(self):
         if not self.window:
-            Gtk.Window.set_default_icon_name("open-maestri")
+            Gtk.Window.set_default_icon_name("maestrix")
             client = MaestriClient(port=self.port, token=self.token)
             self.window = OpenMaestriWindow(self, client)
-            self.window.set_icon_name("open-maestri")
+            self.window.set_icon_name("maestrix")
         self.window.present()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Open Maestri GTK 4 Native Linux")
+    parser = argparse.ArgumentParser(description="Maestrix GTK 4 Native Linux")
     parser.add_argument("--port", type=int, default=0, help="Backend TCP port")
     parser.add_argument("--token", type=str, default="", help="Backend auth token")
     # maestri://... (x-scheme-handler/maestri from the .desktop %U) and other positionals are accepted and ignored

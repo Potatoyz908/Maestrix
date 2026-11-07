@@ -1,5 +1,5 @@
 """
-Floating Island Toolbars for Open Maestri GTK 4 Native.
+Floating Island Toolbars for Maestrix GTK 4 Native.
 Provides:
 1. CanvasTopToolbar: Top-center floating pill with the 8 primary creation/selection tools + selection actions.
 2. CanvasBottomRightControls: four bottom-right capsules — Floor selector, agent rings, Minimap, Zoom (− % +).

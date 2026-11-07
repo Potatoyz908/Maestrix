@@ -27,7 +27,7 @@ from gi.repository import GLib, Gtk  # noqa: E402
 from .iconography import icon_name  # noqa: E402
 
 _TOKEN = re.compile(r"^[A-Za-z0-9._@:-]+$")
-UNAVAILABLE = "Remote SSH needs the Open Maestri core (it is not connected)."
+UNAVAILABLE = "Remote SSH needs the Maestrix core (it is not connected)."
 
 
 # ---------------------------------------------------------------------------------------------------------------------

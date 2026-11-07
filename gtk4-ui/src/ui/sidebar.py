@@ -1,5 +1,5 @@
 """
-Sidebar View for Open Maestri GTK 4 Native.
+Sidebar View for Maestrix GTK 4 Native.
 Matches the official macOS Maestri sidebar design (Sources/Workspace/WorkspaceSidebarView.swift):
 - Rounded search entry ('Search Workspaces')
 - Collapsible Groups (DisclosureGroup / SidebarGroup)

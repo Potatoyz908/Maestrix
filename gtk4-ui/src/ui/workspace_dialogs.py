@@ -1,5 +1,5 @@
 """
-Workspace Dialogs for Open Maestri GTK 4 Native.
+Workspace Dialogs for Maestrix GTK 4 Native.
 Faithful implementation of macOS sheets:
 - CreateWorkspaceDialog: matches Sources/Workspace/CreateWorkspaceSheet.swift
 - EditWorkspaceDialog: matches Sources/Workspace/EditWorkspaceSheet.swift

@@ -1,5 +1,5 @@
 """
-Main ApplicationWindow for Open Maestri GTK 4 Native.
+Main ApplicationWindow for Maestrix GTK 4 Native.
 Integrates HeaderBar, Sidebar, CanvasWidget, and REST synchronization.
 """
 
@@ -62,7 +62,7 @@ from .iconography import StatusIndicator, gicon, icon_label, icon_name, install_
 
 class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, client: MaestriClient):
-        super().__init__(application=app, title="Open Maestri (Native GTK 4)")
+        super().__init__(application=app, title="Maestrix")
         self.client = client
         self.prefs_store = PreferencesStore()
         self.preferences = self.prefs_store.load()
@@ -543,8 +543,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         return GLib.SOURCE_CONTINUE
 
     def _setup_theme(self):
-        self.set_icon_name("open-maestri")
-        Gtk.Window.set_default_icon_name("open-maestri")
+        self.set_icon_name("maestrix")
+        Gtk.Window.set_default_icon_name("maestrix")
         display = Gdk.Display.get_default()
         if display:
             theme = Gtk.IconTheme.get_for_display(display)
@@ -1410,7 +1410,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         ]))
         file_menu.append_section(None, section([("Routines…", "win.routines")]))
         file_menu.append_section(None, section([("Save", "win.save")]))
-        file_menu.append_section(None, section([("Settings…", "win.preferences"), ("Quit Open Maestri", "win.quit")]))
+        file_menu.append_section(None, section([("Settings…", "win.preferences"), ("Quit Maestrix", "win.quit")]))
         menubar.append_submenu("_File", file_menu)
 
         edit_menu = Gio.Menu()
@@ -1433,7 +1433,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         menubar.append_submenu("_Window", window_menu)
 
         help_menu = Gio.Menu()
-        help_menu.append_section(None, section([("About Open Maestri", "win.about")]))
+        help_menu.append_section(None, section([("About Maestrix", "win.about")]))
         menubar.append_submenu("_Help", help_menu)
         return menubar
 
@@ -1680,8 +1680,12 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         return node
 
     def _show_about(self):
-        about = Gtk.AboutDialog(transient_for=self, modal=True, program_name="Open Maestri",
-                                comments="Native GTK 4 port of Maestri for Linux.")
+        about = Gtk.AboutDialog(transient_for=self, modal=True, program_name="Maestrix",
+                                comments="Software Linux desenvolvido por Euller. Baseado no OpenMaestri para macOS; interface e conceito inspirados no Maestri original.",
+                                authors=["Euller — versão Linux Maestrix", "OpenMaestri contributors — projeto base"],
+                                license_type=Gtk.License.GPL_3_0,
+                                website="https://github.com/Potatoyz908/open-maestri-linux",
+                                logo_icon_name="maestrix")
         about.present()
 
     def _sync_sidebar_header_width(self, pos: int) -> None:

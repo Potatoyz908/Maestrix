@@ -486,7 +486,7 @@ class WindowActionsMixin:
         cw.controller.dirty = True
         cw.queue_draw()
         try:
-            self.set_title("Open Maestri")
+            self.set_title("Maestrix")
         except Exception:   # noqa: BLE001
             pass
 

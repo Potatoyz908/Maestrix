@@ -1,4 +1,4 @@
-"""Floors UI for Open Maestri GTK 4 (spec: docs/linux-gtk-sprint5-spec.md §2 T2.3-T2.6, base sprint4 §1; reference
+"""Floors UI for Maestrix GTK 4 (spec: docs/linux-gtk-sprint5-spec.md §2 T2.3-T2.6, base sprint4 §1; reference
 docs/reference/official/09-floors.md).
 
 A floor is a git worktree of the workspace's repository with its own branch. The core owns them (`/api/floors`); this module is
@@ -1500,7 +1500,7 @@ class FloorButton(Gtk.MenuButton):
             self.btn_icon.set_from_icon_name("maestri-floor-symbolic")
         self.set_sensitive(c.available)
         if not c.available:
-            self.set_tooltip_text("Floors require the Open Maestri core (disconnected)")
+            self.set_tooltip_text("Floors require the Maestrix core (disconnected)")
         elif active is not None:
             self.set_tooltip_text(f"Floor “{name}” · {active.get('branchName', '')}")
         else:

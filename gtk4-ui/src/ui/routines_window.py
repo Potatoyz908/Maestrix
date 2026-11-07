@@ -1,4 +1,4 @@
-"""Routines UI for Open Maestri GTK 4 (spec: docs/linux-gtk-sprint4-spec.md §2; reference docs/reference/official/11-routines.md).
+"""Routines UI for Maestrix GTK 4 (spec: docs/linux-gtk-sprint4-spec.md §2; reference docs/reference/official/11-routines.md).
 
 File → Routines… (`win.routines`, Ctrl+Shift+R) opens `RoutinesWindow` (non-modal): one row per routine with a live
 indicator (a CSS dot, pulsing while a run is in progress), name, target and interval, a Switch (pause / resume), Run now, Edit and

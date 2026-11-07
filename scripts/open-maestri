@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open Maestri GTK 4 Native Linux Launcher
+# Maestrix GTK 4 Native Linux Launcher
 set -e
 
 DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -52,7 +52,7 @@ PY
 if server_alive && [ ! -s "$RUN_DIR/server.port" ]; then
     OLD_PID="$(ss -xlpn 2>/dev/null | grep -F "$SOCK_PATH" | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)"
     if [ -n "$OLD_PID" ] && [ "$(cat /proc/$OLD_PID/comm 2>/dev/null)" = "open-maestri-se" ]; then
-        echo "♻️  Restarting the outdated Open Maestri server (pid $OLD_PID)..."
+        echo "♻️  Restarting the outdated Maestrix server (pid $OLD_PID)..."
         kill "$OLD_PID" 2>/dev/null
         for i in $(seq 1 30); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.1; done
         rm -f "$SOCK_PATH"
@@ -62,7 +62,7 @@ fi
 # Start background server if not currently running
 if [ -n "$SERVER_BIN" ] && ! server_alive; then
     rm -f "$SOCK_PATH"   # stale socket from a dead server
-    echo "🚀 Starting Open Maestri background server ($SERVER_BIN)..."
+    echo "🚀 Starting Maestrix background server ($SERVER_BIN)..."
     nohup "$SERVER_BIN" > "$RUN_DIR/server.log" 2>&1 &
     # Wait until the server really accepts connections (not just until the file exists)
     for i in $(seq 1 50); do
@@ -72,7 +72,7 @@ if [ -n "$SERVER_BIN" ] && ! server_alive; then
         sleep 0.1
     done
     if ! server_alive; then
-        echo "⚠️  The Open Maestri server did not start; the app will run OFFLINE (Floors and live sync disabled)." >&2
+        echo "⚠️  The Maestrix server did not start; the app will run OFFLINE (Floors and live sync disabled)." >&2
         echo "    See $RUN_DIR/server.log" >&2
     fi
 elif [ -z "$SERVER_BIN" ]; then
