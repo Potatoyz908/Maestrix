@@ -47,6 +47,7 @@ from .floors import install_floors
 from .core_link import CoreReconnector
 from .live_events import LiveEvents
 from .config_sync import ConfigFileSync
+from .workspace_pill import WorkspacePill
 from .window_actions import WindowActionsMixin
 from .settings_window import SettingsWindow
 from .sidebar import SidebarView
@@ -169,6 +170,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
 
         self._bus_handlers.append((bus, bus.connect("workspace-switched", self._on_workspace_switched)))
         self._bus_handlers.append((bus, bus.connect("workspace-loaded", lambda _b, p: self.config_sync.attach(p))))
+        self._bus_handlers.append((bus, bus.connect("workspace-loaded", lambda *_: self.update_workspace_pill())))
         self.connect("close-request", self._on_close_request)
         self.connect("destroy", self._on_destroy)
 
@@ -1080,6 +1082,9 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         btn_sidebar.get_label = lambda: "[|]"
         header.pack_start(btn_sidebar)
         self.btn_sidebar = btn_sidebar
+        # Sidebar collapsed: [icon] Workspace name capsule next to the toggle (follows switches and renames)
+        self.workspace_pill = WorkspacePill()
+        header.pack_start(self.workspace_pill)
         self._header = header
 
         # Right: Settings button
@@ -1370,6 +1375,23 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         threading.Thread(target=worker, name=f"maestri-pty-{tid[:8]}", daemon=True).start()
         return view
 
+    def update_workspace_pill(self) -> None:
+        """Name / icon / colour of the open workspace in the header capsule; visible only while the sidebar is collapsed."""
+        pill = getattr(self, "workspace_pill", None)
+        if pill is None:
+            return
+        p = self.document.payload
+        entry = None
+        sb = getattr(self, "sidebar", None)
+        if sb is not None and p.id:
+            entry = next((w for w in getattr(sb, "_raw_workspaces", []) if w.id.upper() == str(p.id).upper()), None)
+        from .sidebar import workspace_icon_name
+        name = (entry.name if entry else p.name) or "Workspace"
+        icon = (entry.icon if entry else p.icon) or "folder"
+        color = (getattr(entry, "color", None) if entry else (getattr(p, "_extra", {}) or {}).get("color")) or "blue"
+        pill.update(name, workspace_icon_name(icon), color)
+        pill.set_visible(not getattr(self, "_sidebar_open", True) and bool(p.id) and not getattr(self, "_no_workspace", False))
+
     def _floor_id_for(self, cwd: str):
         """Id of the floor whose worktree contains `cwd` (K12 floorId), None on Ground."""
         floors = getattr(getattr(self, "floors", None), "floors", None) or []
@@ -1434,6 +1456,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             self.paned.remove_tick_callback(self._sidebar_tick)
             self._sidebar_tick = 0
         opening = self._sidebar_open
+        self.update_workspace_pill()
         start = self.paned.get_position() if self.sidebar.get_visible() else 0
         target = 260 if opening else 0
         self.sidebar.set_visible(True)

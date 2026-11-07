@@ -236,7 +236,13 @@ class SidebarView(Gtk.Box):
         if counts:
             self._counts.update(counts)
         self._rerender()
+        self._refresh_header_pill()
         return GLib.SOURCE_REMOVE
+
+    def _refresh_header_pill(self) -> None:
+        window = self.get_root()
+        if window is not None and hasattr(window, "update_workspace_pill"):
+            window.update_workspace_pill()
 
     def _rerender(self) -> None:
         text = self.search_entry.get_text().strip().lower()
@@ -664,6 +670,7 @@ class SidebarView(Gtk.Box):
                 window.set_title(entry.name)
             except Exception:
                 pass
+        self._refresh_header_pill()   # collapsed-sidebar capsule shows the new name / icon / colour
 
     # ---- Actions -------------------------------------------------------------------------------------------------------------
     def _on_edit_workspace(self, entry: WorkspaceEntry, popover: Gtk.Popover) -> None:
