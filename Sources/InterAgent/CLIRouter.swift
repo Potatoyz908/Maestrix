@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// CLI 命令路由器：根据 args[0] 分发到对应 Handler
 final class CLIRouter {
@@ -23,6 +25,8 @@ final class CLIRouter {
             return await PortalHandler.shared.handleAsync(args: args, terminalId: terminalId)
         case "recruit", "dismiss", "connect", "role", "preset":
             return await MaestroHandlers.shared.handleAsync(args: args, terminalId: terminalId)
+        case "partitura", "routine", "workspace", "floor":   // Nexus (K11, routines, workspaces, floors)
+            return await NexusCLI.route(args: args, terminalId: terminalId)
         case "debug":
             return buildDebugInfo(terminalId: terminalId)
         default:
@@ -33,9 +37,9 @@ final class CLIRouter {
     // MARK: - debug
 
     private func buildDebugInfo(terminalId: UUID?) -> String {
-        let port = InterAgentServer.shared.port
+        let port = PlatformHooks.serverPort()
         let tidStr = terminalId?.uuidString ?? "(none)"
-        let commands = "list ask check note portal recruit dismiss connect role preset debug"
+        let commands = "list ask check note portal recruit dismiss connect role preset partitura routine workspace floor debug"
         return "open-maestri inter-agent server debug:\n  Server port: \(port)\n  Terminal ID: \(tidStr)\n  Commands: \(commands)"
     }
 }

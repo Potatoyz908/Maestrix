@@ -1,4 +1,6 @@
+#if canImport(OSLog)
 import OSLog
+#endif
 import SwiftUI
 
 private let settingsLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "open-maestri", category: "Settings")

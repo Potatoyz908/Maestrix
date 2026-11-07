@@ -1,16 +1,35 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 数据持久化管理器
 /// 所有文件 I/O 必须通过此类进行（ScrollbackStore 除外，性能原因）
-final class PersistenceManager {
-    static let shared = PersistenceManager()
+public final class PersistenceManager {
+    public static let shared = PersistenceManager()
 
     private let logger = Logger.make(category: "PersistenceManager")
 
-    /// 应用数据根目录 ~/.open-maestri/
-    var appDataURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+    /// 覆盖数据根目录的环境变量（测试/隔离运行用）。设置时它取代 ~/.open-maestri，作用于所有数据：
+    /// manifest、workspaces/、run/（agent.sock、auth.token）、preferences、routines、sidebar-layout、notes、roles、backups。
+    public static let dataDirEnvironmentKey = "OPEN_MAESTRI_DATA_DIR"
+
+    /// 应用数据根目录：`$OPEN_MAESTRI_DATA_DIR`（非空时），否则 ~/.open-maestri/。
+    /// 每次读取环境（getenv 能看到进程内 setenv），因此测试可在启动后切换。
+    public var appDataURL: URL {
+        Self.resolveDataDirectory(override: getenv(Self.dataDirEnvironmentKey).map { String(cString: $0) })
+    }
+
+    /// `override`：环境变量的值。空/缺失 -> ~/.open-maestri；`~` 会展开；相对路径相对于当前目录解析为绝对路径。
+    static func resolveDataDirectory(override: String?) -> URL {
+        if let raw = override?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let expanded = (raw as NSString).expandingTildeInPath
+            let absolute = expanded.hasPrefix("/")
+                ? expanded
+                : URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(expanded).path
+            return URL(fileURLWithPath: absolute, isDirectory: true).standardizedFileURL
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(Constants.appDataDirectoryName)
     }
 
@@ -47,7 +66,19 @@ final class PersistenceManager {
 
     let decoder: JSONDecoder = {
         let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
+        dec.dateDecodingStrategy = .custom { d in
+            let container = try d.singleValueContainer()
+            let str = try container.decode(String.self)
+            let formatter = ISO8601DateFormatter()
+            if let date = formatter.date(from: str) {
+                return date
+            }
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: str) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO8601 date string: \(str)")
+        }
         return dec
     }()
 
@@ -55,7 +86,7 @@ final class PersistenceManager {
 
     // MARK: - 目录初始化
 
-    func ensureDirectoriesExist() throws {
+    public func ensureDirectoriesExist() throws {
         let dirs: [URL] = [
             appDataURL,
             appDataURL.appendingPathComponent("workspaces"),
@@ -132,12 +163,7 @@ final class PersistenceManager {
 
         if FileManager.default.fileExists(atPath: url.path) {
             // 目标文件已存在：使用 replaceItem 保证原子性（含崩溃恢复语义）
-            _ = try FileManager.default.replaceItem(
-                at: url,
-                withItemAt: tmp,
-                backupItemName: nil,
-                resultingItemURL: nil
-            )
+            try FileManager.default.atomicReplaceItem(at: url, withItemAt: tmp)
         } else {
             // 目标文件不存在（首次创建）：直接 move tmp 到目标路径
             try FileManager.default.moveItem(at: tmp, to: url)
@@ -182,6 +208,11 @@ final class PersistenceManager {
         _cachedPreferences = prefs
         _prefLock.unlock()
         return prefs
+    }
+
+    /// Snapshot for consumers that must detect atomic external preference writes.
+    func preferencesSnapshot() -> Data? {
+        try? Data(contentsOf: preferencesURL)
     }
 
     /// 同步无抛出版本，供 HTTP 线程调用（返回默认值而非崩溃）

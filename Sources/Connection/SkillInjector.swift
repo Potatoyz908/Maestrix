@@ -1,11 +1,13 @@
 // Sources/Connection/SkillInjector.swift
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 将 open-maestri skill 文件写入用户全局 ~/.claude/skills/ 目录
 /// 在建立 Connection 时调用，确保 Claude Code 能自动加载 omaestri 相关 skill
-final class SkillInjector {
-    static let shared = SkillInjector()
+public final class SkillInjector {
+    public static let shared = SkillInjector()
     private let logger = Logger.make(category: "SkillInjector")
     private init() {}
 
@@ -16,10 +18,24 @@ final class SkillInjector {
     }
 
     /// 按需写入：将内置 skill 写入用户配置的所有活跃 skillPaths，已存在则跳过
-    func installSkillsIfNeeded() {
-        let prefs = PersistenceManager.shared.loadPreferencesSync()
-        let activePaths = prefs.skillPaths.filter { $0.isActive }.map { $0.path }
-        guard !activePaths.isEmpty else { return }
+    public func installSkillsIfNeeded() {
+        let pm = PersistenceManager.shared
+        // Python updates preferences atomically, outside the Swift preferences cache.
+        let prefs = pm.preferencesSnapshot().flatMap { try? JSONDecoder().decode(Preferences.self, from: $0) } ?? Preferences()
+        let configured = prefs.skillPaths.filter { $0.isActive }.map { $0.path }
+        let activePaths: [String]
+        if let dataDir = ProcessInfo.processInfo.environment["OPEN_MAESTRI_DATA_DIR"], !dataDir.isEmpty {
+            // Never touch real home-directory skills in isolated server runs.
+            let root = URL(fileURLWithPath: dataDir).standardizedFileURL.resolvingSymlinksInPath()
+            let safePaths = configured.filter { path in
+                let expanded = (path as NSString).expandingTildeInPath
+                let target = URL(fileURLWithPath: expanded).standardizedFileURL.resolvingSymlinksInPath().path
+                return target == root.path || target.hasPrefix(root.path + "/")
+            }
+            activePaths = safePaths.isEmpty ? [root.appendingPathComponent("skills").path] : safePaths
+        } else {
+            activePaths = configured.isEmpty ? ["~/.claude/skills"] : configured
+        }
 
         let fm = FileManager.default
         let homeDir = fm.homeDirectoryForCurrentUser.path
@@ -36,9 +52,14 @@ final class SkillInjector {
         for skill in Self.skills {
             let dir = "\(skillsRoot)/\(skill.name)"
             let file = "\(dir)/SKILL.md"
-            guard !fm.fileExists(atPath: file) else {
-                logger.debug("SkillInjector: '\(skill.name)' already exists at \(skillsRoot), skipping")
-                continue
+            // These skills are ours (open-maestri-*): an older copy must not stay forever, or agents keep reading stale
+            // instructions (wrong CLI name, no Maestro-mode guidance). Rewrite only when the content differs.
+            if fm.fileExists(atPath: file) {
+                if (try? String(contentsOfFile: file, encoding: .utf8)) == skill.content {
+                    logger.debug("SkillInjector: '\(skill.name)' is up to date at \(skillsRoot), skipping")
+                    continue
+                }
+                logger.info("SkillInjector: updating '\(skill.name)' at \(skillsRoot)")
             }
             do {
                 try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -61,7 +82,34 @@ final class SkillInjector {
         SkillFile(name: "open-maestri", content: skillOpenMaestri),
         SkillFile(name: "open-maestri-portal", content: skillOpenMaestriPortal),
         SkillFile(name: "open-maestri-manager", content: skillOpenMaestriManager),
+        SkillFile(name: "open-maestri-routines", content: skillRoutines),
+        SkillFile(name: "open-maestri-workspace", content: skillWorkspace),
     ]
+
+    private static let skillRoutines = """
+    ---
+    name: open-maestri-routines
+    description: Manage scheduled prompts in open-maestri.
+    user-invocable: false
+    ---
+    # Routines
+    Use `omaestri routine list|show|create|edit|enable|disable|run|delete`.
+    Create: `omaestri routine create "Name" --command "prompt" --every 30m --terminal "Agent"`.
+    Run `omaestri help` for supported options. Delete only when the user asks.
+    """
+
+    private static let skillWorkspace = """
+    ---
+    name: open-maestri-workspace
+    description: Manage open-maestri workspaces and floors.
+    user-invocable: false
+    ---
+    # Workspaces and floors
+    Use `omaestri workspace list|create|rename|move|unload` and
+    `omaestri floor list|create|land|delete|status`. Run `omaestri help` for options.
+    Create a workspace with `omaestri workspace create "Name" --dir PATH`.
+    Do not delete a floor or land its changes without the user's instruction.
+    """
 
     // MARK: open-maestri
 
@@ -229,10 +277,22 @@ final class SkillInjector {
     ---
     name: open-maestri-manager
     description: Create new connected agent terminals on the open-maestri canvas and assign them roles. Use when the user asks to assemble a team, delegate parallel work, or spin up additional agents or terminals to help, or to invoke Maestro Mode.
-    user-invocable: false
+    user-invocable: true
     ---
 
     # open-maestri Team Orchestration
+
+    You are running inside **open-maestri** (the Linux Maestri), on a canvas that connects agents, terminals, notes and portals.
+    The CLI here is **`omaestri`** (never `maestri`: that is a different app). If `omaestri` is not on PATH use `"$MAESTRI_CLI"`.
+
+    ## Maestro Mode
+
+    When the user asks you to create/recruit/spin up an agent, assemble a team, or delegate to a teammate, DO IT with the
+    commands below — do not answer that you cannot. If a command says "not in Maestro mode", tell the user to enable Maestro
+    mode for this terminal (terminal edit dialog → Maestro mode). Typical flow:
+    1. `omaestri list` (who is connected already)
+    2. `omaestri recruit "Name" --preset "Claude Code"` (or `--command "agy --dangerously-skip-permissions"`)
+    3. `omaestri ask "Name" "the task"` and read the reply it returns; `omaestri check "Name"` shows their screen.
 
     The commands below spawn new agent terminals on the canvas, assign them roles, and wire them together.
     Recruits are auto-connected to your terminal — once a recruit exists you can `omaestri ask "Name" "..."` to delegate work and `omaestri check "Name"` to read their output.

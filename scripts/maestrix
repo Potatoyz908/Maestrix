@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Launch Maestrix without the desktop's global GTK theme overrides."""
+import os
+from pathlib import Path
+
+config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
+isolated = Path.home() / '.local/share/maestrix/config'
+isolated.mkdir(parents=True, exist_ok=True)
+# Keep existing application settings available; isolate only GTK appearance.
+for entry in config.iterdir():
+    if entry.name in ('gtk-3.0', 'gtk-4.0'):
+        continue
+    target = isolated / entry.name
+    if not os.path.lexists(target):
+        target.symlink_to(entry, target_is_directory=entry.is_dir())
+gtk_config = isolated / 'gtk-4.0'
+gtk_config.mkdir(exist_ok=True)
+css = Path(__file__).resolve().parent / 'maestrix-gtk.css'
+(gtk_config / 'gtk.css').write_text(css.read_text())
+os.environ['XDG_CONFIG_HOME'] = str(isolated)
+os.environ['GTK_THEME'] = 'Adwaita'
+os.environ.pop('GTK2_RC_FILES', None)
+os.execv(str(Path(__file__).resolve().parent / 'maestrix-runtime'),
+         [str(Path(__file__).resolve().parent / 'maestrix-runtime'), *os.sys.argv[1:]])

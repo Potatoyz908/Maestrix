@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Note 文件管理器
 /// - Note 内容存储为 .md 文件
@@ -62,7 +64,7 @@ final class NoteFileManager {
         )
         let tmp = url.appendingPathExtension("tmp")
         try data.write(to: tmp, options: .atomic)
-        _ = try FileManager.default.replaceItem(at: url, withItemAt: tmp, backupItemName: nil, resultingItemURL: nil)
+        try FileManager.default.atomicReplaceItem(at: url, withItemAt: tmp)
         logger.debug("Note written: \(filePath)")
         DispatchQueue.main.async {
             NotificationCenter.default.post(
@@ -99,6 +101,21 @@ final class NoteFileManager {
             try write(filePath: path, content: "")
         }
         return path
+    }
+
+    /// 删除 Note 文件
+    func delete(filePath: String) throws {
+        let url = URL(fileURLWithPath: filePath)
+        if FileManager.default.fileExists(atPath: filePath) {
+            try FileManager.default.removeItem(at: url)
+            logger.debug("Note deleted: \(filePath)")
+        }
+    }
+
+    /// 删除指定工作区的 Note
+    func deleteNote(workspaceId: UUID, name: String) throws {
+        let path = managedPath(workspaceId: workspaceId, noteName: name)
+        try delete(filePath: path)
     }
 
     // MARK: - Note Chain 遍历（FR30）

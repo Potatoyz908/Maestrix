@@ -1,4 +1,6 @@
+#if canImport(OSLog)
 import OSLog
+#endif
 import Foundation
 
 /// 备份与恢复管理器
@@ -51,7 +53,7 @@ final class BackupManager {
             let tmp = backupURL.appendingPathExtension("tmp")
             try data.write(to: tmp, options: .atomic)
             if fm.fileExists(atPath: backupURL.path) {
-                _ = try fm.replaceItem(at: backupURL, withItemAt: tmp, backupItemName: nil, resultingItemURL: nil)
+                try fm.atomicReplaceItem(at: backupURL, withItemAt: tmp)
             } else {
                 try fm.moveItem(at: tmp, to: backupURL)
             }

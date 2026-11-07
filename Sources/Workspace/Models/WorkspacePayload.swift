@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// 工作区数据载体，所有字段与 Maestri camelCase 格式完全一致（schemaVersion:2）
 struct WorkspacePayload: Codable {
@@ -8,6 +10,8 @@ struct WorkspacePayload: Codable {
     var icon: String
     var isPinned: Bool
     var locationType: String        // "local" | "ssh"
+    /// Remote workspace target (locationType "ssh"); optional, absent for local workspaces
+    var ssh: SSHTarget? = nil
     var workingDirectory: String
     var preferredIDE: String        // "cursor" | "vscode" | "xcode"
     var syncConfigFiles: Bool
@@ -56,6 +60,17 @@ struct WorkspacePayload: Codable {
         self.createdAt = Date()
         self.lastOpenedAt = nil
         self.lastModifiedAt = Date()
+    }
+}
+
+extension WorkspacePayload {
+    /// Terminal 节点数量 —— 总是由 `nodes` 中 `NodeContent.terminal` 派生，从不存储：
+    /// 不参与 Codable（计算属性），workspace.json schemaVersion 2 / manifest 格式不变。
+    /// 侧边栏徽章与 `/api/workspaces` 的 `terminalCount` 字段都以此为唯一来源。
+    var terminalCount: Int { Self.terminalCount(in: nodes) }
+
+    static func terminalCount(in nodes: [CanvasNode]) -> Int {
+        nodes.reduce(0) { $0 + ($1.content.terminalContent != nil ? 1 : 0) }
     }
 }
 

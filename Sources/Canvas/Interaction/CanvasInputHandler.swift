@@ -1,5 +1,7 @@
 import AppKit
+#if canImport(OSLog)
 import OSLog
+#endif
 
 extension CanvasViewportView {
 

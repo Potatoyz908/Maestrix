@@ -1,6 +1,11 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
+/// `omaestri check "Agent" [lines]`: the agent's current screen as plain text (default 20 lines). Reads the rendered
+/// terminal screen, so a TUI's cursor movement and redraws come out as readable lines instead of escape noise
+/// (audit C4); falls back to the raw output ring with escapes removed.
 final class CheckHandler {
     static let shared = CheckHandler()
     private let logger = Logger.make(category: "CheckHandler")
@@ -11,73 +16,16 @@ final class CheckHandler {
         guard args.count >= 2 else {
             return "error: usage: omaestri check \"TargetAgent\" [lines]"
         }
-        let targetName = args[1]
-        let lineCount = args.count >= 3 ? Int(args[2]) ?? 20 : 20
-
-        guard let callerTid = terminalId else { return "error: missing terminal ID" }
-        let tm = TerminalManager.shared
-        let cm = ConnectionManager.shared
-        let connectedIds = cm.connectedNodeIds(for: callerTid)
-        let lower = targetName.lowercased()
-        let targetSession = tm.terminals.values.first { session in
-            guard connectedIds.contains(session.id) else { return false }
-            return session.agentName?.lowercased().contains(lower) == true ||
-                   session.displayName?.lowercased().contains(lower) == true ||
-                   session.command.lowercased().contains(lower) ||
-                   session.id.uuidString.hasPrefix(targetName)
+        let lineCount = args.count >= 3 ? max(1, Int(args[2]) ?? 20) : 20
+        guard let caller = terminalId else { return "error: missing terminal ID" }
+        guard let agent = AgentDirectory.resolve(args[1], from: caller) else {
+            return "error: agent '\(args[1])' not found in connections"
         }
-        guard let session = targetSession else {
-            return "error: agent '\(targetName)' not found in connections"
+        guard let tm = PlatformHooks.terminalsService, let session = tm.terminals[agent.terminalId] else {
+            return "error: agent '\(agent.name)' is not running"
         }
-        let output = session.recentOutput(lines: lineCount)
-        let cleaned = stripAnsi(output)
-        return cleaned.isEmpty ? "(no recent output)" : cleaned
+        let screen = tm.bufferText(for: agent.terminalId) ?? session.recentOutput(lines: lineCount * 4)
+        let text = TerminalText.lastLines(TerminalText.tidy(screen), lineCount)
+        return text.isEmpty ? "(no recent output)" : text
     }
-
-    private func stripAnsi(_ text: String) -> String {
-        // 过滤 CSI 序列（ESC [ ... 最终字节）、OSC 序列、单字符 ESC 序列
-        var result = ""
-        result.reserveCapacity(text.count)
-        var i = text.startIndex
-        while i < text.endIndex {
-            let ch = text[i]
-            if ch == "\u{1B}" {
-                let next = text.index(after: i)
-                if next < text.endIndex {
-                    let nc = text[next]
-                    if nc == "[" {
-                        // CSI 序列：跳到参数结束（最终字节 @-~）
-                        var j = text.index(after: next)
-                        while j < text.endIndex && !(text[j] >= "\u{40}" && text[j] <= "\u{7E}") {
-                            j = text.index(after: j)
-                        }
-                        i = j < text.endIndex ? text.index(after: j) : text.endIndex
-                    } else if nc == "]" {
-                        // OSC 序列：跳到 BEL 或 ST（ESC \）
-                        var j = text.index(after: next)
-                        while j < text.endIndex && text[j] != "\u{07}" && text[j] != "\u{1B}" {
-                            j = text.index(after: j)
-                        }
-                        if j < text.endIndex && text[j] == "\u{1B}" {
-                            j = text.index(after: j)
-                            if j < text.endIndex { j = text.index(after: j) }
-                        } else if j < text.endIndex {
-                            j = text.index(after: j)
-                        }
-                        i = j
-                    } else {
-                        // 其他单字符 ESC 序列
-                        i = text.index(after: next)
-                    }
-                } else {
-                    i = text.endIndex
-                }
-            } else {
-                result.append(ch)
-                i = text.index(after: i)
-            }
-        }
-        return result
-    }
-
 }

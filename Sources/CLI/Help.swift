@@ -18,6 +18,16 @@ func printHelp() {
       connect "From" "To"               Connect two agents
       role <list|create|show|edit|write|assign>  Manage agent roles
       preset list                       List available agent presets
+      partitura <list|create|update|insert|delete>  Saved layouts (save/apply are aliases)
+      routine <list|show|create|edit|enable|disable|run|delete>  Scheduled prompts
+                                        create "Name" --command "..." --every 30m [--terminal "Name"] [--disabled]
+                                        (--daily/--weekly/--once/--pre-run/--reminder: not supported on Linux yet)
+      workspace <list|create|rename|move|unload>  create "Name" --dir PATH; move "Name" --group G | --root
+      floor <list|create|land|delete|status>  create "Name" [--from PATH] [--branch B] [--existing-branch] [--partitura P]
+                                        land "Name" [--into B] [--delete-branch] [--keep-floor]
+                                        delete "Name" [--keep-branch] [--keep-folder]
+                                        status ["Text"] [--state S] [--progress 2/5] [--floor "Name"] [--clear]
+                                        (--copy/--copy-ground/--pull-request, set-dir: not supported on Linux yet)
       debug                             Diagnose connection issues
 
     Environment:

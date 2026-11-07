@@ -1,6 +1,8 @@
 import Foundation
 import CoreSpotlight
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Spotlight 索引器 - 支持工作区、Note、Terminal 的系统级搜索
 final class SpotlightIndexer {

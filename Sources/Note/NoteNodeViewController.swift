@@ -1,5 +1,7 @@
 import AppKit
+#if canImport(OSLog)
 import OSLog
+#endif
 import SwiftUI
 
 private let noteLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "open-maestri", category: "Note")

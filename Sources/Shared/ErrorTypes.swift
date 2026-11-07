@@ -13,6 +13,8 @@ enum MaestriError: LocalizedError {
     case noteWriteFailed(String)
     case portalCommandFailed(String)
     case sshConnectionFailed(String)
+    case floorOperationFailed(String)
+    case invalidTargetBranch(String)
 
     var errorDescription: String? {
         switch self {
@@ -38,6 +40,10 @@ enum MaestriError: LocalizedError {
             return "Portal command failed: \(msg)"
         case .sshConnectionFailed(let msg):
             return "SSH connection failed: \(msg)"
+        case .floorOperationFailed(let msg):
+            return "Floor operation failed: \(msg)"
+        case .invalidTargetBranch(let msg):
+            return "Invalid target branch: \(msg)"
         }
     }
 }

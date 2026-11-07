@@ -1,4 +1,6 @@
+#if canImport(OSLog)
 import OSLog
+#endif
 import Foundation
 import CoreGraphics
 

@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 final class PortalHandler {
     static let shared = PortalHandler()
@@ -18,16 +20,18 @@ final class PortalHandler {
         guard args.count >= 2 else {
             return """
             error: usage: omaestri portal <subcommand> ...
-            Subcommands: create edit navigate back forward reload(=refresh) screenshot snapshot html text info
+            Subcommands: create close edit navigate back forward reload(=refresh) screenshot snapshot html text info
                          click fill type key hover scroll drag wait evaluate
                          select check uncheck focus
                          scrollintoview selectall clear
             """
         }
         let subcommand = args[1]
+        let args = await withImplicitPortalName(args, terminalId: terminalId)
         do {
             switch subcommand {
             case "create":     return await handleCreate(args: args, terminalId: terminalId)
+            case "close":      return await handleClose(args: args, terminalId: terminalId)
             case "edit":       return try await handleEdit(args: args, terminalId: terminalId)
             case "navigate":   return try await handleNavigate(args: args, terminalId: terminalId)
             case "back":       return try await handleBack(args: args, terminalId: terminalId)
@@ -70,8 +74,11 @@ final class PortalHandler {
         guard args.count >= 3 else { return "error: usage: omaestri portal create \"URL\" [\"Name\"]" }
         let url = args[2]
         let name = args.count >= 4 ? args[3] : "Portal-\(UUID().uuidString.prefix(6))"
+        if await PlatformHooks.portalsService is LinuxPortalManager {
+            return await createOnLinux(url: url, name: name, terminalId: terminalId)
+        }
         let portalId = UUID()
-        await PortalWebViewStore.shared.createWebView(for: portalId, initialURL: url)
+        await PlatformHooks.portals.ensureWebView(for: portalId, initialURL: url)
 
         var pc = PortalContent(name: name, url: url)
         pc.id = portalId
@@ -94,7 +101,7 @@ final class PortalHandler {
         var i = 3
         while i < args.count {
             if args[i] == "--url" && i + 1 < args.count {
-                try await PortalWebViewStore.shared.navigate(portalId: portalId, to: args[i+1])
+                try await PlatformHooks.portals.navigate(portalId: portalId, to: args[i+1])
                 i += 2
             } else { i += 1 }
         }
@@ -108,7 +115,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        try await PortalWebViewStore.shared.navigate(portalId: portalId, to: args[3])
+        try await PlatformHooks.portals.navigate(portalId: portalId, to: args[3])
         return "Navigating to \(args[3])"
     }
 
@@ -119,7 +126,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        try await PortalWebViewStore.shared.goBack(portalId: portalId)
+        try await PlatformHooks.portals.goBack(portalId: portalId)
         return "went back"
     }
 
@@ -130,7 +137,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        try await PortalWebViewStore.shared.goForward(portalId: portalId)
+        try await PlatformHooks.portals.goForward(portalId: portalId)
         return "went forward"
     }
 
@@ -141,7 +148,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        try await PortalWebViewStore.shared.reload(portalId: portalId)
+        try await PlatformHooks.portals.reload(portalId: portalId)
         return "reloaded"
     }
 
@@ -152,7 +159,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        let b64 = try await PortalWebViewStore.shared.screenshot(portalId: portalId)
+        let b64 = try await PlatformHooks.portals.screenshot(portalId: portalId)
         return b64.isEmpty ? "error: screenshot failed" : b64
     }
 
@@ -163,10 +170,10 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        guard let wv = await PortalWebViewStore.shared.webView(for: portalId) else {
+        guard let tree = await PlatformHooks.portals.accessibilityTree(for: portalId) else {
             return "error: WebView not ready"
         }
-        return await PortalSnapshotService.shared.buildAccessibilityTree(for: wv)
+        return tree
     }
 
     // MARK: - html
@@ -176,10 +183,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        return try await PortalWebViewStore.shared.evaluate(
-            portalId: portalId,
-            javascript: "document.documentElement.outerHTML"
-        )
+        return try await exec("html", portalId, js: "document.documentElement.outerHTML", argv: args)
     }
 
     // MARK: - text
@@ -194,12 +198,12 @@ final class PortalHandler {
             let idx = ref.replacingOccurrences(of: "@e", with: "")
             guard let index = Int(idx) else { return "error: invalid element reference '\(ref)'" }
             let js = "(function(){const el=document.querySelectorAll('a,button,input,select,textarea,[role]')[\(index-1)];return el?el.innerText||el.value||el.textContent:'error: not found';})()"
-            return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+            return try await exec("text", portalId, js: js, argv: args)
         } else {
             // CSS selector
             let escaped = ref.replacingOccurrences(of: "\"", with: "\\\"")
             let js = "(function(){const el=document.querySelector(\"\(escaped)\");return el?el.innerText||el.value||el.textContent:'error: not found';})()"
-            return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+            return try await exec("text", portalId, js: js, argv: args)
         }
     }
 
@@ -210,9 +214,12 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        let url   = try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: "window.location.href")
-        let title = try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: "document.title")
-        let vw    = try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: "window.innerWidth + 'x' + window.innerHeight")
+        if await PlatformHooks.portalsService is LinuxPortalManager {
+            return try await exec("info", portalId, js: "'URL: ' + window.location.href + '\\nTitle: ' + document.title + '\\nViewport: ' + window.innerWidth + 'x' + window.innerHeight", argv: args)
+        }
+        let url   = try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: "window.location.href")
+        let title = try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: "document.title")
+        let vw    = try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: "window.innerWidth + 'x' + window.innerHeight")
         return "URL: \(url)\nTitle: \(title)\nViewport: \(vw)"
     }
 
@@ -225,7 +232,7 @@ final class PortalHandler {
         }
         let ref = args[3]
         let js = buildClickJS(ref: ref)
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("click", portalId, js: js, argv: args)
     }
 
     private func buildClickJS(ref: String) -> String {
@@ -258,7 +265,7 @@ final class PortalHandler {
             selector = "document.querySelector(\"\(escaped)\")"
         }
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.value='';el.value=\"\(value)\";el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return'filled';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("fill", portalId, js: js, argv: args)
     }
 
     // MARK: - type
@@ -279,7 +286,7 @@ final class PortalHandler {
           return 'typed';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("type", portalId, js: js, argv: args)
     }
 
     // MARK: - key
@@ -299,7 +306,7 @@ final class PortalHandler {
           return 'key pressed';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("key", portalId, js: js, argv: args)
     }
 
     // MARK: - hover
@@ -312,7 +319,7 @@ final class PortalHandler {
         let ref = args[3]
         let selector = buildSelector(ref: ref)
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));return'hovered';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("hover", portalId, js: js, argv: args)
     }
 
     // MARK: - scroll
@@ -333,7 +340,7 @@ final class PortalHandler {
         default:      (dx, dy) = (0, amount)
         }
         let js = "window.scrollBy(\(dx), \(dy)); 'scrolled'"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("scroll", portalId, js: js, argv: args)
     }
 
     // MARK: - drag
@@ -359,7 +366,7 @@ final class PortalHandler {
           return 'dragged';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("drag", portalId, js: js, argv: args)
     }
 
     // MARK: - wait
@@ -384,7 +391,7 @@ final class PortalHandler {
           check();
         })
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("wait", portalId, js: js, argv: args)
     }
 
     // MARK: - evaluate
@@ -394,7 +401,7 @@ final class PortalHandler {
         guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
             return "error: portal '\(args[2])' not found"
         }
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: args[3])
+        return try await exec("evaluate", portalId, js: args[3], argv: args)
     }
 
 
@@ -424,7 +431,7 @@ final class PortalHandler {
           return 'started';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("logs-start", portalId, js: js, argv: args)
     }
 
     // MARK: - logs
@@ -441,7 +448,7 @@ final class PortalHandler {
           return logs.length > 0 ? logs.join('\\n') : '(no logs)';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("logs", portalId, js: js, argv: args)
     }
 
     // MARK: - select
@@ -466,7 +473,7 @@ final class PortalHandler {
           return 'selected';
         })()
         """
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("select", portalId, js: js, argv: args)
     }
 
     // MARK: - check
@@ -478,7 +485,7 @@ final class PortalHandler {
         }
         let selector = buildSelector(ref: args[3])
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));return'checked';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("check", portalId, js: js, argv: args)
     }
 
     // MARK: - uncheck
@@ -490,7 +497,7 @@ final class PortalHandler {
         }
         let selector = buildSelector(ref: args[3])
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.checked=false;el.dispatchEvent(new Event('change',{bubbles:true}));return'unchecked';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("check", portalId, js: js, argv: args)
     }
 
     // MARK: - focus
@@ -502,7 +509,7 @@ final class PortalHandler {
         }
         let selector = buildSelector(ref: args[3])
         let js = "(function(){const el=\(selector);if(!el)return'error: not found';el.focus();return'focused';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("focus", portalId, js: js, argv: args)
     }
 
     // MARK: - scrollintoview / selectall / clear
@@ -514,7 +521,7 @@ final class PortalHandler {
         }
         let sel = buildSelector(ref: args[3])
         let js = "(function(){const el=\(sel);if(!el)return'error: not found';el.scrollIntoView({block:'center'});return'scrolled into view';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("scroll", portalId, js: js, argv: args)
     }
 
     private func handleSelectAll(args: [String], terminalId: UUID?) async throws -> String {
@@ -523,7 +530,7 @@ final class PortalHandler {
             return "error: portal '\(args[2])' not found"
         }
         let js = "document.execCommand('selectAll', false, null); 'selected all'"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("focus", portalId, js: js, argv: args)
     }
 
     private func handleClear(args: [String], terminalId: UUID?) async throws -> String {
@@ -533,17 +540,99 @@ final class PortalHandler {
         }
         let sel = buildSelector(ref: args[3])
         let js = "(function(){const el=\(sel);if(!el)return'error: not found';el.value='';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return'cleared';})()"
-        return try await PortalWebViewStore.shared.evaluate(portalId: portalId, javascript: js)
+        return try await exec("fill", portalId, js: js, argv: args)
     }
 
         // MARK: - Portal ID 解析
 
+    /// PO15: the portal NAMED `name` among the nodes connected to the caller (exact name first, then
+    /// case-insensitive, then substring). Without a caller (not run from a terminal) nothing resolves.
     @MainActor
     private func resolvePortalId(name: String, callerTid: UUID?) -> UUID? {
         guard let tid = callerTid else { return nil }
-        return ConnectionManager.shared.connectedNodeIds(for: tid).first {
-            PortalWebViewStore.shared.webView(for: $0) != nil
+        let connected = NexusWorkspaces.connectedNodeIds(of: tid)
+        var portals: [(id: UUID, name: String)] = []
+        for id in connected.ids {
+            guard let found = NexusWorkspaces.locate(id, preferring: connected.wsId),
+                  case .portal(let p) = found.node.content else { continue }
+            portals.append((found.node.id, p.name))
         }
+        if portals.isEmpty {   // macOS: live WebViews connected to the caller
+            return ConnectionManager.shared.connectedNodeIds(for: tid).first { PlatformHooks.portals.hasWebView(for: $0) }
+        }
+        let wanted = name.trimmingCharacters(in: .whitespaces)
+        if let hit = portals.first(where: { $0.name == wanted }) { return hit.id }
+        if let hit = portals.first(where: { $0.name.caseInsensitiveCompare(wanted) == .orderedSame }) { return hit.id }
+        if let hit = portals.first(where: { $0.name.localizedCaseInsensitiveContains(wanted) }) { return hit.id }
+        if let id = UUID(uuidString: wanted), portals.contains(where: { $0.id == id }) { return id }
+        return nil
+    }
+
+    /// Argument count each subcommand needs WITH the portal name (`portal <sub> "Name" ...`).
+    private static let arity: [String: Int] = [
+        "navigate": 4, "back": 3, "forward": 3, "reload": 3, "refresh": 3, "screenshot": 3, "snapshot": 3, "html": 3,
+        "text": 4, "info": 3, "click": 4, "fill": 5, "type": 4, "key": 4, "hover": 4, "scroll": 4, "drag": 5, "wait": 4,
+        "evaluate": 4, "select": 5, "check": 4, "uncheck": 4, "focus": 4, "scrollintoview": 4, "selectall": 3, "clear": 4,
+        "logs-start": 3, "logs": 3, "close": 3,
+    ]
+
+    /// `portal evaluate "js"` with the name left out: when the caller is connected to exactly ONE portal, that portal
+    /// is meant (the name is inserted). Anything ambiguous keeps the original args (and fails with a usage error).
+    @MainActor
+    private func withImplicitPortalName(_ args: [String], terminalId: UUID?) -> [String] {
+        guard args.count >= 2, let need = Self.arity[args[1]], args.count == need - 1, let tid = terminalId else { return args }
+        let connected = NexusWorkspaces.connectedNodeIds(of: tid)
+        let names: [String] = connected.ids.compactMap { id in
+            guard let f = NexusWorkspaces.locate(id, preferring: connected.wsId), case .portal(let p) = f.node.content else { return nil }
+            return p.name
+        }
+        guard names.count == 1 else { return args }
+        var out = args
+        out.insert(names[0], at: 2)
+        return out
+    }
+
+    // MARK: - Linux (K3): ops to the GUI, node changes through workspace.json + K2
+
+    /// Interaction/read ops: on Linux the GUI gets the high-level `op` plus the ready-made `js` (it may run either);
+    /// elsewhere the JS runs in the local WebView as before.
+    private func exec(_ op: String, _ portalId: UUID, js: String, argv: [String]) async throws -> String {
+        if let bridge = await PlatformHooks.portalsService as? LinuxPortalManager {
+            return try await bridge.command(op, portalId: portalId, args: ["js": js, "argv": Array(argv.dropFirst(3))])
+        }
+        return try await PlatformHooks.portals.evaluate(portalId: portalId, javascript: js)
+    }
+
+    @MainActor
+    private func createOnLinux(url: String, name: String, terminalId: UUID?) -> String {
+        guard let tid = terminalId, let caller = NexusWorkspaces.locate(tid) else {
+            return "error: portal create must run from a terminal on the canvas"
+        }
+        var pc = PortalContent(name: name, url: url)
+        let portalId = UUID()
+        pc.id = portalId
+        let frame = NexusWorkspaces.placement(rightOf: caller.node, size: CGSize(width: 800, height: 600), in: caller.doc)
+        do {
+            try ServerWorkspace.addNode(CanvasNode(id: portalId, frame: frame, content: .portal(pc)), to: caller.wsId)
+            try ServerWorkspace.addConnection(in: caller.wsId, a: caller.node.id, b: portalId, kind: .terminalToPortal)
+        } catch {
+            return "error: \(error)"
+        }
+        return "Created portal '\(name)' [\(portalId.uuidString.prefix(8))]"
+    }
+
+    private func handleClose(args: [String], terminalId: UUID?) async -> String {
+        guard args.count >= 3 else { return "error: usage: omaestri portal close \"PortalName\"" }
+        guard let portalId = await resolvePortalId(name: args[2], callerTid: terminalId) else {
+            return "error: portal '\(args[2])' not found"
+        }
+        guard let found = NexusWorkspaces.locate(portalId) else { return "error: portal '\(args[2])' not found" }
+        do {
+            try await MainActor.run { _ = try ServerWorkspace.removeNode(portalId, from: found.wsId) }
+        } catch {
+            return "error: \(error)"
+        }
+        return "Closed portal '\(args[2])'"
     }
 
     // MARK: - JS 工具

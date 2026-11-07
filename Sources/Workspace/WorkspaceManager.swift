@@ -1,11 +1,17 @@
 import Foundation
+#if canImport(Observation) && !os(Linux)
 import Observation
+#endif
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 单个工作区的状态管理（Story 1.4 + 1.5）
 /// - 节点/连接的运行时状态
 /// - workspace.json 读写（通过 PersistenceManager 原子写入）
+#if canImport(Observation) && !os(Linux)
 @Observable
+#endif
 final class WorkspaceManager: Identifiable {
     let id: UUID
     var name: String
@@ -32,7 +38,7 @@ final class WorkspaceManager: Identifiable {
 
     /// Terminal 节点数量（侧边栏徽章用，避免在 View body 里做 O(n) filter）
     var terminalCount: Int {
-        nodes.count(where: { if case .terminal = $0.content { true } else { false } })
+        WorkspacePayload.terminalCount(in: nodes)
     }
 
     private let logger = Logger.make(category: "WorkspaceManager")
@@ -106,14 +112,14 @@ final class WorkspaceManager: Identifiable {
         // 停止 Terminal PTY 进程（避免内存泄漏）
         if case .terminal = node.content {
             Task { @MainActor in
-                TerminalManager.shared.removeTerminal(id: nodeId)
+                PlatformHooks.onTerminalRemoved?(nodeId)
             }
         }
 
         // 释放 Portal WKWebView 实例及其所有代理对象（避免内存泄漏）
         if case .portal = node.content {
             Task { @MainActor in
-                PortalWebViewStore.shared.removeWebView(for: nodeId)
+                PlatformHooks.onPortalRemoved?(nodeId)
             }
             portalToPortalConnections.removeAll { $0.portalIdA == nodeId || $0.portalIdB == nodeId }
         }

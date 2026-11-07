@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Maestrix
+GenericName=Spatial AI Canvas
+Comment=Spatial AI Canvas for Autonomous Agents
+Exec=@MAESTRIX_BIN@ %U
+Icon=maestrix
+Terminal=false
+Categories=Development;IDE;
+StartupWMClass=org.maestrix.desktop
+Keywords=AI;Canvas;Terminal;Agent;Maestrix;Maestri;
+MimeType=x-scheme-handler/maestri;
+StartupNotify=true

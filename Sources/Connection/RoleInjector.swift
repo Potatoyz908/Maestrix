@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Role 注入器
 /// 在 Terminal 分配 Role 时写入 role.json + CLAUDE.md + AGENTS.md：

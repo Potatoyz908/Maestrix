@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Scrollback 持久化行条目
 struct ScrollbackEntry: Codable {
@@ -42,7 +44,7 @@ final class ScrollbackStore: Sendable {
         }
         let tmp = url.appendingPathExtension("tmp")
         try combined.write(to: tmp, options: .atomic)
-        _ = try FileManager.default.replaceItem(at: url, withItemAt: tmp, backupItemName: nil, resultingItemURL: nil)
+        try FileManager.default.atomicReplaceItem(at: url, withItemAt: tmp)
         logger.debug("Scrollback saved: \(entries.count) lines for terminal \(terminalId.uuidString.prefix(8))")
     }
 

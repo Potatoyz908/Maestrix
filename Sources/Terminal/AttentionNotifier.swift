@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// 终端注意力通知管理器
 /// 当未选中的终端有重要输出（Agent 完成任务等）时，标记红色注意力点

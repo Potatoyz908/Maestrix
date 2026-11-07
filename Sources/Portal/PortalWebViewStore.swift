@@ -1,6 +1,8 @@
 import Foundation
 import WebKit
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// Portal WKWebView 实例管理器
 /// 每个 Portal 节点持有独立 WKWebViewConfiguration（独立 Cookie/Storage）

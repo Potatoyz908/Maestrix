@@ -1,12 +1,22 @@
 // Sources/CLI/Transport.swift
 import Foundation
+#if canImport(Darwin)
+import Darwin
+private let libcSend = Darwin.send
+private let sockStreamType: Int32 = SOCK_STREAM
+#elseif canImport(Glibc)
+import Glibc
+private let libcSend = Glibc.send
+// glibc 将 SOCK_STREAM 导入为 __socket_type 枚举
+private let sockStreamType: Int32 = Int32(SOCK_STREAM.rawValue)
+#endif
 
 enum Transport {
     /// 向主 app 发送 CLI 请求，返回响应 body（纯文本）
     /// 对标逆向：socketTransport @ 0x10000c34c + buildHTTPRequest @ 0x10000b9c0 + sendAndReceive @ 0x10000c0c8
     static func send(args: [String], socketPath: String, terminalId: String) -> String {
         // 1. 创建 Unix socket（对标逆向：socket(AF_UNIX=1, SOCK_STREAM=1, 0)）
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        let fd = socket(AF_UNIX, sockStreamType, 0)
         guard fd >= 0 else {
             fputs("error: socket creation failed\n", stderr)
             exit(1)
@@ -59,12 +69,12 @@ enum Transport {
             fputs("error: header encoding failed\n", stderr)
             exit(1)
         }
-        let sendResult = headerData.withUnsafeBytes { Darwin.send(fd, $0.baseAddress, $0.count, 0) }
+        let sendResult = headerData.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
         guard sendResult >= 0 else {
             fputs("error: send failed\n", stderr)
             exit(1)
         }
-        let sendBodyResult = bodyData.withUnsafeBytes { Darwin.send(fd, $0.baseAddress, $0.count, 0) }
+        let sendBodyResult = bodyData.withUnsafeBytes { libcSend(fd, $0.baseAddress, $0.count, 0) }
         guard sendBodyResult >= 0 else {
             fputs("error: send body failed\n", stderr)
             exit(1)

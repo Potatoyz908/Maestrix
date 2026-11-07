@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// git 状态和操作提供者
 /// 通过 Process 调用系统 git 命令

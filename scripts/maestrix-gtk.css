@@ -1,0 +1,22 @@
+/* Keep menu labels readable with Maestrix's original light surfaces.
+ * The app sets white on parent items; explicit label colors avoid inheritance.
+ */
+.maestri-sidebar-menubar > item > label,
+.maestri-header-menubar > item > label {
+  color: #1d1d1f;
+}
+.maestri-sidebar-menubar > item:hover > label,
+.maestri-sidebar-menubar > item:active > label,
+.maestri-sidebar-menubar > item:checked > label,
+.maestri-header-menubar > item:hover > label {
+  color: #111113;
+}
+.maestri-sidebar-menubar popover > contents,
+.maestri-header-menubar popover > contents {
+  background-color: #fafafa;
+  color: #1d1d1f;
+}
+.maestri-sidebar-menubar popover modelbutton label,
+.maestri-header-menubar popover modelbutton label {
+  color: #1d1d1f;
+}

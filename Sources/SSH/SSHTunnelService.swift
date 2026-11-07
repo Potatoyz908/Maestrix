@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(OSLog)
 import OSLog
+#endif
 
 /// SSH 反向隧道服务（FR59-60，配合 SSHManager）
 final class SSHTunnelService {
