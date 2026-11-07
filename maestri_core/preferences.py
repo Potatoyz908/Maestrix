@@ -34,6 +34,7 @@ class Preferences:
     terminal_font_family: str = "system"   # Constants.defaultFontFamily: the monospaced system font (SF Mono on macOS)
     terminal_font_size: float = 13.0
     terminal_theme: str = "dark"
+    interface_theme: str = "light"
     canvas_background: str = "dotGrid"
     preferred_ide: str = "cursor"
     language: str = "en"
@@ -50,6 +51,7 @@ class Preferences:
             "terminalFontFamily": self.terminal_font_family,
             "terminalFontSize": float(self.terminal_font_size),
             "terminalTheme": self.terminal_theme,
+            "interfaceTheme": self.interface_theme,
             "canvasBackground": self.canvas_background,
             "preferredIDE": self.preferred_ide,
             "language": self.language,
@@ -66,7 +68,7 @@ class Preferences:
         base = cls()
         known = {"schemaVersion", "terminalFontFamily", "terminalFontSize", "terminalTheme", "canvasBackground",
                  "preferredIDE", "language", "autosaveIntervalSeconds", "scrollbackMemoryLimit", "optionAsMeta",
-                 "canvasSnapping"}
+                 "canvasSnapping", "interfaceTheme"}
         try:
             size = float(d.get("terminalFontSize", base.terminal_font_size))
         except (TypeError, ValueError):
@@ -80,6 +82,7 @@ class Preferences:
             terminal_font_family=family if isinstance(family, str) and family else base.terminal_font_family,
             terminal_font_size=min(FONT_SIZE_RANGE[1], max(FONT_SIZE_RANGE[0], size)),
             terminal_theme=_pick(_THEME_ALIASES.get(d.get("terminalTheme"), d.get("terminalTheme")), TERMINAL_THEMES, base.terminal_theme),
+            interface_theme=_pick(d.get("interfaceTheme"), ("light", "dark"), "light"),
             canvas_background=_pick(d.get("canvasBackground"), CANVAS_BACKGROUNDS, base.canvas_background),
             preferred_ide=_pick(d.get("preferredIDE"), IDES, base.preferred_ide),
             language=_pick(d.get("language"), LANGUAGES, base.language),
