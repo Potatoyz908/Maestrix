@@ -612,6 +612,7 @@ class MaestriClient:
         self.timeout = timeout
         self.auth_token = self._resolve_auth_token(auth_token or token)
         self.port = self._resolve_server_port(port)
+        self._port_is_auto = not (port is not None and port > 0)
         self.session = requests.Session()
 
     @property
@@ -640,6 +641,12 @@ class MaestriClient:
                 return "unauthorized"
             return "offline"
         except Exception:
+            # The server may have been restarted on another port: follow run/server.port (only when the port was not pinned).
+            if getattr(self, "_port_is_auto", False):
+                fresh = self._resolve_server_port(None)
+                if fresh != self.port:
+                    self.port = fresh
+                    return self.check_connection_status()
             return "offline"
 
     def _resolve_auth_token(self, provided_token: Optional[str]) -> str:
