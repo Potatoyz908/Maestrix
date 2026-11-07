@@ -52,3 +52,22 @@ def test_background_modes():
     assert _pixel(_render("solid"), dot, dot) == solid and _pixel(_render("solid"), 7, 7) == solid
     assert _pixel(_render("transparent"), 7, 7)[3] == 0 and _pixel(_render("transparent"), dot, dot)[3] == 0
     assert CairoRenderer(background="bogus").background == "dotGrid"
+
+
+def test_macos_theme_ids_resolve_to_themselves():
+    """The 15 TerminalThemeRegistry ids (node themeId / preferences written by macOS) never fall back to "dark"."""
+    macos_ids = ("maestri-dark", "maestri-light", "dracula", "solarized-dark", "solarized-light", "nord", "one-dark", "tokyo-night",
+                 "tokyo-night-day", "catppuccin-mocha", "catppuccin-macchiato", "catppuccin-latte", "gruvbox-dark", "gruvbox-light",
+                 "rose-pine")
+    for name in macos_ids:
+        t = resolve_theme(name)
+        assert t is THEMES[name] and len(t.palette) == 16
+        assert all(HEX.match(c) for c in (t.fg, t.bg, t.cursor, t.selection, *t.palette))
+    assert resolve_theme("maestri-light") is not THEMES["dark"] and resolve_theme("light") is THEMES["maestri-light"]
+    assert THEMES["maestri-dark"].palette[15] == "#ffffff"
+    assert (THEMES["maestri-light"].fg, THEMES["maestri-light"].palette[2], THEMES["maestri-light"].palette[7]) == ("#383a42", "#008000", "#e5e5e5")
+
+
+def test_system_theme_follows_appearance():
+    assert resolve_theme("system", dark=True) is THEMES["maestri-dark"]
+    assert resolve_theme("system", dark=False) is THEMES["maestri-light"]
