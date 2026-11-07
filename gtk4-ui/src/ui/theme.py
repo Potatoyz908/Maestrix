@@ -56,7 +56,7 @@ switch { background-color: #24314b; background-image: none; border-color: #38486
 switch slider { background-color: #edf1ff; }
 scale trough, progressbar trough { background-color: #24314b; }
 tooltip, tooltip.background { background-color: #182239; color: #edf1ff; border: 1px solid #384866; }
-/* The two top islands: one uniform navy pill, icons with no button background, the active tool marked by the icon gradient. */
+/* The two top islands: one uniform navy pill, icons with no button background, the active tool marked by its icon colour. */
 .maestri-top-toolbar, .maestri-context-actions-pill {
   background-color: rgba(21, 28, 46, 0.94); background-image: none; border: 1px solid #344161;
 }
@@ -70,10 +70,32 @@ tooltip, tooltip.background { background-color: #182239; color: #edf1ff; border:
   background-color: rgba(113, 220, 236, 0.10); background-image: none; color: #ffffff;
 }
 .maestri-top-toolbar button.maestri-island-btn.maestri-island-btn.maestri-island-btn.active, .maestri-context-actions-pill button.maestri-island-btn.maestri-island-btn.maestri-island-btn.active {
-  background-image: linear-gradient(135deg, rgba(22, 139, 241, 0.30), rgba(147, 84, 232, 0.30));
-  background-color: transparent; color: #71dcec; box-shadow: inset 0 0 0 1px rgba(113, 220, 236, 0.55);
+  background-color: transparent; background-image: none; box-shadow: none; color: #71dcec;   /* the icon colour is the marker */
 }
 .maestri-context-actions-pill button.maestri-island-btn.maestri-island-btn.maestri-island-btn.danger:hover { background-color: rgba(255, 69, 58, 0.14); color: #ff746f; }
+/* Sheets / dialogs (New Workspace, Edit Workspace, New Terminal...): they hard-code light surfaces in window.py. */
+.maestri-modal-window, .maestri-modal-dialog, .maestri-sheet-root { background-color: #151c2e; color: #edf1ff; }
+.maestri-sheet-header { background-color: #151c2e; background-image: none; border-bottom: 1px solid #303956; }
+.maestri-sheet-title, .maestri-dialog-title { color: #edf1ff; }
+.maestri-form-section-title, .maestri-section-label, .maestri-form-label { color: #8fa0c8; }
+.maestri-text-input, .maestri-form-entry { background-color: #101729; color: #edf1ff; border: 1px solid #384866; }
+.maestri-text-input:focus, .maestri-form-entry:focus { border-color: #71dcec; box-shadow: none; }
+.maestri-dir-row, .maestri-sync-row { background-color: #101729; background-image: none; border: 1px solid #384866; }
+.maestri-dir-path { color: #a9b7d5; }
+.maestri-dialog-btn { background-color: #24314b; background-image: none; color: #edf1ff; border: 1px solid #384866; }
+.maestri-dialog-btn:hover { background-color: #2d3d5e; }
+.maestri-dialog-btn-primary { background-image: linear-gradient(to right, #168bf1, #9354e8); background-color: #414bc5; color: white; border: none; }
+.maestri-dialog-btn-danger { background-color: #a62937; background-image: none; color: white; border: none; }
+.maestri-icon-btn { color: #c4cff0; }
+.maestri-icon-btn:hover { background-color: rgba(113, 220, 236, 0.10); }
+.maestri-icon-btn.active { background-color: rgba(22, 139, 241, 0.18); color: #71dcec; box-shadow: inset 0 0 0 1.5px #71dcec; }
+.maestri-preset-btn { background-color: #1c263c; color: #edf1ff; border: 1px solid #344161; }
+.maestri-preset-btn:hover { background-color: #24314b; }
+.maestri-preset-btn.active { background-color: rgba(22, 139, 241, 0.18); border-color: #71dcec; }
+.maestri-preset-name { color: #edf1ff; }
+.maestri-segmented-control { background-color: #101729; }
+.maestri-segment-btn { color: #a9b7d5; background-color: transparent; background-image: none; }
+.maestri-segment-btn.active { background-color: #2d3d5e; color: white; }
 .maestri-menu-item-btn.danger { color: #ff746f; }
 .maestri-menu-item-btn.danger:hover { background: #a62937; color: white; }
 """
