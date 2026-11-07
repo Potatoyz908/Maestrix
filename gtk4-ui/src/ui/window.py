@@ -93,7 +93,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         self.paned.set_shrink_end_child(False)
         self.paned.connect("notify::position", self._on_paned_position_changed)
 
-        self.sidebar = SidebarView(self.client)
+        self.sidebar = SidebarView(self.client, menu_model=self._build_menu_model())
+        self.popover_menubar = self.sidebar.menubar
         self.canvas_widget = CanvasWidget(viewport=self._viewport_from_payload())
         self.canvas_widget.set_hexpand(True)
         self.canvas_widget.set_vexpand(True)
@@ -544,6 +545,26 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         }
         .maestri-header-menubar item:hover {
             background-color: rgba(128, 128, 128, 0.2);
+        }
+        .maestri-sidebar-menubar {
+            background-color: transparent;
+            background-image: none;
+            border: none;
+            box-shadow: none;
+            margin: 0 0 2px 0;
+            padding: 0;
+        }
+        .maestri-sidebar-menubar item {
+            min-height: 22px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            color: #3a3a3c;
+        }
+        .maestri-sidebar-menubar item:hover {
+            background-color: rgba(0, 0, 0, 0.08);
+            color: #1c1c1e;
         }
         .maestri-traffic-lights {
             margin-right: 6px;
@@ -1236,13 +1257,6 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         sidebar_header_box.append(self.workspace_pill)
 
         header.pack_start(sidebar_header_box)
-
-        # In-header menubar (File Edit View Window Help) grouped right after sidebar header
-        self.popover_menubar = Gtk.PopoverMenuBar.new_from_model(self._build_menu_model())
-        self.popover_menubar.add_css_class("maestri-header-menubar")
-        self.popover_menubar.set_valign(Gtk.Align.CENTER)
-        header.pack_start(self.popover_menubar)
-
         self._header = header
 
         # Right: Settings button

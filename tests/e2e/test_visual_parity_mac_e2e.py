@@ -352,9 +352,10 @@ class TestVisualParityMac:
         assert window.sidebar_header_box.get_halign() == Gtk.Align.START
         assert window.sidebar_header_box.get_hexpand() is False
 
-        # Verify in-header menubar is mounted and secondary menubar row is hidden
+        # Verify menubar is mounted in sidebar above search entry and secondary menubar row is hidden
         assert hasattr(window, "popover_menubar")
-        assert window.popover_menubar.get_ancestor(Gtk.HeaderBar) is header
+        assert window.popover_menubar.get_parent() is window.sidebar
+        assert window.popover_menubar.get_next_sibling() is window.sidebar.search_entry
         assert window.get_show_menubar() is False
 
         # Verify title buttons are disabled on HeaderBar to prevent ghost buttons from GNOME/system

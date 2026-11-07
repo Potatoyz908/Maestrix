@@ -30,7 +30,7 @@ from typing import Callable, Dict, List, Optional
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from maestri_core.client.api import MaestriClient
 from maestri_core.models.workspace import SidebarGroup, SidebarLayout, WorkspaceEntry
@@ -98,7 +98,7 @@ def _copy_layout(layout: SidebarLayout) -> SidebarLayout:
 
 
 class SidebarView(Gtk.Box):
-    def __init__(self, client: MaestriClient) -> None:
+    def __init__(self, client: MaestriClient, menu_model: Optional[Gio.MenuModel] = None) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.client = client
         self.store = WorkspaceStore(client)
@@ -115,10 +115,18 @@ class SidebarView(Gtk.Box):
                 theme.add_search_path(icons_dir)
 
         # Top padding & container
-        self.set_margin_top(12)
+        self.set_margin_top(8)
         self.set_margin_bottom(12)
         self.set_margin_start(12)
         self.set_margin_end(12)
+
+        # 0. Menubar (File, Edit, View, Window, Help) positioned above workspace search
+        if menu_model is not None:
+            self.menubar = Gtk.PopoverMenuBar.new_from_model(menu_model)
+            self.menubar.add_css_class("maestri-sidebar-menubar")
+            self.append(self.menubar)
+        else:
+            self.menubar = None
 
         # 1. Search Bar
         self.search_entry = Gtk.SearchEntry()
