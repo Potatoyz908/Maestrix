@@ -91,6 +91,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         self.paned.set_shrink_start_child(False)
         self.paned.set_resize_end_child(True)
         self.paned.set_shrink_end_child(False)
+        self.paned.connect("notify::position", self._on_paned_position_changed)
 
         self.sidebar = SidebarView(self.client)
         self.canvas_widget = CanvasWidget(viewport=self._viewport_from_payload())
@@ -508,24 +509,24 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             color: #1d1d1f;
         }
         headerbar {
-            background-color: #f5f5f7;
-            border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+            background-color: transparent;
+            background-image: none;
+            border: none;
+            box-shadow: none;
             color: #1d1d1f;
             min-height: 44px;
-            padding: 0 12px;
+            padding: 0 12px 0 0;
+            margin: 0;
         }
-        headerbar windowhandle windowcontrols,
-        headerbar windowcontrols,
-        headerbar .titlebutton,
-        headerbar button.titlebutton {
-            opacity: 0;
-            min-width: 0;
-            min-height: 0;
-            padding: 0;
+        .maestri-sidebar-top-bar {
+            background-color: #f7f7f9;
+            border-right: 1px solid #e2e2e6;
+            min-height: 44px;
+            padding: 0 10px 0 14px;
             margin: 0;
         }
         .maestri-traffic-lights {
-            margin-right: 14px;
+            margin-right: 6px;
         }
         .maestri-traffic-dot {
             min-width: 12px;
@@ -555,16 +556,31 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         }
         .maestri-header-btn {
             background-color: transparent;
+            background-image: none;
             border: none;
             border-radius: 6px;
-            padding: 4px 8px;
+            padding: 4px 6px;
             font-size: 13px;
             font-weight: 500;
             color: #48484a;
-            margin: 0 2px;
+            margin: 0 1px;
+            box-shadow: none;
         }
         .maestri-header-btn:hover {
             background-color: rgba(0, 0, 0, 0.06);
+            color: #1d1d1f;
+        }
+        .maestri-header-btn:active {
+            background-color: rgba(0, 0, 0, 0.12);
+        }
+        .maestri-add-split-btn {
+            padding: 4px 4px;
+        }
+        .maestri-add-split-btn image {
+            color: #48484a;
+        }
+        .maestri-add-split-btn:hover image {
+            color: #1d1d1f;
         }
         .maestri-title-entry {
             border: 1px solid #007AFF;
@@ -1010,18 +1026,89 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
+        # High priority CSS provider to guarantee traffic dots and transparent header are not overridden by user themes (e.g. WhiteSur)
+        traffic_provider = Gtk.CssProvider()
+        traffic_css = """
+        headerbar {
+            background-color: transparent;
+            background-image: none;
+            border: none;
+            box-shadow: none;
+        }
+        .maestri-sidebar-top-bar {
+            background-color: #f7f7f9;
+            border-right: 1px solid #e2e2e6;
+        }
+        headerbar button.maestri-traffic-dot {
+            min-width: 12px;
+            min-height: 12px;
+            border-radius: 9999px;
+            border: 0.5px solid rgba(0, 0, 0, 0.2);
+            padding: 0;
+            margin: 0 3px;
+            opacity: 1;
+            box-shadow: none;
+        }
+        headerbar button.dot-close {
+            background-color: #FF5F56;
+            background-image: none;
+            border-color: #E0443E;
+        }
+        headerbar button.dot-close:hover {
+            background-color: #E0443E;
+        }
+        headerbar button.dot-close:active {
+            background-color: #BF360C;
+        }
+        headerbar button.dot-min {
+            background-color: #FFBD2E;
+            background-image: none;
+            border-color: #DEA123;
+        }
+        headerbar button.dot-min:hover {
+            background-color: #DEA123;
+        }
+        headerbar button.dot-min:active {
+            background-color: #C47D00;
+        }
+        headerbar button.dot-max {
+            background-color: #27C93F;
+            background-image: none;
+            border-color: #1AAB29;
+        }
+        headerbar button.dot-max:hover {
+            background-color: #1AAB29;
+        }
+        headerbar button.dot-max:active {
+            background-color: #1B5E20;
+        }
+        """
+        traffic_provider.load_from_string(traffic_css)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            traffic_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_USER + 10
+        )
+
     def _setup_header_bar(self):
         header = Gtk.HeaderBar()
         header.set_show_title_buttons(False)
+        header.set_title_widget(Gtk.Box())   # empty widget suppresses default centered window title
         self.set_titlebar(header)
         header.set_decoration_layout("")
         self._title_controls_timer = GLib.timeout_add(100, self._suppress_title_controls, header, None)
 
+        # Sidebar Header Container (matches sidebar width when open)
+        sidebar_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        sidebar_header_box.add_css_class("maestri-sidebar-top-bar")
+        sidebar_header_box.set_size_request(260, 44)
+        self.sidebar_header_box = sidebar_header_box
+
         # macOS Window Traffic Lights (Red, Yellow, Green)
         traffic_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         traffic_box.add_css_class("maestri-traffic-lights")
-        traffic_box.set_margin_start(4)
-        traffic_box.set_margin_end(12)
+        traffic_box.set_margin_start(2)
+        traffic_box.set_margin_end(6)
         self.traffic_box = traffic_box
 
         dot_close = Gtk.Button()
@@ -1045,12 +1132,26 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         dot_max.connect("clicked", lambda _b: self.unmaximize() if self.is_maximized() else self.maximize())
         traffic_box.append(dot_max)
 
-        header.pack_start(traffic_box)
+        sidebar_header_box.append(traffic_box)
 
-        # Quick Add (+ Add) MenuButton
-        btn_quick_add = Gtk.MenuButton(child=icon_label("plus", "Add"))
+        # Flexible spacer to push + v and [|] to the right edge of the sidebar
+        sidebar_header_spacer = Gtk.Box()
+        sidebar_header_spacer.set_hexpand(True)
+        sidebar_header_box.append(sidebar_header_spacer)
+        self.sidebar_header_spacer = sidebar_header_spacer
+
+        # Quick Add (+ v) MenuButton
+        add_child = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        img_plus = Gtk.Image.new_from_icon_name("list-add-symbolic")
+        img_plus.set_pixel_size(14)
+        img_chev = Gtk.Image.new_from_icon_name("pan-down-symbolic")
+        img_chev.set_pixel_size(10)
+        add_child.append(img_plus)
+        add_child.append(img_chev)
+        btn_quick_add = Gtk.MenuButton(child=add_child)
         btn_quick_add.set_tooltip_text("Quick Create Node")
         btn_quick_add.add_css_class("maestri-header-btn")
+        btn_quick_add.add_css_class("maestri-add-split-btn")
         quick_menu = Gio.Menu()
         quick_menu.append("New Workspace…", "win.new-workspace")
         quick_menu.append("New Group…", "win.new-group")
@@ -1069,7 +1170,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         self.btn_quick_add = btn_quick_add
         self.quick_menu = quick_menu
         self.terminal_presets_menu = term_submenu
-        header.pack_start(btn_quick_add)
+        sidebar_header_box.append(btn_quick_add)
 
         # Toggle Sidebar button (macOS [|] style with maestri-sidebar-symbolic icon)
         btn_sidebar = Gtk.Button()
@@ -1080,11 +1181,14 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         btn_sidebar.add_css_class("maestri-header-btn")
         btn_sidebar.connect("clicked", self._on_toggle_sidebar)
         btn_sidebar.get_label = lambda: "[|]"
-        header.pack_start(btn_sidebar)
+        sidebar_header_box.append(btn_sidebar)
         self.btn_sidebar = btn_sidebar
+
         # Sidebar collapsed: [icon] Workspace name capsule next to the toggle (follows switches and renames)
         self.workspace_pill = WorkspacePill()
-        header.pack_start(self.workspace_pill)
+        sidebar_header_box.append(self.workspace_pill)
+
+        header.pack_start(sidebar_header_box)
         self._header = header
 
         # Right: Settings button
@@ -1432,16 +1536,23 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                                 comments="Native GTK 4 port of Maestri for Linux.")
         about.present()
 
+    def _on_paned_position_changed(self, paned, _param):
+        if getattr(self, "_sidebar_open", True) and hasattr(self, "sidebar_header_box"):
+            pos = paned.get_position()
+            if pos > 0:
+                self.sidebar_header_box.set_size_request(pos, 44)
+
     def _suppress_title_controls(self, header, _clock):
         if self._cleaned_up:
             return False
-        # GTK CSS has no display:none. Hide decoration widgets at the widget layer,
-        # including controls added after mapping by a desktop integration or GNOME extensions.
+        # Suppress ghost titlebutton widgets injected by extensions (except inside sidebar_header_box / traffic_box)
         def visit(parent):
             child = parent.get_first_child()
             while child is not None:
                 following = child.get_next_sibling()
-                if isinstance(child, Gtk.WindowControls) or child.has_css_class("titlebutton"):
+                if child is getattr(self, "sidebar_header_box", None) or child is getattr(self, "traffic_box", None):
+                    pass
+                elif isinstance(child, Gtk.WindowControls) or child.has_css_class("titlebutton"):
                     child.set_visible(False)
                     child.set_can_target(False)
                 else:
@@ -1468,6 +1579,17 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                 self.btn_sidebar.add_css_class("active")
             else:
                 self.btn_sidebar.remove_css_class("active")
+        if hasattr(self, "sidebar_header_box"):
+            if opening:
+                self.sidebar_header_box.set_size_request(target, 44)
+                self.sidebar_header_spacer.set_visible(True)
+                self.btn_quick_add.set_visible(True)
+                self.sidebar_header_box.add_css_class("sidebar-open")
+            else:
+                self.sidebar_header_box.set_size_request(-1, 44)
+                self.sidebar_header_spacer.set_visible(False)
+                self.btn_quick_add.set_visible(False)
+                self.sidebar_header_box.remove_css_class("sidebar-open")
         settings = self.get_settings()
         animate = settings.get_property("gtk-enable-animations") if settings else False
         started = GLib.get_monotonic_time()
@@ -1476,12 +1598,17 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             elapsed = (clock.get_frame_time() - started) / 180000 if animate else 1.0
             progress = max(0.0, min(1.0, elapsed))
             eased = 1 - (1 - progress) ** 3
-            self.paned.set_position(round(start + (target - start) * eased))
+            current_pos = round(start + (target - start) * eased)
+            self.paned.set_position(current_pos)
+            if hasattr(self, "sidebar_header_box") and opening:
+                self.sidebar_header_box.set_size_request(max(current_pos, 0), 44)
             self.sidebar.set_opacity(eased if opening else 1 - eased)
             if progress >= 1:
                 self.sidebar.set_visible(opening)
                 self.sidebar.set_opacity(1)
                 self._sidebar_tick = 0
+                if not opening and hasattr(self, "sidebar_header_box"):
+                    self.sidebar_header_box.set_size_request(-1, 44)
                 return False
             return True
         self._sidebar_tick = self.paned.add_tick_callback(step)
