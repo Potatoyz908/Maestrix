@@ -29,6 +29,9 @@ GUIDE = (0.937, 0.302, 0.459)   # alignment guides: rose, distinct from the blue
 GUIDE_ALPHA = 0.75
 GUIDE_MARK_PX = 2.5
 KIND_FILL = {"terminal": (0.12, 0.12, 0.12), "stickyNote": (1.0, 0.953, 0.639), "portal": (1.0, 1.0, 1.0), "fileTree": (0.98, 0.98, 0.99)}
+NODE_RADIUS = 10.0                # CanvasNodeConstants.cornerRadius
+SELECTION_OUTSET = 3.0            # CanvasNodeConstants.selectionOutset
+SELECTION_W = 2.0
 GRID_STEP = 16.0                  # Constants.canvasGridSpacing
 BACKGROUNDS = ("dotGrid", "solid", "transparent")   # preferences.json `canvasBackground`
 MIN_GRID_PX = 4.0                 # below 4 px on screen macOS skips the grid
@@ -70,10 +73,11 @@ class CairoRenderer:
 
     def draw_overlay(self, cr: cairo.Context, scene: Scene, vp: Viewport, overlay: Overlay) -> None:
         """Transient gesture visuals on a TRANSPARENT surface, meant to sit above the node widgets (a dragged rope must
-        stay visible even where it crosses a node)."""
+        stay visible even where it crosses a node), plus the selection ring of widget nodes."""
         cr.save()
         cr.scale(vp.zoom, vp.zoom)
         cr.translate(-vp.origin.x, -vp.origin.y)
+        self._selection(cr, scene)
         self._overlay(cr, scene, vp, overlay)
         cr.restore()
 
@@ -98,6 +102,22 @@ class CairoRenderer:
             cr.move_to(0, py); cr.line_to(w, py)
             y += step
         cr.stroke()
+        cr.restore()
+
+    def _selection(self, cr: cairo.Context, scene: Scene) -> None:
+        """NodeShellView selection: 2 pt #007AFF dashed [6,4], 3 pt outside the card, radius 10 + 3 (canvas units: it zooms
+        with the node, like the SwiftUI shell)."""
+        nodes = [n for n in scene.selected_nodes() if n.kind in WIDGET_KINDS]
+        if not nodes:
+            return
+        cr.save()
+        cr.set_source_rgb(0.0, 0.478, 1.0)
+        cr.set_line_width(SELECTION_W)
+        cr.set_dash([6, 4])
+        for n in nodes:
+            f, o = n.frame, SELECTION_OUTSET
+            _rounded_rect(cr, f.x - o, f.y - o, f.w + 2 * o, f.h + 2 * o, NODE_RADIUS + o)
+            cr.stroke()
         cr.restore()
 
     def _ropes(self, cr: cairo.Context, scene: Scene, vp: Viewport, ropes: RopeSimulation | None) -> None:
@@ -234,3 +254,13 @@ class CairoRenderer:
                     cr.stroke()
             cr.arc(end.x, end.y, 5 / vp.zoom, 0, 2 * math.pi)
             cr.fill()
+
+
+def _rounded_rect(cr: cairo.Context, x: float, y: float, w: float, h: float, r: float) -> None:
+    r = max(0.0, min(r, w / 2.0, h / 2.0))
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    cr.arc(x + r, y + r, r, math.pi, 1.5 * math.pi)
+    cr.close_path()

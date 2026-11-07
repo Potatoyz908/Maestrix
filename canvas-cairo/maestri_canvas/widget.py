@@ -48,7 +48,7 @@ from .resize import Edge
 from .scene import WIDGET_KINDS, ConnItem, NodeItem, Scene, norm
 from .viewport import Viewport
 
-HEADER_H = 28
+HEADER_H = 32   # CanvasNodeConstants.headerHeight
 SIDE, SIDE_OUT = 10, 5        # side resize handle: 10px thick, 5 outside the border
 CORNER, CORNER_OUT = 16, 6    # corner handle: 16px square, 6 outside
 _ROLE = "_canvas_role"   # python attribute set on chrome widgets: ("header"|"edge"|"pin", payload)
@@ -208,7 +208,7 @@ class CairoLayer(Gtk.DrawingArea):
     def _paint(self, cr: cairo.Context, w: int, h: int) -> None:
         c = self._canvas
         if self._top:
-            if not c.controller.overlay.is_empty():
+            if not c.controller.overlay.is_empty() or c.scene.selection:
                 c.renderer.draw_overlay(cr, c.scene, c.viewport, c.controller.overlay)
         else:
             c.renderer.draw(cr, c.scene, c.viewport, w, h, c.controller.ropes, None)
@@ -218,7 +218,7 @@ class CairoLayer(Gtk.DrawingArea):
             Gtk.DrawingArea.do_snapshot(self, snapshot)
             return
         w, h, s = self.get_width(), self.get_height(), self.get_scale_factor()
-        if w <= 0 or h <= 0 or (self._top and self._canvas.controller.overlay.is_empty()):
+        if w <= 0 or h <= 0 or (self._top and self._canvas.controller.overlay.is_empty() and not self._canvas.scene.selection):
             return
         surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w * s, h * s)
         surf.set_device_scale(s, s)   # draw in logical px; HiDPI handled by the surface
@@ -243,10 +243,14 @@ class NodeFrame(Gtk.Overlay):
         header.set_size_request(-1, HEADER_H)
         setattr(header, _ROLE, ("header", item.id))
         self.title = Gtk.Label(label=item.title or item.id[:8], xalign=0, hexpand=True, ellipsize=3)
-        close = Gtk.Button(icon_name="maestri-close-symbolic", tooltip_text="Close")   # outline icon, not a "×" glyph
-        close.add_css_class("flat")
-        close.connect("clicked", lambda _b: on_close(self.node_id))
-        setattr(close, _ROLE, ("content", item.id))   # a real button: it keeps its own click
+        self.title.add_css_class("maestri-node-title")
+        # macOS NodeHeader: kind icon (11 pt) + title 12 pt medium; no close button (Delete / Ctrl+W / menu remove a node).
+        self.on_close = on_close
+        self.header_icon = Gtk.Image.new_from_icon_name(HEADER_ICONS.get(item.kind, "maestri-square-symbolic"))
+        self.header_icon.set_pixel_size(12)
+        self.header_icon.add_css_class("maestri-node-icon")
+        setattr(self.header_icon, _ROLE, ("header", item.id))
+        header.append(self.header_icon)
         # Optional header protocol for a content widget (the sticky note uses it): header_left / header_title / header_right.
         for w in getattr(content, "header_left", ()):
             setattr(w, _ROLE, ("content", item.id))   # real controls: they keep their own clicks
@@ -270,7 +274,6 @@ class NodeFrame(Gtk.Overlay):
         setattr(self.badges, _ROLE, ("header", item.id))   # dragging over a badge still moves the node
         self._badges: dict[str, Gtk.Label] = {}
         header.append(self.badges)
-        header.append(close)
         content.set_vexpand(True)
         content.set_hexpand(True)
         setattr(content, _ROLE, ("content", item.id))
@@ -425,11 +428,21 @@ class NodeFrame(Gtk.Overlay):
         return w
 
 
+HEADER_ICONS = {"terminal": "maestri-terminal-symbolic", "stickyNote": "maestri-note-symbolic",
+                "portal": "maestri-globe-symbolic", "fileTree": "maestri-file-tree-symbolic"}
+# CanvasNodeConstants: cornerRadius 10, headerHeight 32; NodeHeader: title 12 pt medium, icon 11 pt, padding 0 8.
+SHELL_CSS = """
+.maestri-node { border-radius: 10px; }
+.maestri-node-header { min-height: 32px; padding: 0 8px; border-radius: 10px 10px 0 0; }
+.maestri-node-header .maestri-node-title { font-size: 12px; font-weight: 500; }
+.maestri-node-header image.maestri-node-icon { -gtk-icon-size: 12px; min-width: 12px; min-height: 12px; padding: 0; }
+"""
+
 CSS = b"""
 .maestri-node { background: @window_bg_color; border: 1px solid alpha(currentColor, .25); border-radius: 8px; }
 .maestri-node.maestri-refused { border: 2px solid #ef4444; }
 .maestri-toast { background: #ef4444; color: white; padding: 6px 14px; border-radius: 14px; }
-.maestri-node.selected { border: 2px dashed #3b82f6; }
+.maestri-node.selected { }   /* the dashed selection ring is drawn by Cairo, 3 px outside (renderer._selection) */
 .maestri-node-header { background: alpha(currentColor, .06); padding: 0 8px; border-radius: 7px 7px 0 0; }
 .maestri-node-badge { font-size: 12px; padding: 0 5px; border-radius: 8px; background: alpha(currentColor, .10); }
 .maestri-node-badge.routine-paused, .maestri-node-badge-icon.routine-paused { opacity: .45; }
@@ -1217,3 +1230,6 @@ class CanvasWidget(Gtk.Overlay):
         prov = Gtk.CssProvider()
         prov.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(display, prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        shell = Gtk.CssProvider()   # USER+1: the shell geometry must win over themes such as WhiteSur
+        shell.load_from_string(SHELL_CSS)
+        Gtk.StyleContext.add_provider_for_display(display, shell, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)

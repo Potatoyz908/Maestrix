@@ -142,15 +142,20 @@ def test_offscreen_nodes_are_hidden_and_remove_cleans_up(canvas):
     assert "CCCCCCCC-0000-0000-0000-000000000003" not in canvas.frames and "CCCCCCCC-0000-0000-0000-000000000003" not in canvas.scene.nodes
 
 
-def test_close_button_requests_delete_without_a_drag(canvas):
+def test_header_is_macos_like_icon_title_and_no_close_button(canvas):
+    """NodeShellView header: kind icon + title, no close button (Delete / Ctrl+W / menu remove a node)."""
     got = []
     canvas.connect("delete-requested", lambda _w, ids: got.append(ids))
     frame = canvas.frames[A]
     header = frame.get_first_child().get_first_child()   # box -> header
-    close_btn = header.get_last_child()
-    b = close_btn.compute_bounds(canvas)[1]
-    assert canvas.target_at(b.get_x() + b.get_width() / 2, b.get_y() + b.get_height() / 2) == NodeContent(A)   # button keeps its click
-    close_btn.emit("clicked")
+    assert header.get_first_child() is frame.header_icon and frame.header_icon.get_icon_name().startswith("maestri-")
+    kids, w = [], header.get_first_child()
+    while w is not None:
+        kids.append(w)
+        w = w.get_next_sibling()
+    assert not any(isinstance(k, Gtk.Button) and (k.get_icon_name() or "") == "maestri-close-symbolic" for k in kids)
+    assert header.get_height() >= HEADER_H == 32
+    frame.on_close(A)                                     # the delete path the close button used still works
     assert got == [(A,)]
 
 
