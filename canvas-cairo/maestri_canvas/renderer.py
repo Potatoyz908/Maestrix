@@ -17,17 +17,19 @@ from .rope import RopeSimulation, static_catenary
 from .scene import WIDGET_KINDS, ConnItem, Scene, pin_point
 from .viewport import Viewport
 
-BG = (0.949, 0.949, 0.949)
-GRID = (0.80, 0.80, 0.80)
+BG = (1.0, 1.0, 1.0)              # CanvasBackground "dotGrid": white under the line grid
+SOLID_BG = (0.98, 0.98, 0.98)     # CanvasBackground "solid": NSColor(white: 0.98)
+GRID = (0.90, 0.90, 0.90)         # Constants.canvasGridLineColor (#E6E6E6)
+GRID_LINE_W = 0.5                 # Constants.canvasGridLineWidth
 ROPE = (0.54, 0.54, 0.56)
 ACCENT = (0.231, 0.510, 0.965)
 GUIDE = (0.937, 0.302, 0.459)   # alignment guides: rose, distinct from the blue selection / marquee
 GUIDE_ALPHA = 0.75
 GUIDE_MARK_PX = 2.5
 KIND_FILL = {"terminal": (0.12, 0.12, 0.12), "stickyNote": (1.0, 0.953, 0.639), "portal": (1.0, 1.0, 1.0), "fileTree": (0.98, 0.98, 0.99)}
-GRID_STEP = 40.0
+GRID_STEP = 16.0                  # Constants.canvasGridSpacing
 BACKGROUNDS = ("dotGrid", "solid", "transparent")   # preferences.json `canvasBackground`
-MIN_GRID_PX = 12.0
+MIN_GRID_PX = 4.0                 # below 4 px on screen macOS skips the grid
 
 
 def _polyline_smooth(cr: cairo.Context, pts: list[Point]) -> None:
@@ -50,7 +52,7 @@ class CairoRenderer:
              ropes: RopeSimulation | None = None, overlay: Overlay | None = None) -> None:
         """Base layer (+ the overlay when given, for headless use). The widget passes overlay=None and draws it on a top layer."""
         if self.background != "transparent":   # transparent: the window background shows through
-            cr.set_source_rgb(*BG)
+            cr.set_source_rgb(*(SOLID_BG if self.background == "solid" else BG))
             cr.paint()
         if self.background == "dotGrid":
             self._grid(cr, vp, width, height)
@@ -75,22 +77,26 @@ class CairoRenderer:
 
     # ---- layers --------------------------------------------------------------------------------
     def _grid(self, cr: cairo.Context, vp: Viewport, w: float, h: float) -> None:
-        step = GRID_STEP
-        while step * vp.zoom < MIN_GRID_PX:
-            step *= 2  # keep the dot spacing readable (and the dot count bounded) when zoomed far out
-        x0 = math.floor(vp.origin.x / step) * step
-        y0 = math.floor(vp.origin.y / step) * step
+        """macOS line grid (CanvasBackground.makeGridPattern): a 0.5 px #E6E6E6 line every 16 canvas units, both axes; skipped
+        when the spacing is under 4 screen px. Lines sit on pixel centres so they stay crisp at 1x."""
+        step = GRID_STEP * vp.zoom
+        if step < MIN_GRID_PX:
+            return
+        cr.save()
         cr.set_source_rgb(*GRID)
-        r = 1.0
-        x = x0
-        while (x - vp.origin.x) * vp.zoom <= w:
-            sx = (x - vp.origin.x) * vp.zoom
-            y = y0
-            while (y - vp.origin.y) * vp.zoom <= h:
-                cr.rectangle(sx - r / 2, (y - vp.origin.y) * vp.zoom - r / 2, r * 1.5, r * 1.5)
-                y += step
+        cr.set_line_width(GRID_LINE_W)
+        x = -((vp.origin.x * vp.zoom) % step)
+        while x <= w:
+            px = math.floor(x) + 0.5
+            cr.move_to(px, 0); cr.line_to(px, h)
             x += step
-        cr.fill()
+        y = -((vp.origin.y * vp.zoom) % step)
+        while y <= h:
+            py = math.floor(y) + 0.5
+            cr.move_to(0, py); cr.line_to(w, py)
+            y += step
+        cr.stroke()
+        cr.restore()
 
     def _ropes(self, cr: cairo.Context, scene: Scene, vp: Viewport, ropes: RopeSimulation | None) -> None:
         cr.set_line_join(cairo.LINE_JOIN_ROUND)

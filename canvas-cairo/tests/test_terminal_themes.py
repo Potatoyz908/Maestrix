@@ -8,7 +8,7 @@ import cairo
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from maestri_canvas.geometry import Point
-from maestri_canvas.renderer import BG, GRID_STEP, CairoRenderer
+from maestri_canvas.renderer import BG, GRID_STEP, SOLID_BG, CairoRenderer
 from maestri_canvas.scene import Scene
 from maestri_canvas.terminal_themes import THEMES, resolve_theme
 from maestri_canvas.viewport import Viewport
@@ -46,8 +46,9 @@ def _pixel(s, x, y):
 
 def test_background_modes():
     bg = tuple(round(c * 255) for c in BG) + (255,)
-    dot = int(GRID_STEP)   # a grid dot sits on every multiple of GRID_STEP at zoom 1
-    assert _pixel(_render("dotGrid"), dot, dot) != bg
-    assert _pixel(_render("solid"), dot, dot) == bg and _pixel(_render("solid"), 7, 7) == bg
+    solid = tuple(round(c * 255) for c in SOLID_BG) + (255,)
+    dot = int(GRID_STEP)   # a grid line crosses every multiple of GRID_STEP at zoom 1
+    assert _pixel(_render("dotGrid"), dot, dot) != bg and _pixel(_render("dotGrid"), 7, 7) == bg
+    assert _pixel(_render("solid"), dot, dot) == solid and _pixel(_render("solid"), 7, 7) == solid
     assert _pixel(_render("transparent"), 7, 7)[3] == 0 and _pixel(_render("transparent"), dot, dot)[3] == 0
     assert CairoRenderer(background="bogus").background == "dotGrid"

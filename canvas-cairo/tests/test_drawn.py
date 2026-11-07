@@ -203,6 +203,6 @@ def test_text_paints_and_measure_grows_with_content():
 def test_selected_drawn_node_gets_an_outline_without_placeholders():
     scene = Scene()
     scene.add_node(NodeItem("S", Rect(50, 50, 100, 60), 1, "shape", content={**default_shape(), "fillStyle": "none", "strokeWidth": 0}))
-    assert _px(_render(scene), 47, 80) == pytest.approx(BG, abs=0.01)
+    assert _px(_render(scene), 47, 82) == pytest.approx(BG, abs=0.01)
     scene.selection = {"S"}
-    assert _px(_render(scene), 47, 80) != pytest.approx(BG, abs=0.01)
+    assert _px(_render(scene), 47, 82) != pytest.approx(BG, abs=0.01)
