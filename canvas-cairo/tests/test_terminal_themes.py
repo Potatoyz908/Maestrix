@@ -71,3 +71,10 @@ def test_macos_theme_ids_resolve_to_themselves():
 def test_system_theme_follows_appearance():
     assert resolve_theme("system", dark=True) is THEMES["maestri-dark"]
     assert resolve_theme("system", dark=False) is THEMES["maestri-light"]
+
+
+def test_preferences_accept_every_macos_theme():
+    from maestri_core.preferences import Preferences
+    assert Preferences().terminal_font_family == "system"   # Constants.defaultFontFamily
+    assert [Preferences.from_dict({"terminalTheme": t}).terminal_theme for t in ("maestri-light", "maestri-dark", "rose-pine", "gruvbox-light")] \
+        == ["light", "dark", "rose-pine", "gruvbox-light"]

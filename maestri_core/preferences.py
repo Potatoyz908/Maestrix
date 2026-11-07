@@ -13,7 +13,11 @@ from typing import Any, Dict, Optional
 
 from .paths import data_dir
 
-TERMINAL_THEMES = ("system", "dark", "light", "dracula", "solarized-dark", "solarized-light", "nord", "one-dark", "tokyo-night")
+# "system"/"dark"/"light" + the TerminalThemeRegistry ids (Preferences.swift terminalTheme).
+TERMINAL_THEMES = ("system", "dark", "light", "dracula", "solarized-dark", "solarized-light", "nord", "one-dark", "tokyo-night",
+                   "tokyo-night-day", "catppuccin-mocha", "catppuccin-macchiato", "catppuccin-latte", "gruvbox-dark", "gruvbox-light",
+                   "rose-pine")
+_THEME_ALIASES = {"maestri-dark": "dark", "maestri-light": "light"}   # same themes under their preferences names
 CANVAS_BACKGROUNDS = ("dotGrid", "solid", "transparent")
 LANGUAGES = ("en", "zh-Hans")
 IDES = ("cursor", "vscode", "xcode")
@@ -27,7 +31,7 @@ def _pick(value: Any, allowed, default):
 
 @dataclass
 class Preferences:
-    terminal_font_family: str = "Monospace"
+    terminal_font_family: str = "system"   # Constants.defaultFontFamily: the monospaced system font (SF Mono on macOS)
     terminal_font_size: float = 13.0
     terminal_theme: str = "dark"
     canvas_background: str = "dotGrid"
@@ -75,7 +79,7 @@ class Preferences:
         return cls(
             terminal_font_family=family if isinstance(family, str) and family else base.terminal_font_family,
             terminal_font_size=min(FONT_SIZE_RANGE[1], max(FONT_SIZE_RANGE[0], size)),
-            terminal_theme=_pick(d.get("terminalTheme"), TERMINAL_THEMES, base.terminal_theme),
+            terminal_theme=_pick(_THEME_ALIASES.get(d.get("terminalTheme"), d.get("terminalTheme")), TERMINAL_THEMES, base.terminal_theme),
             canvas_background=_pick(d.get("canvasBackground"), CANVAS_BACKGROUNDS, base.canvas_background),
             preferred_ide=_pick(d.get("preferredIDE"), IDES, base.preferred_ide),
             language=_pick(d.get("language"), LANGUAGES, base.language),
