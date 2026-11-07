@@ -39,6 +39,8 @@ let coreSources: [String] = [
     "Connection/RoleInjector.swift",
     "Connection/SkillInjector.swift",
     "Connection/WorkspaceGraph.swift",
+    "SSH/SSHRemote.swift",
+    "SSH/SSHRoutes.swift",
     "Floor/FloorManager.swift",
     "Floor/HooksManager.swift",
     "Git/GitFileStatus.swift",

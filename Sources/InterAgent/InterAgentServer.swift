@@ -650,6 +650,7 @@ public final class InterAgentServer {
             return Self.buildHTTPResponse(status: 204, body: "")
         }
         // Nexus routes (portal results, terminal restart/unload, floor hooks, partituras, routine run-now)
+        if let r = await SSHRoutes.handle(method: method, cleanPath: cleanPath, pathParts: pathParts, body: body, origin: allowedOrigin) { return r }
         if let r = await NexusRoutes.handle(method: method, cleanPath: cleanPath, pathParts: pathParts, headerMap: headerMap, body: body, origin: allowedOrigin) { return r }
 
         // 1. POST /cli (omaestri CLI)
@@ -803,15 +804,22 @@ public final class InterAgentServer {
                 workspaceId = match.0
                 floorEnvironment = FloorHookRunner.environment(for: match.2, rootDirectory: FloorHookRunner.rootDirectory(of: match.2, fallback: match.1.payload.workingDirectory))
             }
+            // SSH workspace: the terminal runs on the remote host (`ssh -tt … -- dest 'cd … && …'`), never a local shell
+            let sshArgv: [String]?
+            do { sshArgv = try SSHRoutes.terminalArgv(workspaceId: workspaceId, command: command) } catch {
+                return Self.buildHTTPResponse(status: 400, body: "error: \(error)", allowedOrigin: allowedOrigin)
+            }
+            let localDirectory = sshArgv == nil ? workingDirectory : NSHomeDirectory()
             await MainActor.run {   // the PTY exists before the response: an immediate list/ask finds it
                 let tm = PlatformHooks.terminals
                 #if os(Linux)
                 if !floorEnvironment.isEmpty { LinuxTerminalManager.shared.pendingEnvironment[newId] = floorEnvironment }
+                if let sshArgv { LinuxTerminalManager.shared.pendingArgv[newId] = sshArgv }
                 #endif
                 tm.createTerminal(
                     id: newId,
                     command: command,
-                    workingDirectory: workingDirectory,
+                    workingDirectory: localDirectory,
                     workspaceId: workspaceId,
                     roleName: roleName,
                     displayName: displayName,
@@ -1266,6 +1274,7 @@ public final class InterAgentServer {
                     "createdAt": isoFormatter.string(from: Date()),
                     "terminalCount": Self.terminalCount(workspaceId: w.id)
                 ])
+                if let ssh = w.ssh { list[list.count - 1]["ssh"] = ssh.json }
             }
             if let data = try? JSONSerialization.data(withJSONObject: list, options: [.prettyPrinted]) {
                 return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
@@ -1288,6 +1297,18 @@ public final class InterAgentServer {
             var entry = WorkspaceEntry(id: id, name: name, workingDirectory: workingDirectory, icon: icon, color: color)
             entry.isPinned = isPinned
             entry.locationType = locationType
+            // remote workspace: validated before anything is saved; workingDirectory = remotePath
+            if let sshObj = json["ssh"] as? [String: Any] {
+                guard let raw = SSHTarget(json: sshObj) else {
+                    return Self.buildHTTPResponse(status: 400, body: "error: ssh.host is required", allowedOrigin: allowedOrigin)
+                }
+                do { _ = try raw.validated() } catch {
+                    return Self.buildHTTPResponse(status: 400, body: "error: \(error)", allowedOrigin: allowedOrigin)
+                }
+                entry.ssh = raw
+                entry.locationType = "ssh"
+                entry.workingDirectory = raw.remotePath ?? "~"
+            }
 
             let pm = PersistenceManager.shared
             try? pm.ensureWorkspaceDirectoryExists(id: id)
@@ -1295,6 +1316,11 @@ public final class InterAgentServer {
             // Create initial workspace document via WorkspaceManager
             let wsManager = WorkspaceManager(entry: entry)
             try? wsManager.saveSync()
+            if let ssh = entry.ssh, var doc = try? pm.loadWorkspace(id: id) {
+                doc.payload.ssh = ssh
+                doc.payload.locationType = "ssh"
+                try? pm.saveSync(doc, to: pm.workspaceURL(id: id))
+            }
 
             var manifest = (try? pm.loadManifest()) ?? WorkspaceManifest()
             manifest.workspaces.removeAll { $0.id == id }
@@ -1320,10 +1346,10 @@ public final class InterAgentServer {
                 "icon": icon,
                 "color": color,
                 "isPinned": isPinned,
-                "locationType": locationType,
+                "locationType": entry.locationType,
                 "createdAt": isoFormatter.string(from: Date()),
                 "terminalCount": Self.terminalCount(workspaceId: id)
-            ]
+            ].merging(entry.ssh.map { ["ssh": $0.json, "workingDirectory": entry.workingDirectory] } ?? [:]) { $1 }
             if let data = try? JSONSerialization.data(withJSONObject: respObj) {
                 return Self.buildHTTPResponse(status: 201, contentType: "application/json; charset=utf-8", data: data, allowedOrigin: allowedOrigin)
             }

@@ -43,6 +43,10 @@ final class POSIXPtyProcess: @unchecked Sendable {
     /// 进程退出回调
     var onProcessExit: ((Int32?) -> Void)?
 
+    /// When set, exec exactly this argv (argv[0] looked up in PATH) instead of the login shell: no local shell
+    /// ever interprets it (SSH workspaces).
+    var argv: [String]?
+
     init(terminalId: UUID, command: String, workingDirectory: String, extraEnvironment: [String: String] = [:]) {
         self.terminalId = terminalId
         self.command = command
@@ -93,7 +97,10 @@ final class POSIXPtyProcess: @unchecked Sendable {
         let execPath: String
         let execArgs: [String]
         let trimmedCmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedCmd.isEmpty || trimmedCmd == "bash" || trimmedCmd == "zsh" || trimmedCmd.hasSuffix("/bash") || trimmedCmd.hasSuffix("/zsh") {
+        if let argv, let first = argv.first {
+            execPath = first
+            execArgs = argv
+        } else if trimmedCmd.isEmpty || trimmedCmd == "bash" || trimmedCmd == "zsh" || trimmedCmd.hasSuffix("/bash") || trimmedCmd.hasSuffix("/zsh") {
             execPath = defaultShell
             execArgs = [defaultShell, "-i", "-l"]
         } else {

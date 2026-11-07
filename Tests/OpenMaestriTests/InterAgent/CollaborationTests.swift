@@ -349,6 +349,117 @@ final class CollaborationTests: IsolatedDataDirTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: floor.worktreePath), "worktree removed")
     }
 
+    // MARK: - SSH (phase A) with a fake ssh (OPEN_MAESTRI_SSH_BIN)
+
+    func testSSHValidationQuotingAndArgv() throws {
+        for bad in ["-oProxyCommand=x", "a b", ";rm", "x$(id)", "", "-"] {
+            XCTAssertThrowsError(try SSHTarget(host: bad).validated(), "host \(bad)")
+        }
+        XCTAssertThrowsError(try SSHTarget(host: "ok", user: "-l").validated())
+        XCTAssertThrowsError(try SSHTarget(host: "ok", port: 0).validated())
+        XCTAssertThrowsError(try SSHTarget(host: "ok", identityFile: "-i/x").validated())
+        XCTAssertThrowsError(try SSHTarget(host: "ok", identityFile: "/no/such/key").validated())
+        XCTAssertEqual(SSHCommandBuilder.quote("it's"), "'it'\\''s'")
+        let t = try SSHTarget(host: "srv.example", user: "me", port: 2222, remotePath: "/srv/my proj").validated()
+        let argv = SSHCommandBuilder.terminalArgv(t, command: "", controlDir: "/d/run")
+        XCTAssertEqual(argv.prefix(2), ["ssh", "-tt"].prefix(2).map { $0 == "ssh" ? SSHCommandBuilder.binary : $0 }[...])
+        XCTAssertTrue(argv.contains("ControlMaster=auto") && argv.contains("ControlPath=/d/run/ssh-%C") && argv.contains("ControlPersist=10m"))
+        let dd = try XCTUnwrap(argv.firstIndex(of: "--"))
+        XCTAssertEqual(Array(argv[(dd + 1)...]), ["me@srv.example", "cd -- '/srv/my proj' && exec \"${SHELL:-bash}\" -l"])
+        XCTAssertEqual(Array(argv[argv.firstIndex(of: "-p")!...].prefix(2)), ["-p", "2222"])
+        XCTAssertEqual(SSHCommandBuilder.terminalArgv(t, command: "claude", controlDir: "/d").last, "cd -- '/srv/my proj' && claude")
+        XCTAssertEqual(SSHCommandBuilder.remoteCd("~/a b"), "cd ~/'a b'")
+    }
+
+    func testSSHConfigHostsFollowIncludeAndSkipPatterns() throws {
+        let dir = NSTemporaryDirectory() + "om-sshcfg-\(UUID().uuidString.prefix(6))"
+        try FileManager.default.createDirectory(atPath: dir + "/conf.d", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        try "Host *\n  User nobody\nInclude conf.d/*.conf\nHost web prod-?\n  HostName 10.0.0.5\n  User deploy\n  Port 2200\n".write(toFile: dir + "/config", atomically: true, encoding: .utf8)
+        try "Host db\n  HostName db.internal\n  IdentityFile ~/.ssh/db_key\n".write(toFile: dir + "/conf.d/db.conf", atomically: true, encoding: .utf8)
+        let hosts = SSHConfigParser.hosts(path: dir + "/config")
+        XCTAssertEqual(hosts.map(\.alias), ["db", "web"])
+        XCTAssertEqual(hosts[1], SSHHostEntry(alias: "web", hostName: "10.0.0.5", user: "deploy", port: 2200, identityFile: nil))
+        XCTAssertEqual(hosts[0].identityFile, "~/.ssh/db_key")
+    }
+
+    func testSSHRoutesAndRemoteTerminalWithFakeSSH() async throws {
+        let base = NSTemporaryDirectory() + "om-fakessh-\(UUID().uuidString.prefix(6))"
+        try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base); unsetenv("OPEN_MAESTRI_SSH_BIN"); unsetenv("OPEN_MAESTRI_SSH_CONFIG") }
+        let log = base + "/argv.log", fake = base + "/ssh"
+        // fake ssh: records its argv (one per line, then ---); answers list-dir; host "locked" needs a password
+        let script = """
+        #!/bin/sh
+        { for a in "$@"; do printf '%s\\n' "$a"; done; echo ---; } >> '\(log)'
+        for a in "$@"; do case "$a" in *locked*) echo 'Permission denied (publickey).' >&2; exit 255;; esac; done
+        last=""; for a in "$@"; do last="$a"; done
+        case "$last" in *'ls -1Ap'*) printf '/home/me/proj\\nsrc/\\nREADME.md\\n';; esac
+        exit 0
+        """
+        try script.write(toFile: fake, atomically: true, encoding: .utf8)
+        chmod(fake, 0o755)
+        try "Host box\n  HostName 192.0.2.7\n  User me\n".write(toFile: base + "/config", atomically: true, encoding: .utf8)
+        setenv("OPEN_MAESTRI_SSH_BIN", fake, 1)
+        setenv("OPEN_MAESTRI_SSH_CONFIG", base + "/config", 1)
+        let (port, token) = try await startServer()
+        defer { Task { @MainActor in InterAgentServer.shared.stop() } }
+        func body(_ r: String) -> String { r.range(of: "\r\n\r\n").map { String(r[$0.upperBound...]) } ?? r }
+
+        let hosts = try await http(port, token, "GET", "/api/ssh/hosts")
+        XCTAssertTrue(body(hosts).contains("\"alias\":\"box\"") && body(hosts).contains("192.0.2.7"), hosts)
+
+        // malicious input: 400 and ssh never runs
+        for bad in ["-oProxyCommand=touch /tmp/pwn", "a b", ";rm -rf ~"] {
+            let b = String(decoding: try JSONSerialization.data(withJSONObject: ["host": bad]), as: UTF8.self)
+            let r = try await http(port, token, "POST", "/api/ssh/test", body: b)
+            XCTAssertTrue(r.hasPrefix("HTTP/1.1 400"), r)
+            let w = String(decoding: try JSONSerialization.data(withJSONObject: ["name": "X", "ssh": ["host": bad]]), as: UTF8.self)
+            let rw = try await http(port, token, "POST", "/api/workspaces", body: w)
+            XCTAssertTrue(rw.hasPrefix("HTTP/1.1 400"), rw)
+        }
+        let listBad = try await http(port, token, "GET", "/api/ssh/list-dir?host=-oProxyCommand%3Dx")
+        XCTAssertTrue(listBad.hasPrefix("HTTP/1.1 400"), listBad)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: log), "no ssh call for invalid input")
+
+        let ok = try await http(port, token, "POST", "/api/ssh/test", body: "{\"host\":\"box\",\"port\":2222}")
+        XCTAssertTrue(body(ok).contains("\"ok\":true"), ok)
+        let locked = try await http(port, token, "POST", "/api/ssh/test", body: "{\"host\":\"locked\"}")
+        XCTAssertTrue(body(locked).contains("\"needsPassword\":true") && body(locked).contains("\"ok\":false"), locked)
+        let ls = try await http(port, token, "GET", "/api/ssh/list-dir?host=box&path=%2Fhome%2Fme%2Fproj")
+        XCTAssertTrue(body(ls).contains("\"path\":\"\\/home\\/me\\/proj\"") || body(ls).contains("\"path\":\"/home/me/proj\""), ls)
+        XCTAssertTrue(body(ls).contains("{\"isDir\":true,\"name\":\"src\"}") && body(ls).contains("{\"isDir\":false,\"name\":\"README.md\"}"), ls)
+
+        // SSH workspace persisted (manifest + workspace.json) and its terminal runs `ssh -tt …` on the remote
+        let wsBody = "{\"name\":\"Remote\",\"ssh\":{\"host\":\"box\",\"user\":\"me\",\"remotePath\":\"/srv/it's here\"}}"
+        let created = try await http(port, token, "POST", "/api/workspaces", body: wsBody)
+        XCTAssertTrue(created.hasPrefix("HTTP/1.1 201"), created)
+        let wsId = try XCTUnwrap((try JSONSerialization.jsonObject(with: Data(body(created).utf8)) as? [String: Any])?["id"] as? String)
+        let doc = try PersistenceManager.shared.loadWorkspace(id: UUID(uuidString: wsId)!)
+        XCTAssertEqual(doc.payload.locationType, "ssh")
+        XCTAssertEqual(doc.payload.ssh?.host, "box")
+        XCTAssertEqual(doc.payload.workingDirectory, "/srv/it's here")
+        let listed = try await http(port, token, "GET", "/api/workspaces")
+        XCTAssertTrue(body(listed).contains("\"host\" : \"box\"") || body(listed).contains("\"host\":\"box\""), listed)
+
+        try? FileManager.default.removeItem(atPath: log)
+        let tid = UUID()
+        let term = try await http(port, token, "POST", "/api/terminals",
+                                  body: "{\"id\":\"\(tid.uuidString)\",\"command\":\"\",\"workspaceId\":\"\(wsId)\"}")
+        XCTAssertTrue(term.hasPrefix("HTTP/1.1 200"), term)
+        defer { Task { await self.kill([tid]) } }
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !((try? String(contentsOfFile: log, encoding: .utf8))?.contains("---") ?? false) {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        let argv = (try? String(contentsOfFile: log, encoding: .utf8))?.components(separatedBy: "\n") ?? []
+        XCTAssertEqual(argv.first, "-tt", argv.joined(separator: " | "))
+        XCTAssertTrue(argv.contains("ControlMaster=auto") && argv.contains { $0.hasPrefix("ControlPath=") && $0.hasSuffix("/run/ssh-%C") })
+        let dd = try XCTUnwrap(argv.firstIndex(of: "--"))
+        XCTAssertEqual(argv[dd + 1], "me@box")
+        XCTAssertEqual(argv[dd + 2], "cd -- '/srv/it'\\''s here' && exec \"${SHELL:-bash}\" -l")
+    }
+
     // MARK: - HTTP helpers (blocking sockets, off the main actor)
 
     private func cli(_ port: UInt16, _ token: String, _ args: [String], as terminal: UUID) async throws -> String {

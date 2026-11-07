@@ -10,6 +10,8 @@ struct WorkspacePayload: Codable {
     var icon: String
     var isPinned: Bool
     var locationType: String        // "local" | "ssh"
+    /// Remote workspace target (locationType "ssh"); optional, absent for local workspaces
+    var ssh: SSHTarget? = nil
     var workingDirectory: String
     var preferredIDE: String        // "cursor" | "vscode" | "xcode"
     var syncConfigFiles: Bool

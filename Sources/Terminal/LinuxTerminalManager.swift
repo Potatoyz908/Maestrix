@@ -20,10 +20,14 @@ final class LinuxTerminalManager: TerminalManaging {
         var displayName: String?
         var agentType: String
         var environment: [String: String]
+        /// SSH workspaces: exact argv executed without any local shell (nil = local shell, the default)
+        var argv: [String]? = nil
     }
     private(set) var launchParams: [UUID: LaunchParams] = [:]
     /// Extra PTY variables for the NEXT createTerminal of that id (set by POST /api/terminals with `floorId`, K12).
     var pendingEnvironment: [UUID: [String: String]] = [:]
+    /// Exact argv for the NEXT createTerminal of that id (remote terminal of an SSH workspace: `ssh -tt …`).
+    var pendingArgv: [UUID: [String]] = [:]
 
     private init() {}
 
@@ -51,13 +55,15 @@ final class LinuxTerminalManager: TerminalManaging {
         }
 
         let environment = pendingEnvironment.removeValue(forKey: id) ?? launchParams[id]?.environment ?? [:]
+        let argv = pendingArgv.removeValue(forKey: id) ?? launchParams[id]?.argv
         launchParams[id] = LaunchParams(command: command, workingDirectory: workingDirectory, workspaceId: workspaceId,
                                         roleName: roleName, displayName: displayName, agentType: agentType,
-                                        environment: environment)
+                                        environment: environment, argv: argv)
 
         // 创建并启动原生 POSIX PTY 进程
         let proc = POSIXPtyProcess(terminalId: id, command: command, workingDirectory: workingDirectory,
                                    extraEnvironment: environment)
+        proc.argv = argv
         processes[id] = proc
         if let wsId = workspaceId { proc.preload(TerminalScrollbackFile.load(terminalId: id, workspaceId: wsId)) }
 

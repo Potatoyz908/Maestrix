@@ -60,6 +60,8 @@ struct WorkspaceEntry: Codable, Identifiable, Equatable {
     var locationType: String        // "local" | "ssh"
     var createdAt: Date
     var lastOpenedAt: Date?
+    /// Remote workspace (locationType "ssh"); absent for local workspaces
+    var ssh: SSHTarget? = nil
 
     init(id: UUID = UUID(), name: String, workingDirectory: String, icon: String = "folder", color: String = "blue") {
         self.id = id
@@ -85,5 +87,6 @@ struct WorkspaceEntry: Codable, Identifiable, Equatable {
         locationType = try container.decode(String.self, forKey: .locationType)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         lastOpenedAt = try container.decodeIfPresent(Date.self, forKey: .lastOpenedAt)
+        ssh = try container.decodeIfPresent(SSHTarget.self, forKey: .ssh)
     }
 }
