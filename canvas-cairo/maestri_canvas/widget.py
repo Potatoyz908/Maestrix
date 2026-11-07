@@ -719,6 +719,13 @@ class CanvasWidget(Gtk.Overlay):
         self.controller.add_connection(conn, points)
         self._sync_portal_sessions()
 
+    def set_connection_status(self, conn_id: str, status: str) -> None:
+        """Rope state from the core (ConnectionStatus): "communicating" draws it green and solid, the rest grey dashed."""
+        c = self.scene.connections.get(conn_id)
+        if c is not None and c.status != status:
+            c.status = status
+            self.controller.dirty = True
+
     def remove_connection(self, conn_id: str) -> bool:
         """Drop a connection (scene + rope). Used for confirmed deletes and to discard an optimistic `local-…` rope whose POST failed."""
         if self.scene.connections.pop(conn_id, None) is None:

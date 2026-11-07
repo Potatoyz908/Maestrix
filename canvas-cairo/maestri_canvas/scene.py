@@ -42,6 +42,7 @@ class ConnItem:
     side_a: PinSide | None = None   # None => the facing pair, recomputed as nodes move
     side_b: PinSide | None = None
     pending: bool = False           # created locally, not yet confirmed by the core
+    status: str = "idle"            # ConnectionStatus: idle | communicating | disconnected | error (rope colour/dash)
 
     def __post_init__(self) -> None:
         self.a, self.b = norm(self.a), norm(self.b)

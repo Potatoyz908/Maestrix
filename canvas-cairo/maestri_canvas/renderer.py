@@ -21,7 +21,9 @@ BG = (1.0, 1.0, 1.0)              # CanvasBackground "dotGrid": white under the 
 SOLID_BG = (0.98, 0.98, 0.98)     # CanvasBackground "solid": NSColor(white: 0.98)
 GRID = (0.90, 0.90, 0.90)         # Constants.canvasGridLineColor (#E6E6E6)
 GRID_LINE_W = 0.5                 # Constants.canvasGridLineWidth
-ROPE = (0.54, 0.54, 0.56)
+ROPE = (0.557, 0.557, 0.576)      # NSColor.systemGray
+ROPE_ALPHA = 0.7                  # RopePathRenderer: idle = systemGray 70%, dashed [6,4], 1.5
+ROPE_STATUS = {"communicating": (0.204, 0.780, 0.349), "disconnected": (1.0, 0.231, 0.188), "error": (1.0, 0.584, 0.0)}
 ACCENT = (0.231, 0.510, 0.965)
 GUIDE = (0.937, 0.302, 0.459)   # alignment guides: rose, distinct from the blue selection / marquee
 GUIDE_ALPHA = 0.75
@@ -110,10 +112,16 @@ class CairoRenderer:
                 pts = static_catenary(*a)
             if len(pts) < 2:
                 continue
-            hot = c.a in scene.selection or c.b in scene.selection
-            cr.set_source_rgb(*(ACCENT if hot else ROPE))
-            cr.set_line_width(2.5 / vp.zoom)   # constant on screen
-            cr.set_dash([6 / vp.zoom, 6 / vp.zoom] if c.pending else [])
+            # RopePathRenderer: communicating = systemGreen solid 2.5; idle/disconnected/error dashed [6,4] 1.5
+            status = getattr(c, "status", "idle")
+            if status == "communicating":
+                cr.set_source_rgb(*ROPE_STATUS["communicating"])
+                width, dash = 2.5, []
+            else:
+                cr.set_source_rgba(*ROPE_STATUS.get(status, ROPE), 1.0 if status in ROPE_STATUS else ROPE_ALPHA)
+                width, dash = 1.5, [6, 4]
+            cr.set_line_width(width / vp.zoom)   # constant on screen
+            cr.set_dash([d / vp.zoom for d in dash])
             _polyline_smooth(cr, pts)
             cr.stroke()
         cr.set_dash([])
