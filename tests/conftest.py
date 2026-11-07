@@ -50,10 +50,10 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 @pytest.fixture(autouse=True)
-def isolated_data_dir(tmp_path, monkeypatch):
-    """Every test gets its own empty data dir through the shared OPEN_MAESTRI_DATA_DIR contract."""
-    data = tmp_path / "open-maestri-data"
-    data.mkdir()
+def isolated_data_dir(tmp_path_factory, monkeypatch):
+    """Every test gets its own empty data dir through the shared OPEN_MAESTRI_DATA_DIR contract. It lives OUTSIDE the
+    test's own tmp_path, so tests that list tmp_path see only what they wrote."""
+    data = tmp_path_factory.mktemp("open-maestri-data")
     monkeypatch.setenv(_isolation.DATA_DIR_ENV, str(data))
     return data
 
