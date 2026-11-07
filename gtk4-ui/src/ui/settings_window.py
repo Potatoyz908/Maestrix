@@ -133,7 +133,46 @@ class SettingsWindow(Gtk.Window):
         self.snap_switch = Gtk.Switch(active=self.prefs.canvas_snapping, valign=Gtk.Align.CENTER)
         self.snap_switch.connect("notify::active", lambda s, _p: self._set("canvas_snapping", s.get_active()))
         self._row(g, 4, "Snap to alignment guides", self.snap_switch)
+        self._build_remote_ssh(g, 5)
         return g
+
+    # ---- Remote SSH (GeneralSettingsView.swift: only sshEnabled / sshTunnelPort / sshScriptPath here; the host is chosen per
+    # workspace with File > Connect to Host…). Stored in preferences.json, keys shared with macOS (kept in prefs._extra).
+    SSH_DEFAULTS = {"sshEnabled": False, "sshTunnelPort": 7433, "sshScriptPath": "~/.local/bin/omaestri"}
+
+    def _ssh_pref(self, key: str):
+        return self.prefs._extra.get(key, self.SSH_DEFAULTS[key])
+
+    def _set_extra(self, key: str, value) -> None:
+        if self.prefs._extra.get(key, self.SSH_DEFAULTS[key]) == value:
+            return
+        self.prefs._extra[key] = value
+        self._commit()
+
+    def _build_remote_ssh(self, g: Gtk.Grid, row: int) -> None:
+        head = Gtk.Label(label="Remote SSH", xalign=0, margin_top=8)
+        head.add_css_class("heading")
+        g.attach(head, 0, row, 2, 1)
+        self.ssh_switch = Gtk.Switch(active=bool(self._ssh_pref("sshEnabled")), valign=Gtk.Align.CENTER)
+        self._row(g, row + 1, "Enable Remote SSH", self.ssh_switch)
+        self.ssh_tunnel = Gtk.SpinButton.new_with_range(1, 65535, 1)
+        self.ssh_tunnel.set_value(int(self._ssh_pref("sshTunnelPort") or 7433))
+        self.ssh_tunnel.set_tooltip_text("SSH reverse tunnel port (default 7433), used by remote omaestri CLI to connect back")
+        self._row(g, row + 2, "Tunnel Port", self.ssh_tunnel)
+        self.ssh_script = Gtk.Entry(text=str(self._ssh_pref("sshScriptPath")), width_chars=24)
+        self.ssh_script.set_tooltip_text("omaestri script installation path (default ~/.local/bin/omaestri)")
+        self._row(g, row + 3, "Script Path", self.ssh_script)
+
+        def sync_sensitive(*_a) -> None:
+            on = self.ssh_switch.get_active()
+            self.ssh_tunnel.set_sensitive(on)
+            self.ssh_script.set_sensitive(on)
+
+        self.ssh_switch.connect("notify::active", lambda s, _p: (self._set_extra("sshEnabled", s.get_active()), sync_sensitive()))
+        self.ssh_tunnel.connect("value-changed", lambda s: self._set_extra("sshTunnelPort", int(s.get_value())))
+        self.ssh_script.connect("changed", lambda e: self._set_extra("sshScriptPath",
+                                                                     e.get_text().strip() or self.SSH_DEFAULTS["sshScriptPath"]))
+        sync_sensitive()
 
     def _build_terminal(self) -> Gtk.Widget:
         g = self._page()

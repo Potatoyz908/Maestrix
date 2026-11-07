@@ -157,3 +157,22 @@ def test_entry_point_disabled_without_core():
     assert isinstance(dlg, ConnectToHostDialog)
     dlg.close()
     parent.destroy()
+
+
+def test_settings_remote_ssh_section_persists_macos_keys(tmp_path):
+    from maestri_core.preferences import PreferencesStore
+    from ui.settings_window import SettingsWindow
+    store = PreferencesStore(tmp_path)
+    parent = Gtk.Window()
+    sw = SettingsWindow(parent, store=store)
+    assert sw.ssh_tunnel.get_value() == 7433 and sw.ssh_script.get_text() == "~/.local/bin/omaestri"
+    assert not sw.ssh_tunnel.get_sensitive()
+    sw.ssh_switch.set_active(True)
+    sw.ssh_tunnel.set_value(7500)
+    sw.ssh_script.set_text("~/bin/omaestri")
+    import json
+    data = json.loads((tmp_path / "preferences.json").read_text())
+    assert (data["sshEnabled"], data["sshTunnelPort"], data["sshScriptPath"]) == (True, 7500, "~/bin/omaestri")
+    assert sw.ssh_tunnel.get_sensitive()
+    sw.close()
+    parent.destroy()
