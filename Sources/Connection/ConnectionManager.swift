@@ -20,6 +20,18 @@ enum ConnectionStatus {
     case error          // 错误
 }
 
+extension ConnectionStatus {
+    /// Wire name used on /ws/events (`connectionChanged.status`).
+    var wireName: String {
+        switch self {
+        case .idle: return "idle"
+        case .communicating: return "communicating"
+        case .disconnected: return "disconnected"
+        case .error: return "error"
+        }
+    }
+}
+
 /// 运行时连接记录（内存中，序列化版本在 WorkspacePayload）
 struct ActiveConnection {
     let id: UUID
@@ -174,8 +186,13 @@ public final class ConnectionManager {
 
     // MARK: - 状态更新
 
+    /// Changes the runtime status and, when it actually changed, publishes
+    /// `connectionChanged {workspaceId, connectionId, status}` on /ws/events (the GUI animates the rope).
     func updateStatus(_ status: ConnectionStatus, for connectionId: UUID) {
+        guard let current = connections[connectionId], current.status != status else { return }
         connections[connectionId]?.status = status
+        EventBroadcaster.shared.publish(type: "connectionChanged", workspaceId: current.workspaceId,
+                                        payload: ["connectionId": connectionId.uuidString, "status": status.wireName])
     }
 
     func markCommunicating(_ connectionId: UUID) {

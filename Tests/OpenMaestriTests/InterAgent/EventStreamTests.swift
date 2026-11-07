@@ -366,6 +366,52 @@ final class EventStreamTests: IsolatedDataDirTestCase {
         }.value
     }
 
+    /// Rope status: `ask` turns the connection "communicating" while it runs and "idle" afterwards, each change
+    /// published as `connectionChanged {workspaceId, connectionId, status}`.
+    func testAskPublishesConnectionStatusChanges() async throws {
+        let (port, token): (UInt16, String) = try await MainActor.run {
+            try InterAgentServer.shared.start()
+            return (InterAgentServer.shared.port, InterAgentServer.shared.authToken)
+        }
+        defer { Task { @MainActor in InterAgentServer.shared.stop() } }
+        let ws = UUID(), a = UUID(), b = UUID(), connId = UUID()
+        var p = WorkspacePayload(id: ws, name: "Status", workingDirectory: "/tmp")
+        for (id, name) in [(a, "Caller"), (b, "Target")] {
+            var t = TerminalContent(name: name, command: "bash", workingDirectory: "/tmp")
+            t.id = id
+            p.nodes.append(CanvasNode(id: id, frame: CGRect(x: 9800, y: 8500, width: 400, height: 280), content: .terminal(t)))
+        }
+        p.connections = [TerminalConnection(id: connId, terminalIdA: a, terminalIdB: b)]
+        let pm = PersistenceManager.shared
+        try pm.ensureWorkspaceDirectoryExists(id: ws)
+        try pm.saveSync(WorkspaceDocument(payload: p), to: pm.workspaceURL(id: ws))
+        await MainActor.run {
+            ConnectionManager.shared.reloadWorkspace(ws)
+            for (id, name) in [(a, "Caller"), (b, "Target")] {
+                _ = PlatformHooks.terminals.createTerminal(id: id, command: "bash --norc --noprofile", workingDirectory: "/tmp",
+                                                           workspaceId: ws, roleName: nil, displayName: name, agentType: "generic_shell")
+            }
+        }
+        defer { Task { @MainActor in [a, b].forEach { PlatformHooks.terminals.removeTerminal(id: $0) } } }
+        try await Task.sleep(for: .milliseconds(600))
+
+        try await Task.detached {
+            let evs = try Self.openEventSocket(port: port, token: token)
+            defer { close(evs) }
+            let body = "{\"args\":[\"ask\",\"Target\",\"echo STATUS_OK\"]}"
+            let resp = try Self.exchange(port: port, request:
+                "POST /cli HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer \(token)\r\nX-Terminal-ID: \(a.uuidString)\r\n" +
+                "Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)")
+            XCTAssertTrue(resp.contains("STATUS_OK"), resp)
+            let first = try Self.readEvent(evs, type: "connectionChanged")
+            XCTAssertEqual(first["connectionId"] as? String, connId.uuidString)
+            XCTAssertEqual(first["status"] as? String, "communicating")
+            XCTAssertEqual(first["workspaceId"] as? String, ws.uuidString)
+            let second = try Self.readEvent(evs, type: "connectionChanged")
+            XCTAssertEqual(second["status"] as? String, "idle")
+        }.value
+    }
+
     // MARK: - Helpers (blocking, call off the main actor)
 
     private static func connect(port: UInt16) throws -> Int32 {
