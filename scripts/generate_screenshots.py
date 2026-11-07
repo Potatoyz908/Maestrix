@@ -4,6 +4,7 @@ Captures genuine GTK 4 + Cairo canvas windows with real VTE terminals,
 Markdown notes, FileTree nodes, and inter-agent Verlet rope connections.
 """
 
+import json
 import os
 import sys
 import time
@@ -45,7 +46,18 @@ def run():
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir)
     tmp_dir.mkdir(parents=True)
-    os.environ["OPEN_MAESTRI_DATA_DIR"] = str(tmp_dir / ".open-maestri")
+    
+    # Pre-populate preferences so the app starts in complete Dark mode with solid dark background
+    data_dir = tmp_dir / ".open-maestri"
+    data_dir.mkdir(parents=True)
+    prefs_payload = {
+        "schemaVersion": 1,
+        "interfaceTheme": "dark",
+        "canvasBackground": "solid",
+        "terminalTheme": "dark"
+    }
+    (data_dir / "preferences.json").write_text(json.dumps(prefs_payload))
+    os.environ["OPEN_MAESTRI_DATA_DIR"] = str(data_dir)
 
     docs_images = ROOT_DIR / "docs" / "images"
     docs_images.mkdir(parents=True, exist_ok=True)
@@ -145,12 +157,18 @@ def run():
         theme = InterfaceTheme()
 
         # =====================================================================
-        # 1. DARK THEME SCREENSHOTS
+        # 1. DARK THEME SCREENSHOTS (100% Full Dark Canvas Background)
         # =====================================================================
         print("📸 Capturing Dark Theme screenshots...")
         theme.apply("dark")
         win.preferences.interface_theme = "dark"
-        pump_events(300)
+        win.preferences.canvas_background = "solid"
+        cw.renderer.dark_mode = True
+        cw.renderer.background = "solid"
+        cw.controller.dirty = True
+        cw.layer.queue_draw()
+        cw.top_layer.queue_draw()
+        pump_events(400)
 
         # Full Window (Home Dark)
         dark_home = docs_images / "maestrix-dark-home.png"
@@ -168,6 +186,7 @@ def run():
         dark_files = docs_images / "maestrix-dark-files.png"
         cw.viewport.origin = Point(10200, 8850)
         cw.controller.dirty = True
+        cw.layer.queue_draw()
         pump_events(200)
         screenshot(cw, str(dark_files))
         shutil.copyfile(dark_files, docs_images / "file.png")
@@ -177,6 +196,7 @@ def run():
         print("📸 Capturing New Terminal Dialog...")
         cw.viewport.origin = Point(9650, 8430)
         cw.controller.dirty = True
+        cw.layer.queue_draw()
         pump_events(100)
         dlg = NewTerminalDialog(win, on_create=lambda res: None, default_cwd=str(ROOT_DIR))
         dlg.set_default_size(520, 520)
@@ -194,7 +214,14 @@ def run():
         print("📸 Capturing Light Theme screenshots...")
         theme.apply("light")
         win.preferences.interface_theme = "light"
-        pump_events(300)
+        win.preferences.canvas_background = "dotGrid"
+        cw.renderer.dark_mode = False
+        cw.renderer.background = "dotGrid"
+        cw.viewport.origin = Point(9650, 8430)
+        cw.controller.dirty = True
+        cw.layer.queue_draw()
+        cw.top_layer.queue_draw()
+        pump_events(400)
 
         # Full Window (Home Light)
         light_home = docs_images / "maestrix-light-home.png"
