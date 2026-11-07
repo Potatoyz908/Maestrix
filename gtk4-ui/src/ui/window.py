@@ -24,6 +24,7 @@ from maestri_core.models.workspace import SidebarGroup, WorkspaceDocument, Works
 from maestri_core.models.node import (CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent,
                                       agent_type_for_command, current_iso8601)
 from maestri_core.client.api import MaestriClient, AuthenticationError
+from maestri_core.unique_names import unique_name, dedupe_terminal_names
 from maestri_core.preferences import PreferencesStore
 from maestri_core.element_defaults import apply_element_defaults
 from maestri_core.signals.bus import bus
@@ -228,25 +229,9 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             self._is_offline_placeholder = False
         else:
             payload = WorkspacePayload(name="Default", working_directory=os.path.expanduser("~"))
-            # Add demo terminals if empty
-            term_a = CanvasNode(
-                frame=NodeFrame(x=9900, y=8600, width=420, height=300),
-                node_type="terminal",
-                content=TerminalContent(name="Terminal A", command="bash"),
-                z_index=1
-            )
-            term_b = CanvasNode(
-                frame=NodeFrame(x=10400, y=8650, width=420, height=300),
-                node_type="terminal",
-                content=TerminalContent(name="Terminal B", command="htop"),
-                z_index=2
-            )
-            for node in (term_a, term_b):
-                node.id = node.content.id = node.content.terminal_id
-            payload.nodes = [term_a, term_b]
+            # An empty workspace opens empty: no demo terminals.
             self.document = WorkspaceDocument(payload=payload)
             self._is_offline_placeholder = not self.core_connected
-            self._demo_node_ids = {term_a.id, term_b.id}
 
         self._offline_mutated = False
 
@@ -1596,11 +1581,16 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                 return f.get("id")
         return None
 
+    def _terminal_names(self, exclude_id: str | None = None) -> list[str]:
+        return [n.content.name for n in self.document.payload.nodes
+                if n.node_type == "terminal" and hasattr(n.content, "name") and n.id != exclude_id]
+
     def new_terminal_node(self, frame: NodeFrame, name: str = "Terminal", command: str = "bash", cwd: str = "",
                           **content_fields) -> CanvasNode:
         """A terminal CanvasNode whose node id IS its terminal id (K1, like macOS), upper-case, with agentType from the command.
         Not added to the document: callers use `_insert_node`."""
         nid = str(uuid.uuid4()).upper()
+        name = unique_name(name, self._terminal_names())
         content_fields.setdefault("agent_type", agent_type_for_command(command))
         content = TerminalContent(id=nid, terminal_id=nid, name=name, command=command, working_directory=cwd, **content_fields)
         z = max((n.z_index for n in self.document.payload.nodes), default=0) + 1
@@ -1870,6 +1860,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         if node is None:
             return
         if hasattr(node.content, "name"):
+            if node.node_type == "terminal":
+                new_title = unique_name(new_title, self._terminal_names(node.id))
             node.content.name = new_title
         elif isinstance(node.content, dict):
             node.content["name"] = new_title
@@ -1934,6 +1926,8 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         open_context_menu(self, gesture, x, y)
 
     def _load_payload_into_canvas(self) -> None:
+        if dedupe_terminal_names(self.document.payload.nodes):
+            self._dedupe_renamed = True   # persisted: _apply_workspace_switched marks the canvas dirty right after loading
         for node in self.document.payload.nodes:
             self._add_node_to_canvas(node)
         for conn in self.document.payload.all_connections():
@@ -2128,7 +2122,7 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             def on_save(data: dict):
                 c = node.content
                 renamed = data.get("name") and data["name"] != c.name
-                c.name = data.get("name") or c.name
+                c.name = unique_name(data.get("name") or c.name, self._terminal_names(node.id))
                 c.command = data.get("command") or c.command
                 c.working_directory = data.get("cwd", c.working_directory)
                 changed = apply_fields(c, terminal_fields_from_dialog(data))   # icon, color, theme, font, monitor, maestro, role
