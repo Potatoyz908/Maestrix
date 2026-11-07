@@ -339,9 +339,23 @@ class TestVisualParityMac:
         assert "maestri-traffic-lights" in window.traffic_box.get_css_classes()
         assert window.traffic_box.get_parent() is not None
 
-        # Verify 3 traffic dots exist (close, min, max)
+        # Verify 3 traffic dots exist (close, min, max) and are centered circular dots
         dots = [c for c in window.traffic_box.observe_children()]
         assert len(dots) == 3
+        for dot in dots:
+            assert dot.get_valign() == Gtk.Align.CENTER
+            assert dot.get_halign() == Gtk.Align.CENTER
+            assert dot.get_size_request() == (12, 12)
+
+        # Verify sidebar header container does not greedily stretch across headerbar
+        assert hasattr(window, "sidebar_header_box")
+        assert window.sidebar_header_box.get_halign() == Gtk.Align.START
+        assert window.sidebar_header_box.get_hexpand() is False
+
+        # Verify in-header menubar is mounted and secondary menubar row is hidden
+        assert hasattr(window, "popover_menubar")
+        assert window.popover_menubar.get_ancestor(Gtk.HeaderBar) is header
+        assert window.get_show_menubar() is False
 
         # Verify title buttons are disabled on HeaderBar to prevent ghost buttons from GNOME/system
         assert header.get_show_title_buttons() is False
