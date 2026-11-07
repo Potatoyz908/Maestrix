@@ -872,11 +872,17 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         .floor-button:hover, .maestri-bottom-pill:hover {
             background-color: rgba(45, 45, 48, 0.95);
         }
-        .maestri-context-popover, popover.maestri-context-popover > contents {
+        popover.maestri-context-popover {
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            padding: 0;
+        }
+        popover.maestri-context-popover > contents {
             background-color: rgba(36, 36, 40, 0.96);
             border: 1px solid rgba(255, 255, 255, 0.14);
             border-radius: 12px;
-            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
             padding: 4px;
             color: #f2f2f5;
         }
