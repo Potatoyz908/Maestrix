@@ -245,3 +245,4 @@ dpkg-deb --build --root-owner-group "$BUILD_ROOT" "$DEB_FILE"
 
 echo "🎉 Package built successfully: $DEB_FILE"
 ls -lh "$DEB_FILE"
+
