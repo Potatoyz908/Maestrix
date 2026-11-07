@@ -266,6 +266,89 @@ final class CollaborationTests: IsolatedDataDirTestCase {
         XCTAssertNil(MaestroHandlers.parseRecruit(["recruit", "--replace"]))
     }
 
+    // MARK: - K12 (real git worktree, real hooks, real PTY environment)
+
+    private func git(_ args: [String], in dir: String) throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = args
+        p.currentDirectoryURL = URL(fileURLWithPath: dir)
+        p.environment = ProcessInfo.processInfo.environment.merging([
+            "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@t"]) { $1 }
+        try p.run(); p.waitUntilExit()
+        XCTAssertEqual(p.terminationStatus, 0, "git \(args)")
+    }
+
+    private func waitForFile(_ path: String, _ timeout: TimeInterval = 10) async -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let s = try? String(contentsOfFile: path, encoding: .utf8), !s.isEmpty { return s }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
+    }
+
+    func testFloorHooksAndTerminalEnvironmentAgainstRealWorktree() async throws {
+        let (port, token) = try await startServer()
+        defer { Task { @MainActor in InterAgentServer.shared.stop() } }
+        let base = NSTemporaryDirectory() + "om-k12-\(UUID().uuidString.prefix(8))"
+        let repo = base + "/repo", marks = base + "/marks"
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: marks, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        try git(["init", "-q"], in: repo)
+        try git(["commit", "-q", "--allow-empty", "-m", "init"], in: repo)
+
+        let ws = UUID()
+        try save(WorkspacePayload(id: ws, name: "K12", workingDirectory: repo))
+        let q = "?workspace=\(ws.uuidString)"
+
+        // create: Setup runs automatically (hooks given at creation, Auto-run on)
+        let setup = "printf %s \\\"$MAESTRI_FLOOR_NAME|$MAESTRI_BRANCH_NAME\\\" > \(marks)/setup.txt"
+        let createBody = "{\"name\":\"Hooks QA\",\"workspaceId\":\"\(ws.uuidString)\",\"workingDirectory\":\"\(repo)\"," +
+                         "\"hooks\":{\"setup\":[\"\(setup)\"],\"autoRunSetup\":true}}"
+        let created = try await http(port, token, "POST", "/api/floors\(q)", body: createBody)
+        XCTAssertTrue(created.hasPrefix("HTTP/1.1 201"), created)
+        let doc = try PersistenceManager.shared.loadWorkspace(id: ws).payload
+        let floor = try XCTUnwrap(doc.floors.first { $0.name == "Hooks QA" })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: floor.worktreePath + "/.git"), "real worktree at \(floor.worktreePath)")
+        let setupOut = await waitForFile(marks + "/setup.txt")
+        XCTAssertEqual(setupOut, "Hooks QA|\(floor.branchName)", "Setup ran on create")
+
+        // PATCH hooks: run + teardown
+        let patch = "{\"hooks\":{\"setup\":[\"\(setup)\"],\"run\":[\"pwd > \(marks)/run.txt\"]," +
+                    "\"teardown\":[\"printf %s \\\"$MAESTRI_FLOOR_PATH\\\" > \(marks)/teardown.txt\"],\"autoRunSetup\":true}}"
+        let patched = try await http(port, token, "PATCH", "/api/floors/\(floor.id.uuidString)\(q)", body: patch)
+        XCTAssertTrue(patched.hasPrefix("HTTP/1.1 200"), patched)
+
+        let ran = try await http(port, token, "POST", "/api/floors/\(floor.id.uuidString)/hooks/run\(q)", body: "{\"phase\":\"run\"}")
+        XCTAssertTrue(ran.hasPrefix("HTTP/1.1 200") && ran.contains("\"status\":\"ok\""), ran)
+        let runOut = await waitForFile(marks + "/run.txt", 3)
+        XCTAssertEqual(runOut?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       URL(fileURLWithPath: floor.worktreePath).resolvingSymlinksInPath().path, "run hook runs in the floor")
+
+        // terminal created with floorId gets the floor variables in its environment
+        let tid = UUID()
+        let termBody = "{\"id\":\"\(tid.uuidString)\",\"command\":\"bash --norc --noprofile\",\"workingDirectory\":\"/tmp\"," +
+                       "\"workspaceId\":\"\(ws.uuidString)\",\"floorId\":\"\(floor.id.uuidString)\"}"
+        let term = try await http(port, token, "POST", "/api/terminals", body: termBody)
+        XCTAssertTrue(term.hasPrefix("HTTP/1.1 200"), term)
+        defer { Task { await self.kill([tid]) } }
+        try? await Task.sleep(for: .milliseconds(500))
+        await MainActor.run { PlatformHooks.terminals.write(to: tid, text: "env | grep ^MAESTRI_ > \(marks)/env.txt\r") }
+        let env = await waitForFile(marks + "/env.txt") ?? ""
+        XCTAssertTrue(env.contains("MAESTRI_FLOOR_NAME=Hooks QA"), env)
+        XCTAssertTrue(env.contains("MAESTRI_BRANCH_NAME=\(floor.branchName)"), env)
+        XCTAssertTrue(env.contains("MAESTRI_FLOOR_PATH=\(floor.worktreePath)"), env)
+
+        // delete: Teardown runs while the worktree still exists
+        let del = try await http(port, token, "DELETE", "/api/floors/\(floor.id.uuidString)\(q)")
+        XCTAssertTrue(del.hasPrefix("HTTP/1.1 200"), del)
+        let teardownOut = await waitForFile(marks + "/teardown.txt", 3)
+        XCTAssertEqual(teardownOut, floor.worktreePath, "Teardown ran on delete")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: floor.worktreePath), "worktree removed")
+    }
+
     // MARK: - HTTP helpers (blocking sockets, off the main actor)
 
     private func cli(_ port: UInt16, _ token: String, _ args: [String], as terminal: UUID) async throws -> String {
