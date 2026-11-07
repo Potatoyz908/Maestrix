@@ -16,9 +16,28 @@ As imagens e o GIF abaixo são os arquivos já presentes no repositório. Podem 
 ![Criação de terminal](docs/images/create-terminal.png)
 ![Arquivos](docs/images/file.png)
 
-## Instalação no Linux
+## Instalação no Linux (Ubuntu / Debian)
 
-Consulte [o guia Linux](README.linux.md) para dependências e execução. Com as dependências instaladas, na raiz do repositório:
+### 📦 Opção 1: Pacote `.deb` (Recomendado — Instalação Rápida)
+
+Você pode instalar o Maestrix no Ubuntu/Debian diretamente com o pacote pré-compilado (que já traz o runtime Swift embutido e configuração do desktop):
+
+```bash
+# 1. Baixar ou clonar o repositório e instalar via apt:
+sudo apt install ./releases/maestrix_1.0.0_amd64.deb
+
+# Ou se preferir usar dpkg:
+sudo dpkg -i releases/maestrix_1.0.0_amd64.deb
+sudo apt-get install -f
+```
+
+Você também pode baixar o pacote `.deb` diretamente da aba de [Releases do GitHub](https://github.com/Potatoyz908/Maestrix/releases).
+
+Após a instalação, o **Maestrix** aparece automaticamente no menu de aplicativos (Dash) com o ícone oficial ativo, e os comandos `maestrix` e `maestrix-cli` ficam disponíveis globalmente no terminal!
+
+### 🛠️ Opção 2: A partir do código-fonte (Desenvolvimento)
+
+Consulte [o guia Linux](README.linux.md) para dependências e compilação manual. Com as dependências instaladas, na raiz do repositório:
 
 ```bash
 swift build
@@ -27,6 +46,11 @@ maestrix
 ```
 
 O menu de aplicativos passa a mostrar **Maestrix**, com o ícone deste repositório. O comando `open-maestri` continua disponível como alias de compatibilidade; `maestrix-cli` é o CLI dos agentes, com `omaestri` mantido como alias. O backend é exposto como `maestrix-server` e o lançador como `maestrix.desktop`.
+
+Para reconstruir o pacote `.deb` a qualquer momento a partir do código:
+```bash
+./scripts/build-deb.sh
+```
 
 ## Compatibilidade
 

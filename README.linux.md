@@ -20,11 +20,45 @@ npm --version
 
 ---
 
-## 🖥️ 1. Como Executar o Maestrix como Aplicativo Desktop no Linux
+## 📦 1. Instalação Rápida via Pacote `.deb` (Recomendado)
 
-O Maestrix no Linux foi empacotado como um executável de desktop nativo (GTK 4 + Cairo) integrado ao backend Swift Core e terminais PTY:
+O Maestrix está empacotado como um instalador nativo Debian/Ubuntu (`.deb`) pré-compilado, contendo todos os binários, o runtime Swift embutido, integração com menu e ícones:
 
-### 1.1 Instalação rápida no sistema (user space)
+```bash
+# Instalação com resolução automática de dependências:
+sudo apt install ./releases/maestrix_1.0.0_amd64.deb
+
+# Ou via dpkg:
+sudo dpkg -i releases/maestrix_1.0.0_amd64.deb
+sudo apt-get install -f
+```
+
+Também é possível baixar o pacote nas [Releases do GitHub](https://github.com/Potatoyz908/Maestrix/releases).
+
+Após a instalação:
+- O atalho **Maestrix** já estará no menu de aplicativos do Ubuntu/GNOME com ícone ativo.
+- O executável principal `maestrix` (e o alias `open-maestri`) fica no `/usr/bin/maestrix`.
+- O CLI inter-agentes `maestrix-cli` (e alias `omaestri`) fica no `/usr/bin/maestrix-cli`.
+- O servidor de background `maestrix-server` fica no `/usr/bin/maestrix-server`.
+
+Para reconstruir o pacote a qualquer momento:
+```bash
+./scripts/build-deb.sh
+```
+
+---
+
+## 🛠️ 2. Instalação a partir do Código-Fonte (Desenvolvimento)
+
+Caso prefira rodar ou compilar direto dos fontes:
+
+### 2.1 Pré-requisitos
+- **Sistema:** Ubuntu 22.04, 24.04 ou 26.04 (x86_64)
+- **Swift:** Swift 6.0.3+ instalado (já configurado no ambiente em `~/.local/bin/swift`)
+- **Python:** Python 3.10+ com PyGObject, Cairo e GTK 4
+- **Dependências C:** `build-essential`, `libc6-dev` (fornecem `<pty.h>`, `<sys/socket.h>`)
+
+### 2.2 Instalação no ambiente de usuário (user space)
 ```bash
 ./scripts/install-desktop.sh
 ```
