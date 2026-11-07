@@ -2475,3 +2475,6 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                 self._enable_sync()   # after close_workspace() (last workspace deleted) the next one syncs again
             bus.emit("workspace-loaded", doc.payload)
         return GLib.SOURCE_REMOVE
+
+
+OpenMaestriWindow = MaestrixWindow   # pre-rebrand name: existing tests and callers still import it
