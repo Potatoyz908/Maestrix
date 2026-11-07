@@ -24,6 +24,7 @@ from maestri_core.models.workspace import SidebarGroup, WorkspaceDocument, Works
 from maestri_core.models.node import (CanvasNode, NodeFrame, TerminalContent, StickyNoteContent, PortalContent, FileTreeContent,
                                       agent_type_for_command, current_iso8601)
 from maestri_core.client.api import MaestriClient, AuthenticationError
+from maestri_core.agent_resume import resume_command
 from maestri_core.unique_names import unique_name, dedupe_terminal_names
 from maestri_core.preferences import PreferencesStore
 from maestri_core.element_defaults import apply_element_defaults
@@ -1541,10 +1542,16 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         workspace_id = self.document.payload.id
         agent_type = getattr(c, "agent_type", "") or agent_type_for_command(command)
         floor_id = self._floor_id_for(cwd)
+        restoring = bool(getattr(self, "_restoring_nodes", False))   # a saved node being reopened, not a new one
 
         def worker():
+            cmd = command
             try:
-                self.client.ensure_terminal(tid, command=command, working_directory=cwd, workspace_id=workspace_id,
+                if restoring:
+                    meta = self.client.get_terminal(tid)
+                    if meta is None or not meta.get("running", True):
+                        cmd = resume_command(command)   # the shell is gone: reopen the agent on its last conversation
+                self.client.ensure_terminal(tid, command=cmd, working_directory=cwd, workspace_id=workspace_id,
                                             display_name=getattr(c, "name", None), agent_type=agent_type, floor_id=floor_id,
                                             role_name=role_name(c))
             except Exception:
@@ -1928,8 +1935,12 @@ class OpenMaestriWindow(WindowActionsMixin, Gtk.ApplicationWindow):
     def _load_payload_into_canvas(self) -> None:
         if dedupe_terminal_names(self.document.payload.nodes):
             self._dedupe_renamed = True   # persisted: _apply_workspace_switched marks the canvas dirty right after loading
-        for node in self.document.payload.nodes:
-            self._add_node_to_canvas(node)
+        self._restoring_nodes = True
+        try:
+            for node in self.document.payload.nodes:
+                self._add_node_to_canvas(node)
+        finally:
+            self._restoring_nodes = False
         for conn in self.document.payload.all_connections():
             if conn.a_id and conn.b_id:
                 self.canvas_widget.add_connection(ConnItem(conn.id, conn.a_id, conn.b_id), conn.rope_points)
