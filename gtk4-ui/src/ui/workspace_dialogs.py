@@ -39,6 +39,43 @@ def _close_modal(win: Gtk.Window) -> None:
         pass
 
 
+# Icon picker selection (EditWorkspaceSheet.swift: 36x36, radius 8, accent fill 15% + 2px accent stroke; CreateWorkspaceSheet:
+# 32x32, radius 6). Installed at USER + 1: a user GTK theme (WhiteSur, ~/.config/gtk-4.0) loads at USER priority and would
+# repaint the buttons and hide the selection.
+ICON_PICKER_CSS = """
+button.maestri-icon-btn {
+  background-color: transparent;
+  background-image: none;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  box-shadow: none;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+button.maestri-icon-btn.create { border-radius: 6px; min-width: 28px; min-height: 28px; }
+button.maestri-icon-btn:hover { background-color: alpha(#007AFF, 0.08); }
+button.maestri-icon-btn.active {
+  background-color: alpha(#007AFF, 0.18);
+  border-color: #007AFF;
+}
+button.maestri-icon-btn.active image { color: #007AFF; }
+"""
+_icon_css_installed = False
+
+
+def _install_icon_picker_css() -> None:
+    global _icon_css_installed
+    from gi.repository import Gdk
+    display = Gdk.Display.get_default()
+    if _icon_css_installed or display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_string(ICON_PICKER_CSS)
+    Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
+    _icon_css_installed = True
+
+
 def create_workspace_record(client, name: str, wd: str, icon: str = "folder") -> str:
     """Create a workspace via the core client if available, or locally on filesystem when offline.
     Returns the workspace id."""
@@ -280,9 +317,12 @@ class CreateWorkspaceDialog(Gtk.Window):
         icon_flow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.icon_buttons: dict[str, Gtk.Button] = {}
 
+        _install_icon_picker_css()
         for icon, name in CREATE_ICON_OPTIONS:
             btn = Gtk.Button(icon_name=icon)
             btn.add_css_class("maestri-icon-btn")
+            btn.add_css_class("create")
+            btn.set_tooltip_text(name)
             if name == self.selected_icon:
                 btn.add_css_class("active")
             btn.connect("clicked", lambda _b, n=name: self._select_icon(n))
@@ -419,6 +459,7 @@ class EditWorkspaceDialog(Gtk.Window):
         grid_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.icon_buttons: dict[str, Gtk.Button] = {}
 
+        _install_icon_picker_css()
         # Chunk into rows of 8
         for i in range(0, len(EDIT_ICON_OPTIONS), 8):
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
