@@ -136,6 +136,10 @@ def start_isolated_server(home: Path, timeout_s: float = 25.0) -> IsolatedServer
     env = {k: v for k, v in os.environ.items() if not k.startswith(("MAESTRI_", "OMAESTRI_"))}
     env[DATA_DIR_ENV] = str(data)
     if binary_honours_data_dir(binary):
+        # Only the SERVER process gets a private HOME: the shells it spawns (PTYs) must not read the user's real
+        # ~/.zshrc / ~/.bashrc (a two-line prompt broke the 'prompt at column 0' checks). The GUI keeps its own HOME.
+        env["HOME"] = str(home)
+        env["SHELL"] = "/bin/bash"
         argv = [str(binary)]
     elif _namespace_proven(home):
         argv = _namespaced(home, [str(binary)])
