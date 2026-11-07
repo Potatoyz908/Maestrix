@@ -19,10 +19,13 @@ from maestri_core.client.api import MaestriClient
 from ui.window import OpenMaestriWindow
 
 
+APP_ID = "org.openmaestri.desktop.native"   # also the .desktop StartupWMClass (Wayland app_id / X11 WM_CLASS)
+
+
 class OpenMaestriApp(Gtk.Application):
     def __init__(self, port: int = 0, token: str = ""):
         super().__init__(
-            application_id="org.openmaestri.desktop.native",
+            application_id=APP_ID,
             flags=0
         )
         self.port = port
@@ -40,7 +43,9 @@ def main():
     parser = argparse.ArgumentParser(description="Open Maestri GTK 4 Native Linux")
     parser.add_argument("--port", type=int, default=0, help="Backend TCP port")
     parser.add_argument("--token", type=str, default="", help="Backend auth token")
-    args = parser.parse_args()
+    # maestri://... (x-scheme-handler/maestri from the .desktop %U) and other positionals are accepted and ignored
+    args, _ignored = parser.parse_known_args()
+    GLib.set_prgname(APP_ID)   # X11 WM_CLASS matches StartupWMClass, so the dock groups the window with the launcher
 
     # Harmonize MAESTRI_SERVER_PORT and MAESTRI_PORT
     port_env = os.environ.get("MAESTRI_SERVER_PORT") or os.environ.get("MAESTRI_PORT") or "0"
@@ -48,7 +53,7 @@ def main():
     token = args.token or os.environ.get("MAESTRI_AUTH_TOKEN", "")
 
     app = OpenMaestriApp(port=port, token=token)
-    return app.run(sys.argv)
+    return app.run(sys.argv[:1])   # GApplication without HANDLES_OPEN would refuse URI arguments
 
 
 if __name__ == "__main__":

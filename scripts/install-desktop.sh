@@ -39,12 +39,16 @@ for size in 16 32 128 256; do
 done
 
 # 3. Install .desktop file
-cp "$REPO_DIR/scripts/open-maestri.desktop" "$APP_DIR/open-maestri.desktop"
+# Absolute Exec path: GNOME does not always have ~/.local/bin in the PATH of the session that launches .desktop files
+sed "s|@OPEN_MAESTRI_BIN@|$BIN_DIR/open-maestri|g" "$REPO_DIR/scripts/open-maestri.desktop" > "$APP_DIR/open-maestri.desktop"
 chmod +x "$APP_DIR/open-maestri.desktop"
 
 # 4. Update desktop & icon caches if tools exist
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$APP_DIR" 2>/dev/null || true
+fi
+if command -v xdg-mime >/dev/null 2>&1; then
+    xdg-mime default open-maestri.desktop x-scheme-handler/maestri 2>/dev/null || true
 fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
