@@ -175,7 +175,7 @@ def canvas_with_note(note=None, storage_text=None, **kw):
 def test_colour_name_is_resolved_for_the_card_but_persisted_verbatim():
     c, v, win = canvas_with_note({"color": "yellow", "fileName": "N.md", "fontSize": 14, "hasCustomName": False, "isPreviewing": False,
                                   "storageMode": {"managed": {}}})
-    assert c.frames[NID].has_css_class("note-c-fefde8") and c.frames[NID].has_css_class("maestri-note")
+    assert c.frames[NID].has_css_class("note-c-fcf7b8") and c.frames[NID].has_css_class("maestri-note")
     assert v.to_content()["color"] == "yellow"                 # the NAME survives, not its hex
     win.destroy()
 
@@ -184,11 +184,11 @@ def test_swatch_click_changes_card_class_and_emits_the_preset_string():
     c, v, win = canvas_with_note()
     got = []
     c.connect("note-meta-changed", lambda _c, nid, d: got.append((nid, d)))
-    blue = next(b for val, b in v._swatches if val == "#D6EBFF")
+    blue = next(b for val, b in v._swatches if val == "blue")
     blue.emit("clicked")
     f = c.frames[NID]
-    assert f.has_css_class("note-c-d6ebff") and not f.has_css_class("note-c-fefde8")
-    assert got and got[-1][0] == NID and got[-1][1]["color"] == "#D6EBFF" and blue.has_css_class("active")
+    assert f.has_css_class("note-c-bad6f5") and not f.has_css_class("note-c-fefde8")
+    assert got and got[-1][0] == NID and got[-1][1]["color"] == "blue" and blue.has_css_class("active")
     n = len(got)
     blue.emit("clicked")                                       # same colour: no event
     assert len(got) == n
