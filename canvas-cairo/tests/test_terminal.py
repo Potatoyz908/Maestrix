@@ -31,7 +31,8 @@ def pump_until(cond, timeout=8.0, what="condition"):
     ctx = GLib.MainContext.default()
     end = time.time() + timeout
     while time.time() < end:
-        ctx.iteration(False)
+        while ctx.pending():   # drain everything ready: one dispatch per 4 ms starves VTE's PTY processing
+            ctx.iteration(False)
         if cond():
             return
         time.sleep(0.004)
@@ -150,7 +151,9 @@ def test_e2e_reconnect_replays_history_exactly_once(core):
     lines = [l for l in v.text().splitlines() if marker in l]
     assert all(l == l.lstrip() for l in lines), f"replay is staircased (bare LF not normalized): {lines}"
     last = [l for l in v.text().splitlines() if l.strip()][-1]
-    assert last.rstrip().endswith("#") and last == last.lstrip(), f"prompt should sit at column 0 right after the history, got {last!r}"
+    # any shell prompt (root "#", user "$", zsh "%"...): the server now runs as the user, not as namespaced root
+    assert last.rstrip().endswith(("#", "$", "%", ">", "❯")) and last == last.lstrip(), \
+        f"prompt should sit at column 0 right after the history, got {last!r}"
     v.dispose(); win.destroy()
 
 
