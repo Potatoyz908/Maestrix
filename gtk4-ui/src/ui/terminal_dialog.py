@@ -103,8 +103,9 @@ def _install_css() -> None:
 
 def available_themes() -> list[str]:
     try:
-        from maestri_canvas.terminal_themes import THEMES
-        return list(THEMES)
+        from maestri_canvas.terminal_themes import THEMES, THEME_ALIASES
+        # the legacy dark/light aliases point at maestri-dark/light: listing both showed every theme twice
+        return [t for t in THEMES if t not in THEME_ALIASES]
     except Exception:   # noqa: BLE001 - canvas package always present in the app
         return list(THEME_LABELS)
 
@@ -290,8 +291,15 @@ class _TerminalForm:
             (b.add_css_class if v.lower() == (hx or "").lower() else b.remove_css_class)("active")
 
     def _select_theme(self, theme_id: Optional[str]) -> None:
+        try:   # a node saved with the legacy 'dark'/'light' id must still come preselected
+            from maestri_canvas.terminal_themes import THEME_ALIASES
+            theme_id = THEME_ALIASES.get(theme_id, theme_id)
+        except Exception:   # noqa: BLE001
+            pass
         if theme_id in self.theme_ids:
             self.theme_dropdown.set_selected(self.theme_ids.index(theme_id))
+        elif "maestri-dark" in self.theme_ids:
+            self.theme_dropdown.set_selected(self.theme_ids.index("maestri-dark"))
         elif "dark" in self.theme_ids:
             self.theme_dropdown.set_selected(self.theme_ids.index("dark"))
 
