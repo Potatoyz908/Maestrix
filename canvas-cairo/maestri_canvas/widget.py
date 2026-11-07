@@ -435,6 +435,12 @@ SHELL_CSS = """
 .maestri-node { border-radius: 10px; }
 .maestri-node-header { min-height: 32px; padding: 0 8px; border-radius: 10px 10px 0 0; }
 .maestri-node-header .maestri-node-title { font-size: 12px; font-weight: 500; }
+.maestri-file-tree-list > row { min-height: 32px; padding: 0 6px; }
+.maestri-file-tree-list treeexpander indent { -gtk-icon-size: 20px; min-width: 20px; }
+.maestri-file-name { font-size: 13px; }
+.maestri-file-name.git-modified { color: #FF9500; }
+.maestri-file-name.git-added, .maestri-file-name.git-untracked { color: #34C759; }
+.maestri-file-name.git-deleted { color: #FF3B30; }
 .maestri-node-header image.maestri-node-icon { -gtk-icon-size: 12px; min-width: 12px; min-height: 12px; padding: 0; }
 """
 

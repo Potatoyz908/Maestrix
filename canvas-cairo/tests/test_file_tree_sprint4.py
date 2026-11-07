@@ -234,8 +234,9 @@ def test_git_badges_on_rows_and_branch(root, win):
         while row is not None:
             exp = row.get_first_child()
             if exp is not None and exp.get_tooltip_text() == str(root / name):
-                b = exp.get_child().get_last_child()
-                return b.get_label() if b.get_visible() else None
+                name = exp.get_child().get_last_child().name_label   # macOS: no letter, the NAME is coloured
+                from maestri_canvas.git_badges import CSS_CLASS
+                return next((k for k, cls in CSS_CLASS.items() if name.has_css_class(cls)), None)
             row = row.get_next_sibling()
     assert pump_until(lambda: badge_text("src") == "M" and badge_text("new.txt") == "?" and badge_text("README.md") is None)
     # a file created on disk refreshes the badges (debounced) without any click

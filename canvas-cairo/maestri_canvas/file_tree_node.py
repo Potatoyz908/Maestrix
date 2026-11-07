@@ -41,7 +41,7 @@ ATTRS = ",".join((
     "standard::is-hidden", "standard::is-backup", "standard::size", "standard::content-type",
 ))
 GRID_ATTRS = ATTRS + "," + THUMB_ATTRS
-ICON_PX = 16
+ICON_PX = 20   # FileTreeOutlineAdapter: 20x20 icon, 32 px rows, 20 px indentation
 THUMB_PX = 72
 GIT_DEBOUNCE_MS = 400
 VIEW_MODES = ("list", "grid")
@@ -427,14 +427,24 @@ class FileTreeView(Gtk.Box):
         self.emit("git-badges-changed")
 
     def _show_badge(self, badge: Gtk.Label, path: str, is_dir: bool) -> None:
+        """macOS colours the NAME (modified orange, added/untracked green, deleted red) and shows no letter: the letter
+        label stays as the bookkeeping handle (hidden), the status goes on the name label and its tooltip."""
         b = self.badges.badge(path, is_dir)
-        for cls in CSS_CLASS.values():
-            badge.remove_css_class(cls)
-        badge.set_visible(b is not None)
+        name = getattr(badge, "name_label", None)
+        for w in (badge, name):
+            if w is None:
+                continue
+            for cls in CSS_CLASS.values():
+                w.remove_css_class(cls)
+        badge.set_visible(False)
         if b is not None:
             badge.set_label(b)
             badge.add_css_class(CSS_CLASS[b])
             badge.set_tooltip_text(TOOLTIP[b])
+            if name is not None:
+                name.add_css_class(CSS_CLASS[b])
+        if name is not None:
+            name.set_tooltip_text(TOOLTIP[b] if b is not None else None)
 
     # ---- rows (list) ------------------------------------------------------------------------------
     def _setup_row(self, _f, list_item: Gtk.ListItem) -> None:
@@ -445,6 +455,8 @@ class FileTreeView(Gtk.Box):
         label = Gtk.Label(xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.MIDDLE)
         badge = Gtk.Label(visible=False, margin_end=4)
         badge.add_css_class("maestri-git-badge")
+        badge.name_label = label
+        label.add_css_class("maestri-file-name")
         box.append(icon)
         box.append(label)
         box.append(badge)
@@ -495,6 +507,8 @@ class FileTreeView(Gtk.Box):
         over.add_overlay(badge)
         label = Gtk.Label(wrap=True, wrap_mode=Pango.WrapMode.WORD_CHAR, lines=2, ellipsize=Pango.EllipsizeMode.MIDDLE,
                           justify=Gtk.Justification.CENTER, max_width_chars=12)
+        badge.name_label = label
+        label.add_css_class("maestri-file-name")
         cell.append(over)
         cell.append(label)
         list_item.set_child(cell)
