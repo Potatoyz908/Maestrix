@@ -56,6 +56,24 @@ switch { background-color: #24314b; background-image: none; border-color: #38486
 switch slider { background-color: #edf1ff; }
 scale trough, progressbar trough { background-color: #24314b; }
 tooltip, tooltip.background { background-color: #182239; color: #edf1ff; border: 1px solid #384866; }
+/* The two top islands: one uniform navy pill, icons with no button background, the active tool marked by the icon gradient. */
+.maestri-top-toolbar, .maestri-context-actions-pill {
+  background-color: rgba(21, 28, 46, 0.94); background-image: none; border: 1px solid #344161;
+}
+.maestri-top-toolbar button.maestri-island-btn.maestri-island-btn.maestri-island-btn, .maestri-context-actions-pill button.maestri-island-btn.maestri-island-btn.maestri-island-btn {
+  background-color: transparent; background-image: none; border: none; box-shadow: none; color: #c4cff0;
+}
+.maestri-top-toolbar button.maestri-island-btn.maestri-island-btn.maestri-island-btn image, .maestri-context-actions-pill button.maestri-island-btn.maestri-island-btn.maestri-island-btn image {
+  background: none; background-color: transparent; background-image: none;
+}
+.maestri-top-toolbar button.maestri-island-btn.maestri-island-btn.maestri-island-btn:hover, .maestri-context-actions-pill button.maestri-island-btn.maestri-island-btn.maestri-island-btn:hover {
+  background-color: rgba(113, 220, 236, 0.10); background-image: none; color: #ffffff;
+}
+.maestri-top-toolbar button.maestri-island-btn.maestri-island-btn.maestri-island-btn.active, .maestri-context-actions-pill button.maestri-island-btn.maestri-island-btn.maestri-island-btn.active {
+  background-image: linear-gradient(135deg, rgba(22, 139, 241, 0.30), rgba(147, 84, 232, 0.30));
+  background-color: transparent; color: #71dcec; box-shadow: inset 0 0 0 1px rgba(113, 220, 236, 0.55);
+}
+.maestri-context-actions-pill button.maestri-island-btn.maestri-island-btn.maestri-island-btn.danger:hover { background-color: rgba(255, 69, 58, 0.14); color: #ff746f; }
 .maestri-menu-item-btn.danger { color: #ff746f; }
 .maestri-menu-item-btn.danger:hover { background: #a62937; color: white; }
 """

@@ -20,6 +20,7 @@ def test_palette_is_valid_css_and_light_restores_the_base_theme():
     theme.apply("dark")
     assert not errors, errors
     assert "#168bf1" in DARK_CSS and "#9354e8" in DARK_CSS      # the Maestrix icon blue -> purple gradient
+    assert ".maestri-top-toolbar" in DARK_CSS and "button.maestri-island-btn.maestri-island-btn.maestri-island-btn.active" in DARK_CSS
     theme.apply("light")
     assert theme.provider.to_string().strip() == ""
 
