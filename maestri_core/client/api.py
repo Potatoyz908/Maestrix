@@ -673,6 +673,15 @@ class MaestriClient:
         if env_port and env_port.isdigit():
             return int(env_port)
 
+        # The server binds a dynamic port and publishes it in <data dir>/run/server.port
+        try:
+            from ..paths import run_dir
+            text = (run_dir() / "server.port").read_text(encoding="utf-8").strip()
+            if text.isdigit() and int(text) > 0:
+                return int(text)
+        except Exception:
+            pass
+
         return 39345  # Default fallback if port is unconfigured
 
     @property

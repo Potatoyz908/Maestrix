@@ -226,6 +226,10 @@ public final class InterAgentServer {
         tcpSocketSource = source
         tcpSocketFd = fd
         logger.info("InterAgentServer POSIX TCP ready on \(Constants.interAgentServerHost):\(self.port)")
+        // Published so the GUI (and anything else local) finds the dynamic port without MAESTRI_SERVER_PORT.
+        let portDir = PersistenceManager.shared.appDataURL.appendingPathComponent("run").path
+        try? FileManager.default.createDirectory(atPath: portDir, withIntermediateDirectories: true)
+        try? "\(self.port)".write(toFile: "\(portDir)/server.port", atomically: true, encoding: .utf8)
     }
 
     private func acceptTCPConnection(serverFd: Int32) {
