@@ -74,7 +74,7 @@ class LiveEvents:
         fn = {"nodeAdded": self.node_added, "nodeRemoved": self.node_removed,
               "connectionCreated": self.connection_created, "connectionRemoved": self.connection_removed,
               "terminalExited": self.terminal_state, "terminalBecameIdle": self.terminal_state,
-              "terminalBecameBusy": self.terminal_state}.get(etype)
+              "terminalBecameBusy": self.terminal_state, "connectionChanged": self.connection_changed}.get(etype)
         changed = bool(fn and fn(dict(evt, type=etype)))
         if changed:
             self.applied += 1
@@ -82,6 +82,19 @@ class LiveEvents:
             cw.controller.dirty = True
             cw.queue_draw()
         return changed
+
+    def connection_changed(self, evt: Dict[str, Any]) -> bool:
+        """connectionChanged {connectionId, status}: rope state ("communicating" draws it green). Presentation only: the
+        document is not touched and nothing is re-posted. Events with only ropePoints (older cores) change nothing here."""
+        status = evt.get("status")
+        cid = _upper(evt.get("connectionId") or evt.get("id"))
+        if not cid or not isinstance(status, str) or not status:
+            return False
+        cw = self.win.canvas_widget
+        if norm(cid) not in cw.scene.connections or not hasattr(cw, "set_connection_status"):
+            return False
+        cw.set_connection_status(norm(cid), status)
+        return True
 
     def terminal_state(self, evt: Dict[str, Any]) -> bool:
         nid = self.node_id_for(evt.get("terminalId"))

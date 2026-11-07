@@ -507,11 +507,11 @@ class EventsWebSocketClient(PTYWebSocketClient):
         elif etype == "connectionCreated":
             bus.emit("connection-created", event)
         elif etype == "connectionChanged":
-            bus.emit(
-                "connection-changed",
-                str(event.get("connectionId", "")),
-                json.dumps(event.get("ropePoints", [])),
-            )
+            cid = str(event.get("connectionId", ""))
+            if isinstance(event.get("status"), str) and event["status"]:   # rope state ("communicating", ...)
+                bus.emit("connection-status-changed", cid, event["status"])
+            if "ropePoints" in event:   # older cores: rope geometry only (a document change)
+                bus.emit("connection-changed", cid, json.dumps(event.get("ropePoints", [])))
         elif etype == "connectionRemoved":
             bus.emit("connection-removed", str(event.get("connectionId", "")))
 

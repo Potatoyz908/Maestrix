@@ -34,6 +34,8 @@ class SignalBus(GObject.Object):
         # Connection events
         "connection-created": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "connection-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
+        # (connection id, status) from the core's connectionChanged {status}: presentation only, NOT a document change
+        "connection-status-changed": (GObject.SignalFlags.RUN_FIRST, None, (str, str)),
         "connection-removed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
 
         # Viewport events
