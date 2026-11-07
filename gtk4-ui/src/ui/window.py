@@ -182,6 +182,10 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
 
         # Apply dark theme styling
         self._setup_theme()
+        from .theme import InterfaceTheme
+        self.interface_theme = InterfaceTheme()
+        self.interface_theme.apply(self.preferences.interface_theme)
+        self.canvas_widget.renderer.dark_mode = self.preferences.interface_theme == "dark"
         self._start_initial_load()
 
     # ---- initial load (background thread -> main loop) ------------------------------------------
@@ -1557,6 +1561,8 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         """Persisted by SettingsWindow already; apply live: terminal font/theme, canvas background, autosave interval."""
         old = self.preferences
         self.preferences = prefs
+        self.interface_theme.apply(prefs.interface_theme)
+        self.canvas_widget.renderer.dark_mode = prefs.interface_theme == "dark"
         self.terminal_presets_menu.remove_all()
         for preset in agent_presets(self):
             item = Gio.MenuItem.new(preset["name"], None)
@@ -2469,3 +2475,6 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                 self._enable_sync()   # after close_workspace() (last workspace deleted) the next one syncs again
             bus.emit("workspace-loaded", doc.payload)
         return GLib.SOURCE_REMOVE
+
+
+OpenMaestriWindow = MaestrixWindow   # pre-rebrand name: existing tests and callers still import it

@@ -50,6 +50,7 @@ def _polyline_smooth(cr: cairo.Context, pts: list[Point]) -> None:
 
 class CairoRenderer:
     def __init__(self, placeholders: bool = False, background: str = "dotGrid") -> None:
+        self.dark_mode = False
         self.placeholders = placeholders
         self.background = background if background in BACKGROUNDS else "dotGrid"
 
@@ -57,7 +58,7 @@ class CairoRenderer:
              ropes: RopeSimulation | None = None, overlay: Overlay | None = None) -> None:
         """Base layer (+ the overlay when given, for headless use). The widget passes overlay=None and draws it on a top layer."""
         if self.background != "transparent":   # transparent: the window background shows through
-            cr.set_source_rgb(*(SOLID_BG if self.background == "solid" else BG))
+            cr.set_source_rgb(*((0.047, 0.059, 0.106) if self.dark_mode else (SOLID_BG if self.background == "solid" else BG)))
             cr.paint()
         if self.background == "dotGrid":
             self._grid(cr, vp, width, height)
@@ -89,7 +90,7 @@ class CairoRenderer:
         if step < MIN_GRID_PX:
             return
         cr.save()
-        cr.set_source_rgb(*GRID)
+        cr.set_source_rgb(*((0.11, 0.15, 0.23) if self.dark_mode else GRID))
         cr.set_line_width(GRID_LINE_W)
         x = -((vp.origin.x * vp.zoom) % step)
         while x <= w:

@@ -133,7 +133,10 @@ class SettingsWindow(Gtk.Window):
         self.snap_switch = Gtk.Switch(active=self.prefs.canvas_snapping, valign=Gtk.Align.CENTER)
         self.snap_switch.connect("notify::active", lambda s, _p: self._set("canvas_snapping", s.get_active()))
         self._row(g, 4, "Snap to alignment guides", self.snap_switch)
-        self._build_remote_ssh(g, 5)
+        self.theme_dropdown = self._dropdown(("light", "dark"), {"light": "Light", "dark": "Dark · Maestrix"}, self.prefs.interface_theme)
+        self.theme_dropdown.connect("notify::selected", lambda d, _p: self._set("interface_theme", ("light", "dark")[d.get_selected()]))
+        self._row(g, 5, "Interface theme", self.theme_dropdown)
+        self._build_remote_ssh(g, 6)
         return g
 
     # ---- Remote SSH (GeneralSettingsView.swift: only sshEnabled / sshTunnelPort / sshScriptPath here; the host is chosen per
