@@ -83,6 +83,24 @@ SYMBOLIC_ICON_MAP = {
 FALLBACK_ICON = "maestri-folder-symbolic"
 
 
+_hex_classes: set = set()
+
+
+def _icon_color_class(color: str) -> str:
+    """`icon-color-<name>` for the named palette; Maestri-imported workspaces carry a hex (#AF52DE): a class per hex."""
+    if not (color.startswith("#") and len(color) == 7):
+        return f"icon-color-{color}"
+    cls = f"icon-hex-{color[1:].upper()}"
+    if cls not in _hex_classes:
+        display = Gdk.Display.get_default()
+        if display is not None:
+            provider = Gtk.CssProvider()
+            provider.load_from_string(f".{cls} {{ color: {color}; }}")
+            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER + 30)
+        _hex_classes.add(cls)
+    return cls
+
+
 def workspace_icon_name(icon: str) -> str:
     """Symbolic icon for a workspace's SF Symbol name; the folder when unknown or not installed in the icon theme."""
     name = SYMBOLIC_ICON_MAP.get(icon or "", FALLBACK_ICON)
@@ -457,7 +475,7 @@ class SidebarView(Gtk.Box):
         icon.set_pixel_size(18)
         icon.add_css_class("maestri-card-icon")
         color = getattr(entry, "color", "blue") or "blue"
-        icon.add_css_class(f"icon-color-{color}")
+        icon.add_css_class(_icon_color_class(color))
         row_box.append(icon)
 
         # Name & Path (ellipsized, full text in the tooltip: never clipped)
@@ -815,9 +833,9 @@ class SidebarView(Gtk.Box):
         popover.popdown()
         window = self.get_root()
 
-        def handle_created(name: str, wd: str, icon: str):
+        def handle_created(name: str, wd: str, icon: str, color: str = "blue"):
             def worker():
-                new_id = create_workspace_record(self.client, name, wd, icon)
+                new_id = create_workspace_record(self.client, name, wd, icon, color)
 
                 def on_done():
                     self.refresh()

@@ -764,6 +764,11 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         .maestri-workspace-list row:selected {
             background: transparent;
         }
+        row:selected .maestri-workspace-card {
+            background-color: #eef5ff;
+            border-color: #007AFF;
+            box-shadow: inset 4px 0 0 #007AFF;
+        }
         .maestri-workspace-card {
             background-color: #ffffff;
             border: 1px solid rgba(0, 0, 0, 0.08);
@@ -2261,9 +2266,9 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
 
     def _on_new_workspace(self) -> None:
         """Opens macOS-matching 'New Workspace' modal sheet."""
-        def handle_created(name: str, wd: str, icon: str):
+        def handle_created(name: str, wd: str, icon: str, color: str = "blue"):
             def worker():
-                new_id = create_workspace_record(self.client, name, wd, icon)
+                new_id = create_workspace_record(self.client, name, wd, icon, color)
                 def on_done():
                     self.sidebar.refresh()
                     self._on_workspace_switched(None, new_id)

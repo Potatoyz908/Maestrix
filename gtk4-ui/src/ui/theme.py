@@ -40,6 +40,8 @@ popover > contents, .maestri-sidebar-menubar popover > contents,
 popover modelbutton label, .maestri-sidebar-menubar popover modelbutton label,
 .maestri-header-menubar popover modelbutton label { color: #edf1ff; }
 .maestri-workspace-card:hover { border-color: #71dcec; }
+/* The open workspace: accent bar on the left + tinted card + cyan border. */
+row:selected .maestri-workspace-card { background: #213556; border-color: #71dcec; box-shadow: inset 4px 0 0 #71dcec; }
 button.suggested-action, button:checked:not(.dot-close):not(.dot-min):not(.dot-max),
 switch:checked, notebook > header tab:checked,
 .maestri-menu-item-btn:hover:not(.danger), modelbutton:hover {

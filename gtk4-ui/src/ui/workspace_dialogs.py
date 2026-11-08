@@ -73,10 +73,15 @@ def _install_icon_picker_css() -> None:
     provider = Gtk.CssProvider()
     provider.load_from_string(ICON_PICKER_CSS)
     Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
+    # The chosen colour tints the picker's icons and the selected button. Above the dark theme (USER + 20), which would
+    # otherwise repaint the icons cyan.
+    tint = Gtk.CssProvider()
+    tint.load_from_string(_tint_css())
+    Gtk.StyleContext.add_provider_for_display(display, tint, Gtk.STYLE_PROVIDER_PRIORITY_USER + 30)
     _icon_css_installed = True
 
 
-def create_workspace_record(client, name: str, wd: str, icon: str = "folder") -> str:
+def create_workspace_record(client, name: str, wd: str, icon: str = "folder", color: str = "blue") -> str:
     """Create a workspace via the core client if available, or locally on filesystem when offline.
     Returns the workspace id."""
     import json
@@ -85,7 +90,7 @@ def create_workspace_record(client, name: str, wd: str, icon: str = "folder") ->
 
     # 1. Try core client
     try:
-        res = client.create_workspace(name=name, working_directory=wd, icon=icon)
+        res = client.create_workspace(name=name, working_directory=wd, icon=icon, color=color)
         if res and getattr(res, "id", None):
             return str(res.id).upper()
     except Exception:
@@ -117,7 +122,7 @@ def create_workspace_record(client, name: str, wd: str, icon: str = "folder") ->
             pass
 
     new_entry = {
-        "color": "blue",
+        "color": color or "blue",
         "createdAt": now_iso,
         "icon": icon or "folder",
         "id": new_id,
@@ -224,21 +229,60 @@ COLOR_OPTIONS = [
 ]
 
 
+def _named_hex(cid: str) -> str:
+    for name, value in COLOR_OPTIONS:
+        if name == cid:
+            return value if value.startswith("#") else "#FF9500"   # rainbow -> orange
+    return "#007AFF"
+
+
+def _tint_css() -> str:
+    out = []
+    for name, _v in COLOR_OPTIONS:
+        hx = _named_hex(name)
+        out.append(f".ws-tint-{name} button.maestri-icon-btn.maestri-icon-btn image {{ color: {hx}; }}")
+        out.append(f".ws-tint-{name} button.maestri-icon-btn.maestri-icon-btn.active "
+                   f"{{ border-color: {hx}; background-color: alpha({hx}, 0.22); box-shadow: none; }}")
+        out.append(f".ws-tint-{name} button.maestri-icon-btn.maestri-icon-btn.active image {{ color: {hx}; }}")
+    return "\n".join(out)
+
+
+def nearest_color_name(color: str) -> str:
+    """A manifest colour may be a name (blue) or a Maestri hex (#AF52DE): the pickers only know the named palette."""
+    color = (color or "blue").strip()
+    if not color.startswith("#") or len(color) != 7:
+        return color if any(color == n for n, _ in COLOR_OPTIONS) else "blue"
+    try:
+        r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    except ValueError:
+        return "blue"
+    best, best_d = "blue", 10 ** 9
+    for name, value in COLOR_OPTIONS:
+        if not value.startswith("#"):
+            continue
+        vr, vg, vb = (int(value[i:i + 2], 16) for i in (1, 3, 5))
+        d = (r - vr) ** 2 + (g - vg) ** 2 + (b - vb) ** 2
+        if d < best_d:
+            best, best_d = name, d
+    return best
+
+
 class CreateWorkspaceDialog(Gtk.Window):
     """Matches macOS CreateWorkspaceSheet.swift (480x360)."""
 
     def __init__(
         self,
         parent: Gtk.Window,
-        on_create: Callable[[str, str, str], None],
+        on_create: Callable[..., None],
     ) -> None:
         super().__init__(transient_for=parent, modal=True, title="New Workspace")
         self.on_create = on_create
-        self.set_default_size(480, 360)
+        self.set_default_size(480, 430)
         self.set_resizable(False)
         self.add_css_class("maestri-modal-window")
 
         self.selected_icon = "folder"
+        self.selected_color = "blue"
         self.working_directory = os.path.expanduser("~")
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -330,9 +374,40 @@ class CreateWorkspaceDialog(Gtk.Window):
             icon_flow.append(btn)
 
         body.append(icon_flow)
+        self._tint_target = icon_flow
+        icon_flow.add_css_class(f"ws-tint-{self.selected_color}")
+
+        lbl_color = Gtk.Label(label="<b>COLOR</b>", use_markup=True, xalign=0.0)
+        lbl_color.add_css_class("maestri-form-section-title")
+        body.append(lbl_color)
+        body.append(self._build_color_row())
 
         root.append(body)
         self.set_child(root)
+
+    def _build_color_row(self) -> Gtk.Box:
+        color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.color_buttons: dict[str, Gtk.Button] = {}
+        for cid, _css in COLOR_OPTIONS:
+            btn = Gtk.Button()
+            btn.add_css_class("maestri-color-dot")
+            btn.add_css_class(f"color-{cid}")
+            if cid == self.selected_color:
+                btn.add_css_class("active")
+            btn.connect("clicked", lambda _b, c=cid: self._select_color(c))
+            self.color_buttons[cid] = btn
+            color_row.append(btn)
+        return color_row
+
+    def _select_color(self, color_name: str) -> None:
+        self._tint_target.remove_css_class(f"ws-tint-{self.selected_color}")
+        self.selected_color = color_name
+        self._tint_target.add_css_class(f"ws-tint-{color_name}")
+        for c, btn in self.color_buttons.items():
+            if c == color_name:
+                btn.add_css_class("active")
+            else:
+                btn.remove_css_class("active")
 
     def _on_name_changed(self, entry: Gtk.Entry) -> None:
         has_text = bool(entry.get_text().strip())
@@ -374,7 +449,7 @@ class CreateWorkspaceDialog(Gtk.Window):
         name = self.name_entry.get_text().strip()
         if not name:
             return
-        self.on_create(name, self.working_directory, self.selected_icon)
+        self.on_create(name, self.working_directory, self.selected_icon, self.selected_color)
         self._close_dialog()
 
 
@@ -397,7 +472,7 @@ class EditWorkspaceDialog(Gtk.Window):
         self.add_css_class("maestri-modal-window")
 
         self.selected_icon = entry.icon
-        self.selected_color = getattr(entry, "color", "blue") or "blue"
+        self.selected_color = nearest_color_name(getattr(entry, "color", "blue") or "blue")
         self.working_directory = entry.working_directory
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -457,6 +532,8 @@ class EditWorkspaceDialog(Gtk.Window):
         body.append(lbl_icon)
 
         grid_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        grid_box.add_css_class(f"ws-tint-{self.selected_color}")
+        self._tint_target = grid_box
         self.icon_buttons: dict[str, Gtk.Button] = {}
 
         _install_icon_picker_css()
@@ -552,7 +629,9 @@ class EditWorkspaceDialog(Gtk.Window):
                 btn.remove_css_class("active")
 
     def _select_color(self, color_name: str) -> None:
+        self._tint_target.remove_css_class(f"ws-tint-{self.selected_color}")
         self.selected_color = color_name
+        self._tint_target.add_css_class(f"ws-tint-{color_name}")
         for c, btn in self.color_buttons.items():
             if c == color_name:
                 btn.add_css_class("active")
