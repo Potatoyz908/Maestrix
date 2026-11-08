@@ -696,22 +696,29 @@ public final class InterAgentServer {
                 }
             }
             let pm = PersistenceManager.shared
-            let wsId = targetId ?? (try? pm.loadAppState())?.activeWorkspaceId ?? (try? pm.loadManifest())?.workspaces.first?.id
-            if let wsId, let doc = try? pm.loadWorkspace(id: wsId) {
-                if let jsonData = try? pm.encoder.encode(doc) {
-                    return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: jsonData)
-                }
+            // Never fabricate a "Default" workspace: an explicit unknown id is a 404, and without an id (or with a stale
+            // active id) fall back to the first workspace in the manifest that actually loads.
+            var resolved: WorkspaceDocument? = nil
+            if let targetId {
+                resolved = try? pm.loadWorkspace(id: targetId)
             } else {
-                let defaultPayload = WorkspacePayload(name: "Default", workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
-                let defaultDoc = WorkspaceDocument(payload: defaultPayload)
-                try? pm.ensureWorkspaceDirectoryExists(id: defaultPayload.id)
-                try? pm.saveSync(defaultDoc, to: pm.workspaceURL(id: defaultPayload.id))
-                var appState = (try? pm.loadAppState()) ?? AppStateData()
-                appState.activeWorkspaceId = defaultPayload.id
-                try? pm.saveAppState(appState)
-                if let jsonData = try? pm.encoder.encode(defaultDoc) {
-                    return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: jsonData)
+                var candidates: [UUID] = []
+                if let active = (try? pm.loadAppState())?.activeWorkspaceId { candidates.append(active) }
+                candidates += ((try? pm.loadManifest())?.workspaces.map { $0.id }) ?? []
+                for id in candidates {
+                    if let doc = try? pm.loadWorkspace(id: id) {
+                        resolved = doc
+                        var appState = (try? pm.loadAppState()) ?? AppStateData()
+                        if appState.activeWorkspaceId != id {
+                            appState.activeWorkspaceId = id
+                            try? pm.saveAppState(appState)
+                        }
+                        break
+                    }
                 }
+            }
+            if let doc = resolved, let jsonData = try? pm.encoder.encode(doc) {
+                return Self.buildHTTPResponse(status: 200, contentType: "application/json; charset=utf-8", data: jsonData)
             }
             return Self.buildHTTPResponse(status: 404, body: "error: workspace not found")
         }
@@ -2050,20 +2057,10 @@ public final class InterAgentServer {
             }
 
             var wsDoc: WorkspaceDocument? = nil
-            var resolvedWsId: UUID? = targetWorkspaceId
+            let resolvedWsId: UUID? = targetWorkspaceId
             if let wsId = targetWorkspaceId, let loaded = try? pm.loadWorkspace(id: wsId) {
                 wsDoc = loaded
-            } else {
-                let defaultPayload = WorkspacePayload(name: "Default", workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
-                let defaultDoc = WorkspaceDocument(payload: defaultPayload)
-                try? pm.ensureWorkspaceDirectoryExists(id: defaultPayload.id)
-                try? pm.saveSync(defaultDoc, to: pm.workspaceURL(id: defaultPayload.id))
-                var appState = (try? pm.loadAppState()) ?? AppStateData()
-                appState.activeWorkspaceId = defaultPayload.id
-                try? pm.saveAppState(appState)
-                wsDoc = defaultDoc
-                resolvedWsId = defaultPayload.id
-            }
+            }   // no "Default" fallback: without a loadable workspace the request fails below
 
             guard let wsId = resolvedWsId, var doc = wsDoc else {
                 return Self.buildHTTPResponse(status: 404, body: "error: active workspace not found", allowedOrigin: allowedOrigin)
