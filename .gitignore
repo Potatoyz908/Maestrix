@@ -78,4 +78,4 @@ __pycache__/
 .coverage
 htmlcov/
 *.egg-info/
-.eggs/
+.eggs/site/_site/
