@@ -56,3 +56,18 @@ def test_monitor_keeps_last_good_reading_on_failure():
     m.stop()
     snap = m.snapshot()["claude"]
     assert snap.windows and snap.error == "offline"
+
+
+def test_cli_lookup_works_with_a_minimal_desktop_path(tmp_path, monkeypatch):
+    """A GUI launched from the desktop has PATH=/usr/bin:/bin: CLIs in ~/.local/bin or nvm must still be found."""
+    bindir = tmp_path / ".local" / "bin"
+    bindir.mkdir(parents=True)
+    exe = bindir / "fakeagent"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("SHELL", "/bin/false")
+    monkeypatch.setattr(u, "_path_cache", None)
+    assert u.find_executable("fakeagent") == str(exe)
+    assert str(bindir) in u.agent_env()["PATH"].split(":")

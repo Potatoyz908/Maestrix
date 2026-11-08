@@ -32,6 +32,49 @@ NAMES = {"claude": "Claude Code", "codex": "Codex", "antigravity": "Antigravity"
 EXECUTABLES = {"claude": "claude", "codex": "codex", "antigravity": "agy"}
 
 
+_path_cache: Optional[str] = None
+
+
+def agent_path() -> str:
+    """PATH for finding and running the agent CLIs. A GUI started from the desktop has a minimal PATH without nvm, ~/.local/bin
+    or npm globals, so (like Maestri) add the login shell's PATH and the common install folders."""
+    global _path_cache
+    if _path_cache is not None:
+        return _path_cache
+    parts = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    try:
+        out = subprocess.run([shell, "-lic", "printf %s \"$PATH\""], capture_output=True, text=True, timeout=8,
+                             stdin=subprocess.DEVNULL).stdout
+        parts += [p for p in out.strip().splitlines()[-1].split(os.pathsep) if p] if out.strip() else []
+    except (OSError, subprocess.SubprocessError, IndexError):
+        pass
+    home = os.path.expanduser("~")
+    extra = [f"{home}/.local/bin", f"{home}/.npm-global/bin", f"{home}/.bun/bin", f"{home}/.cargo/bin",
+             "/usr/local/bin", "/usr/bin", "/bin", "/snap/bin"]
+    nvm = os.path.join(home, ".nvm", "versions", "node")
+    if os.path.isdir(nvm):
+        extra += sorted((os.path.join(nvm, v, "bin") for v in os.listdir(nvm)), reverse=True)
+    seen, merged = set(), []
+    for p in parts + extra:
+        if p not in seen and os.path.isdir(p):
+            seen.add(p)
+            merged.append(p)
+    _path_cache = os.pathsep.join(merged)
+    return _path_cache
+
+
+def find_executable(name: str) -> Optional[str]:
+    return shutil.which(name, path=agent_path())
+
+
+def agent_env() -> dict:
+    env = dict(os.environ)
+    env["PATH"] = agent_path()
+    env.update(TERM="dumb", NO_COLOR="1")
+    return env
+
+
 @dataclass
 class UsageWindow:
     label: str
@@ -159,11 +202,12 @@ def parse_antigravity(data: dict) -> ProviderUsage:
 
 # ---------------------------------------------------------------------------------------------------------- fetching
 def _drive(argv, first: dict, handler, timeout: float, cwd=None):
+    argv = [find_executable(argv[0]) or argv[0]] + list(argv[1:])
     """Run `argv`, write `first`, then call handler(message) for every JSON line it prints. The handler returns
     (result, to_send): a non-None result ends the dialogue, `to_send` (one message or a list) is written back. The child's
     whole process group is always terminated."""
     proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            cwd=cwd, start_new_session=True)
+                            cwd=cwd, env=agent_env(), start_new_session=True)
 
     def send(msg):
         proc.stdin.write((json.dumps(msg) + "\n").encode())
@@ -255,8 +299,8 @@ def fetch_codex() -> ProviderUsage:
 
 def fetch_antigravity() -> ProviderUsage:
     with tempfile.TemporaryDirectory(prefix="maestrix-usage-") as cwd:
-        proc = subprocess.run(["agy", "-p", "/usage", "--output-format", "json"], cwd=cwd, capture_output=True,
-                              text=True, timeout=90, stdin=subprocess.DEVNULL)
+        proc = subprocess.run([find_executable("agy") or "agy", "-p", "/usage", "--output-format", "json"], cwd=cwd,
+                              capture_output=True, text=True, timeout=90, stdin=subprocess.DEVNULL, env=agent_env())
     try:
         payload = json.loads(proc.stdout)
     except ValueError:
@@ -287,9 +331,9 @@ class UsageMonitor:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._check_installed = fetchers is None   # injected fetchers (tests) are always "installed"
         self._state: Dict[str, ProviderUsage] = {
-            pid: ProviderUsage(pid, NAMES.get(pid, pid), installed=shutil.which(EXECUTABLES.get(pid, pid)) is not None
-                               if fetchers is None else True) for pid in self.fetchers}
+            pid: ProviderUsage(pid, NAMES.get(pid, pid)) for pid in self.fetchers}
         self._due: Dict[str, float] = {pid: 0.0 for pid in self.fetchers}
         self._last: Dict[str, float] = {pid: 0.0 for pid in self.fetchers}
         self._failures: Dict[str, int] = {pid: 0 for pid in self.fetchers}
@@ -325,9 +369,6 @@ class UsageMonitor:
                     return
                 with self._lock:
                     due = max(self._due[pid], self._last[pid] + MIN_GAP_S)
-                    installed = self._state[pid].installed
-                if not installed:
-                    continue
                 if now >= due:
                     self._poll(pid, fetch)
                     with self._lock:
@@ -338,6 +379,15 @@ class UsageMonitor:
             self._wake.clear()
 
     def _poll(self, pid: str, fetch: Callable[[], ProviderUsage]) -> None:
+        if self._check_installed and find_executable(EXECUTABLES.get(pid, pid)) is None:
+            with self._lock:   # looked up again every poll: installing the CLI later is picked up without a restart
+                self._state[pid] = ProviderUsage(pid, NAMES.get(pid, pid), installed=False, fetched_at=time.time())
+                self._last[pid] = time.time()
+                self._due[pid] = time.time() + self.intervals.get(pid, 300)
+                self.loading.discard(pid)
+            if self.on_update is not None:
+                self.on_update()
+            return
         try:
             result = fetch()
             failed = result.error is not None
