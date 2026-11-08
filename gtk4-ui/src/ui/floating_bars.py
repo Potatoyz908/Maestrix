@@ -17,6 +17,7 @@ from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from maestri_canvas.constants import CANVAS_MAX_ZOOM, CANVAS_MIN_ZOOM, CANVAS_ZOOM_STEP
 from maestri_canvas.geometry import Point, Rect
+from maestri_core.agent_usage import ProviderUsage, UsageMonitor, format_reset
 from maestri_core.signals.bus import bus
 
 
@@ -384,9 +385,10 @@ class AgentActivityPopover(Gtk.Popover):
     """What the activity capsule opens: per agent kind, "N of M active" and each terminal (name, busy/idle, directory).
     Refreshed on "terminal-activity" and, only while open, every ACTIVITY_POLL_MS; both stop when it closes."""
 
-    def __init__(self, window) -> None:
+    def __init__(self, window, monitor: Optional[UsageMonitor] = None) -> None:
         super().__init__(position=Gtk.PositionType.TOP, css_classes=["maestri-activity-popover"])
         self.window = window
+        self.monitor = monitor
         self._timer = 0
         self._handler = 0
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=8, margin_bottom=8,
@@ -431,6 +433,7 @@ class AgentActivityPopover(Gtk.Popover):
             nxt = child.get_next_sibling()
             self.box.remove(child)
             child = nxt
+        self._append_usage()
         self.box.append(Gtk.Label(label="AGENT ACTIVITY", xalign=0, css_classes=["maestri-activity-title"]))
         groups = self.rows()
         if not any(terms for _l, terms in groups):
@@ -446,8 +449,64 @@ class AgentActivityPopover(Gtk.Popover):
             self.box.append(head)
             for t in terms:
                 self.box.append(self._row(t))
-        self.box.append(Gtk.Label(label="Activity = recent terminal output. Token quotas are not available.",
+        self.box.append(Gtk.Label(label="Activity = recent terminal output. Usage is read from each CLI every few minutes.",
                                   xalign=0, wrap=True, max_width_chars=40, css_classes=["maestri-activity-note"]))
+
+    def _append_usage(self) -> None:
+        head = Gtk.Box(spacing=6)
+        head.append(Gtk.Label(label="PLAN USAGE", xalign=0, hexpand=True, css_classes=["maestri-activity-title"]))
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic", has_frame=False, tooltip_text="Refresh now",
+                             css_classes=["flat", "maestri-usage-refresh"])
+        refresh.connect("clicked", lambda _b: self.monitor and self.monitor.refresh_now())
+        head.append(refresh)
+        self.box.append(head)
+        snap = self.monitor.snapshot() if self.monitor is not None else {}
+        for pid in ("claude", "codex", "antigravity"):
+            u = snap.get(pid)
+            if u is not None:
+                self.box.append(self._usage_block(u))
+
+    def _usage_block(self, u: ProviderUsage) -> Gtk.Widget:
+        block = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3, css_classes=["maestri-usage-block"])
+        title = Gtk.Box(spacing=6)
+        dot = Gtk.DrawingArea(content_width=8, content_height=8, valign=Gtk.Align.CENTER)
+        rgb = RING_COLORS.get(u.id, (0.7, 0.7, 0.75))
+        dot.set_draw_func(lambda _a, cr, w, h, c=rgb: (cr.set_source_rgb(*c), cr.arc(w / 2, h / 2, 3.5, 0, 6.2832), cr.fill()))
+        title.append(dot)
+        title.append(Gtk.Label(label=u.name, xalign=0, hexpand=True, css_classes=["maestri-activity-kind-name"]))
+        if u.plan:
+            title.append(Gtk.Label(label=u.plan, css_classes=["maestri-usage-plan"]))
+        block.append(title)
+        if not u.installed:
+            block.append(Gtk.Label(label="Not installed", xalign=0, css_classes=["maestri-activity-note"]))
+            return block
+        if not u.windows:
+            msg = "Reading usage…" if not u.error else f"Couldn't read usage: {u.error}"
+            block.append(Gtk.Label(label=msg, xalign=0, wrap=True, max_width_chars=40, css_classes=["maestri-activity-note"]))
+            return block
+        for w in u.windows:
+            block.append(self._usage_row(u.id, w))
+        if u.error:
+            block.append(Gtk.Label(label="Showing the last reading — refresh failed", xalign=0,
+                                   css_classes=["maestri-activity-note"]))
+        return block
+
+    def _usage_row(self, pid: str, w) -> Gtk.Widget:
+        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, css_classes=["maestri-usage-row"])
+        line = Gtk.Box(spacing=6)
+        line.append(Gtk.Label(label=w.label, xalign=0, hexpand=True, ellipsize=3, css_classes=["maestri-usage-label"]))
+        line.append(Gtk.Label(label=f"{w.used:.0f}%" if w.used is not None else "—", css_classes=["maestri-usage-pct"]))
+        row.append(line)
+        bar = Gtk.ProgressBar(fraction=(w.used or 0) / 100.0, css_classes=["maestri-usage-bar", pid])
+        if w.used is not None and w.used >= 90:
+            bar.add_css_class("crit")
+        elif w.used is not None and w.used >= 75:
+            bar.add_css_class("warn")
+        row.append(bar)
+        reset = format_reset(w.resets_at)
+        if reset:
+            row.append(Gtk.Label(label=reset, xalign=0, css_classes=["maestri-usage-reset"]))
+        return row
 
     def _row(self, t: dict) -> Gtk.Widget:
         dot = Gtk.Image.new_from_icon_name("maestri-circle-symbolic")
@@ -476,37 +535,64 @@ class AgentActivityPopover(Gtk.Popover):
         self.popdown()
 
 
+RING_COLORS = {"claude": (0.94, 0.45, 0.35), "codex": (0.18, 0.76, 0.62), "antigravity": (0.23, 0.58, 1.00)}
+WARN_RGB, CRIT_RGB = (1.0, 0.62, 0.04), (1.0, 0.27, 0.23)
+
+
+def usage_rgb(provider: str, used: Optional[float]) -> tuple:
+    """Provider colour, amber from 75 % consumed and red from 90 %."""
+    if used is not None and used >= 90:
+        return CRIT_RGB
+    if used is not None and used >= 75:
+        return WARN_RGB
+    return RING_COLORS.get(provider, (0.7, 0.7, 0.75))
+
+
+def usage_tooltip(snapshot: Dict[str, ProviderUsage]) -> str:
+    lines = ["Plan usage (consumed):"]
+    for pid in ("claude", "codex", "antigravity"):
+        u = snapshot.get(pid)
+        if u is None:
+            continue
+        if not u.installed:
+            lines.append(f"{u.name}: not installed")
+        elif not u.windows:
+            lines.append(f"{u.name}: {u.error or 'reading…'}")
+        else:
+            lines.append(f"{u.name}" + (f" ({u.plan})" if u.plan else "") + ": " +
+                         ", ".join(f"{w.label} {w.used:.0f}%" for w in u.windows[:2] if w.used is not None))
+    return "\n".join(lines)
+
+
 class AgentActivityRingsWidget(CairoPaintArea):
-    """Live output activity of Claude, Codex and Gemini terminals in this workspace."""
-    def __init__(self, window=None) -> None:
+    """Plan usage of Claude Code, Codex and Antigravity: each ring fills with the share of the most constrained window
+    already consumed (amber from 75 %, red from 90 %). Read automatically by maestri_core.agent_usage.UsageMonitor."""
+    def __init__(self, window=None, monitor: Optional[UsageMonitor] = None) -> None:
         super().__init__()
         self.window = window
+        self.monitor = monitor
         self.set_content_width(78)
         self.set_content_height(26)
         self.models = {
-            "claude": dict(name="Claude Code", ratio=0, active=0, total=0, color=(0.94, 0.45, 0.35), cx=15),
-            "codex": dict(name="Codex", ratio=0, active=0, total=0, color=(0.18, 0.76, 0.62), cx=39),
-            "gemini": dict(name="Gemini CLI", ratio=0, active=0, total=0, color=(0.23, 0.58, 1.00), cx=63),
+            "claude": dict(name="Claude Code", ratio=0, cx=15),
+            "codex": dict(name="Codex", ratio=0, cx=39),
+            "antigravity": dict(name="Antigravity", ratio=0, cx=63),
         }
-        self._counts = None
+        self._known = {k: False for k in self.models}
         self.refresh()
 
     def refresh(self) -> None:
-        win = self.window
-        nodes = win.document.payload.nodes if win is not None else []
-        frames = win.canvas_widget.frames if win is not None else {}
-        counts = terminal_activity_counts(nodes, frames)
-        if counts == self._counts:
-            return
-        self._counts = counts
-        for kind, (active, total) in counts.items():
-            self.models[kind].update(active=active, total=total, ratio=active / total if total else 0)
-        self.update_tooltip()
+        snap = self.monitor.snapshot() if self.monitor is not None else {}
+        for kind, m in self.models.items():
+            u = snap.get(kind)
+            peak = u.peak if u is not None else None
+            m.update(ratio=(peak or 0) / 100.0, used=peak, color=usage_rgb(kind, peak))
+            self._known[kind] = peak is not None
+        self.update_tooltip(snap)
         self.queue_draw()
 
-    def update_tooltip(self) -> None:
-        self.set_tooltip_text("Terminal activity (recent output):\n" + "\n".join(
-            f"{m['name']}: {m['active']} of {m['total']} terminals active" for m in self.models.values()))
+    def update_tooltip(self, snap=None) -> None:
+        self.set_tooltip_text(usage_tooltip(snap if snap is not None else (self.monitor.snapshot() if self.monitor else {})))
 
     def paint(self, cr, width, height) -> None:
         self._draw_func(self, cr, width, height)
@@ -522,7 +608,7 @@ class AgentActivityRingsWidget(CairoPaintArea):
 
         for m in self.models.values():
             cx = m["cx"]
-            r, g, b = m["color"]
+            r, g, b = m.get("color", RING_COLORS["claude"])
             ratio = max(0.0, min(1.0, m["ratio"]))
 
             # 1. Background ring track (translucent)
@@ -534,6 +620,10 @@ class AgentActivityRingsWidget(CairoPaintArea):
             cr.restore()
 
             if ratio == 0:
+                if m.get('used') is not None:   # known and unused: a dot, so it reads as 0 %, not as missing
+                    cr.set_source_rgba(r, g, b, 0.9)
+                    cr.arc(cx, cy, 1.6, 0, 2 * math.pi)
+                    cr.fill()
                 continue
 
             # 2. Dynamic progress arc (starting at -pi/2, top of clock)
@@ -543,7 +633,7 @@ class AgentActivityRingsWidget(CairoPaintArea):
             cr.save()
             cr.set_line_width(line_w)
             cr.set_source_rgb(r, g, b)
-            cr.arc(cx, cy, radius, start_angle, end_angle)
+            cr.arc(cx, cy, radius, start_angle, max(end_angle, start_angle + 0.12))   # a sliver for any use at all
             cr.stroke()
 
             # 3. Inner core dot
@@ -643,6 +733,21 @@ popover.maestri-activity-popover label { color: #ececf0; }
 .maestri-activity-dot.idle { color: alpha(currentColor, 0.35); }
 .maestri-activity-state.exited, .maestri-activity-dot.exited { color: #FF453A; }
 .maestri-activity-empty, .maestri-activity-note { font-size: 11px; opacity: 0.6; margin: 4px; }
+.maestri-usage-block { margin: 2px 4px 8px 4px; }
+.maestri-activity-kind-name { font-weight: 600; font-size: 12px; }
+.maestri-usage-plan { font-size: 10px; padding: 1px 7px; border-radius: 8px; background-color: rgba(255, 255, 255, 0.10); opacity: 0.85; }
+.maestri-usage-label { font-size: 11px; opacity: 0.85; }
+.maestri-usage-pct { font-size: 11px; font-weight: 600; font-feature-settings: "tnum"; }
+.maestri-usage-reset { font-size: 10px; opacity: 0.55; }
+.maestri-usage-row { margin-top: 2px; }
+progressbar.maestri-usage-bar trough { min-height: 6px; background-color: rgba(255, 255, 255, 0.12); border-radius: 3px; border: none; }
+progressbar.maestri-usage-bar progress { min-height: 6px; border-radius: 3px; border: none; background-image: none; background-color: #8e8e93; }
+progressbar.maestri-usage-bar.claude progress { background-color: #F07359; }
+progressbar.maestri-usage-bar.codex progress { background-color: #2EC29E; }
+progressbar.maestri-usage-bar.antigravity progress { background-color: #3B94FF; }
+progressbar.maestri-usage-bar.warn progress { background-color: #FF9F0A; }
+progressbar.maestri-usage-bar.crit progress { background-color: #FF453A; }
+button.maestri-usage-refresh { min-width: 22px; min-height: 22px; padding: 0; color: #ececf0; }
 .maestri-zoom-preset label { font-feature-settings: "tnum"; }
 .maestri-minimap-empty { opacity: 0.6; font-size: 12px; }
 """
@@ -816,15 +921,17 @@ class CanvasBottomRightControls(Gtk.Box):
 
         # Capsule 2: agent rings (Cairo)
         self.pill_agents = self._capsule()
-        self.rings_widget = AgentActivityRingsWidget(window)
+        self.usage = UsageMonitor(on_update=lambda: GLib.idle_add(self._usage_updated))
+        self.rings_widget = AgentActivityRingsWidget(window, self.usage)
         self.rings_widget.set_valign(Gtk.Align.CENTER)
         self.rings_widget.set_margin_start(4)
         self.rings_widget.set_margin_end(4)
-        self.activity_popover = AgentActivityPopover(window)
+        self.activity_popover = AgentActivityPopover(window, self.usage)
         self.btn_activity = Gtk.MenuButton(child=self.rings_widget, popover=self.activity_popover, direction=Gtk.ArrowType.UP,
                                            css_classes=["maestri-capsule-btn"], valign=Gtk.Align.CENTER)
         self.pill_agents.append(self.btn_activity)
         self.pill_agents.set_tooltip_text(self.rings_widget.get_tooltip_text())
+        self.usage.start()
 
         # Capsule 3: minimap
         self.pill_minimap = self._capsule()
@@ -938,9 +1045,14 @@ class CanvasBottomRightControls(Gtk.Box):
     def _on_viewport_changed(self, _cw, _x, _y, zoom) -> None:
         self._update_zoom_label(zoom)
 
-    def _on_tick(self, _w, _clock) -> bool:
+    def _usage_updated(self) -> bool:
         self.rings_widget.refresh()
         self.pill_agents.set_tooltip_text(self.rings_widget.get_tooltip_text())
+        if self.activity_popover.get_visible():
+            self.activity_popover.rebuild()
+        return GLib.SOURCE_REMOVE
+
+    def _on_tick(self, _w, _clock) -> bool:
         z = self.cw.viewport.zoom
         if self._shown_zoom is None or abs(z - self._shown_zoom) > 1e-9:
             self._update_zoom_label(z)   # zoom changed without a signal (reset_zoom, focus_on, workspace switch)
@@ -992,6 +1104,7 @@ class CanvasBottomRightControls(Gtk.Box):
         self.btn_minimap.popup()
 
     def _cleanup(self) -> None:
+        self.usage.stop()
         self.activity_popover.cleanup()
         if self._tick_id:
             self.remove_tick_callback(self._tick_id)
