@@ -161,3 +161,12 @@ a.card:hover { transform: translateY(-3px); border-color: var(--cyan); backgroun
   .split { grid-template-columns: 1fr; }
   .doc-title { font-size: 30px; }
 }
+
+/* star button + counters */
+.gh-stars { margin-left: 18px; display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 14px; white-space: nowrap; }
+.gh-stars:hover { text-decoration: none; border-color: #168bf1; }
+.gh-stars .star { color: #71dcec; }
+.gh-stars b { font-weight: 600; color: var(--muted); }
+.counters { margin-top: 14px; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.counters img { height: 20px; vertical-align: middle; }
+@media (max-width: 900px) { .gh-stars { margin-left: auto; padding: 4px 9px; font-size: 13px; } }

@@ -17,6 +17,20 @@
     block.appendChild(b);
   });
 
+  // --- live GitHub star count (cached for 10 min to stay under the API rate limit) ---
+  var starEl = document.getElementById("gh-stars");
+  if (starEl) {
+    var fmt = function (n) { return n >= 1000 ? (n / 1000).toFixed(1).replace(".0", "") + "k" : String(n); };
+    var cached = null;
+    try { cached = JSON.parse(sessionStorage.getItem("mx-stars") || "null"); } catch (e) {}
+    if (cached && Date.now() - cached.t < 600000) starEl.textContent = fmt(cached.n);
+    else fetch("https://api.github.com/repos/Potatoyz908/Maestrix").then(function (r) { return r.json(); }).then(function (j) {
+      if (typeof j.stargazers_count !== "number") return;
+      starEl.textContent = fmt(j.stargazers_count);
+      try { sessionStorage.setItem("mx-stars", JSON.stringify({ n: j.stargazers_count, t: Date.now() })); } catch (e) {}
+    }).catch(function () {});
+  }
+
   // --- table of contents: highlight the current section ---
   var tocLinks = Array.prototype.slice.call(document.querySelectorAll(".toc a"));
   if (tocLinks.length && "IntersectionObserver" in window) {

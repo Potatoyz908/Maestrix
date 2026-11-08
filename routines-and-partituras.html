@@ -15,6 +15,7 @@
   <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
   <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
   <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+  <a class="gh-stars" href="https://github.com/Potatoyz908/Maestrix" aria-label="Star Maestrix on GitHub"><span class="star">★</span> Star <b id="gh-stars">–</b></a>
 </header>
 <div class="layout">
 <aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
@@ -43,10 +44,10 @@
 <div class="doc-shell"><main class="doc"><h1 class="doc-title">Routines and partituras</h1><p class="doc-sub">Schedule prompts for agents and save or reapply a whole arrangement of agents.</p><article><h2 id="routines">Routines<a class="headerlink" href="#routines" title="Permanent link">#</a></h2>
 <p>A routine is a command or prompt sent to a terminal on a schedule: a recurring check, a reminder, a nightly task. Routines live in <code>~/.open-maestri/routines.json</code> and run while the server is up.</p>
 <div class="hl"><pre><span></span><code>omaestri<span class="w"> </span>routine<span class="w"> </span>list
-omaestri<span class="w"> </span>routine<span class="w"> </span>show<span class="w"> </span><span class="s2">"Standup"</span>
-omaestri<span class="w"> </span>routine<span class="w"> </span>create<span class="w"> </span><span class="s2">"Standup"</span><span class="w"> </span>--command<span class="w"> </span><span class="s2">"summarize yesterday's commits"</span><span class="w"> </span>--every<span class="w"> </span>30m<span class="w"> </span>--terminal<span class="w"> </span><span class="s2">"Planner"</span><span class="w"> </span><span class="o">[</span>--disabled<span class="o">]</span>
-omaestri<span class="w"> </span>routine<span class="w"> </span>edit<span class="w"> </span><span class="s2">"Standup"</span><span class="w"> </span><span class="o">[</span>--name<span class="w"> </span><span class="s2">"New"</span><span class="o">]</span><span class="w"> </span><span class="o">[</span>--command<span class="w"> </span><span class="s2">"..."</span><span class="o">]</span><span class="w"> </span><span class="o">[</span>--every<span class="w"> </span>1h<span class="o">]</span><span class="w"> </span><span class="o">[</span>--terminal<span class="w"> </span><span class="s2">"Name"</span><span class="o">]</span>
-omaestri<span class="w"> </span>routine<span class="w"> </span>enable<span class="p">|</span>disable<span class="p">|</span>run<span class="p">|</span>delete<span class="w"> </span><span class="s2">"Standup"</span><span class="w">      </span><span class="c1"># run = run it now</span>
+omaestri<span class="w"> </span>routine<span class="w"> </span>show<span class="w"> </span><span class="s2">&quot;Standup&quot;</span>
+omaestri<span class="w"> </span>routine<span class="w"> </span>create<span class="w"> </span><span class="s2">&quot;Standup&quot;</span><span class="w"> </span>--command<span class="w"> </span><span class="s2">&quot;summarize yesterday&#39;s commits&quot;</span><span class="w"> </span>--every<span class="w"> </span>30m<span class="w"> </span>--terminal<span class="w"> </span><span class="s2">&quot;Planner&quot;</span><span class="w"> </span><span class="o">[</span>--disabled<span class="o">]</span>
+omaestri<span class="w"> </span>routine<span class="w"> </span>edit<span class="w"> </span><span class="s2">&quot;Standup&quot;</span><span class="w"> </span><span class="o">[</span>--name<span class="w"> </span><span class="s2">&quot;New&quot;</span><span class="o">]</span><span class="w"> </span><span class="o">[</span>--command<span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="o">]</span><span class="w"> </span><span class="o">[</span>--every<span class="w"> </span>1h<span class="o">]</span><span class="w"> </span><span class="o">[</span>--terminal<span class="w"> </span><span class="s2">&quot;Name&quot;</span><span class="o">]</span>
+omaestri<span class="w"> </span>routine<span class="w"> </span>enable<span class="p">|</span>disable<span class="p">|</span>run<span class="p">|</span>delete<span class="w"> </span><span class="s2">&quot;Standup&quot;</span><span class="w">      </span><span class="c1"># run = run it now</span>
 </code></pre></div>
 
 <p><code>--every</code> accepts <code>45s</code>, <code>30m</code>, <code>2h</code>, <code>1h30m</code> or a bare number of minutes.</p>
@@ -54,23 +55,24 @@ omaestri<span class="w"> </span>routine<span class="w"> </span>enable<span class
 <h2 id="partituras">Partituras<a class="headerlink" href="#partituras" title="Permanent link">#</a></h2>
 <p>A <strong>partitura</strong> is a saved arrangement: the agents on the canvas, their roles and their connections. Save the team that works well for one kind of task and apply it again in any workspace.</p>
 <div class="hl"><pre><span></span><code>omaestri<span class="w"> </span>partitura<span class="w"> </span>list
-omaestri<span class="w"> </span>partitura<span class="w"> </span>create<span class="w"> </span><span class="s2">"Review team"</span><span class="w"> </span><span class="o">[</span><span class="s2">"Agent"</span><span class="w"> </span>...<span class="o">]</span><span class="w">    </span><span class="c1"># save you and your team (alias: save)</span>
-omaestri<span class="w"> </span>partitura<span class="w"> </span>update<span class="w"> </span><span class="s2">"Review team"</span><span class="w"> </span><span class="o">[</span><span class="s2">"Agent"</span><span class="w"> </span>...<span class="o">]</span>
-omaestri<span class="w"> </span>partitura<span class="w"> </span>insert<span class="w"> </span><span class="s2">"Review team"</span><span class="w"> </span><span class="o">[</span>--workspace<span class="w"> </span>W<span class="o">]</span><span class="w"> </span><span class="o">[</span>--at<span class="w"> </span>X,Y<span class="o">]</span><span class="w">    </span><span class="c1"># alias: apply</span>
-omaestri<span class="w"> </span>partitura<span class="w"> </span>delete<span class="w"> </span><span class="s2">"Review team"</span>
+omaestri<span class="w"> </span>partitura<span class="w"> </span>create<span class="w"> </span><span class="s2">&quot;Review team&quot;</span><span class="w"> </span><span class="o">[</span><span class="s2">&quot;Agent&quot;</span><span class="w"> </span>...<span class="o">]</span><span class="w">    </span><span class="c1"># save you and your team (alias: save)</span>
+omaestri<span class="w"> </span>partitura<span class="w"> </span>update<span class="w"> </span><span class="s2">&quot;Review team&quot;</span><span class="w"> </span><span class="o">[</span><span class="s2">&quot;Agent&quot;</span><span class="w"> </span>...<span class="o">]</span>
+omaestri<span class="w"> </span>partitura<span class="w"> </span>insert<span class="w"> </span><span class="s2">&quot;Review team&quot;</span><span class="w"> </span><span class="o">[</span>--workspace<span class="w"> </span>W<span class="o">]</span><span class="w"> </span><span class="o">[</span>--at<span class="w"> </span>X,Y<span class="o">]</span><span class="w">    </span><span class="c1"># alias: apply</span>
+omaestri<span class="w"> </span>partitura<span class="w"> </span>delete<span class="w"> </span><span class="s2">&quot;Review team&quot;</span>
 </code></pre></div>
 
 <p><code>create</code> saves the calling terminal and the agents connected to it, or the agents you name.</p>
 <h2 id="workspace-commands">Workspace commands<a class="headerlink" href="#workspace-commands" title="Permanent link">#</a></h2>
 <p>Agents can also manage workspaces:</p>
 <div class="hl"><pre><span></span><code>omaestri<span class="w"> </span>workspace<span class="w"> </span>list
-omaestri<span class="w"> </span>workspace<span class="w"> </span>create<span class="w"> </span><span class="s2">"New project"</span><span class="w"> </span>--dir<span class="w"> </span>~/code/new-project
-omaestri<span class="w"> </span>workspace<span class="w"> </span>rename<span class="w"> </span><span class="s2">"New project"</span><span class="w"> </span><span class="s2">"Project"</span>
-omaestri<span class="w"> </span>workspace<span class="w"> </span>move<span class="w">   </span><span class="s2">"Project"</span><span class="w"> </span>--group<span class="w"> </span><span class="s2">"Group name"</span><span class="w">   </span><span class="c1"># or --root</span>
-omaestri<span class="w"> </span>workspace<span class="w"> </span>unload<span class="w"> </span><span class="s2">"Project"</span>
+omaestri<span class="w"> </span>workspace<span class="w"> </span>create<span class="w"> </span><span class="s2">&quot;New project&quot;</span><span class="w"> </span>--dir<span class="w"> </span>~/code/new-project
+omaestri<span class="w"> </span>workspace<span class="w"> </span>rename<span class="w"> </span><span class="s2">&quot;New project&quot;</span><span class="w"> </span><span class="s2">&quot;Project&quot;</span>
+omaestri<span class="w"> </span>workspace<span class="w"> </span>move<span class="w">   </span><span class="s2">&quot;Project&quot;</span><span class="w"> </span>--group<span class="w"> </span><span class="s2">&quot;Group name&quot;</span><span class="w">   </span><span class="c1"># or --root</span>
+omaestri<span class="w"> </span>workspace<span class="w"> </span>unload<span class="w"> </span><span class="s2">&quot;Project&quot;</span>
 </code></pre></div></article><nav class="pager"><a class="prev" href="floors.html"><span>Previous</span>Floors</a><a class="next" href="files-notes-git.html"><span>Next</span>Files, notes and Git</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#routines">Routines</a><a class="toc-l2" href="#partituras">Partituras</a><a class="toc-l2" href="#workspace-commands">Workspace commands</a></aside></div>
 </div>
-<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.
+<div class="counters"><a href="https://github.com/Potatoyz908/Maestrix/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Potatoyz908/Maestrix?style=flat-square&label=stars&color=168bf1&labelColor=151c2e"></a> <img alt="Visits" src="https://hits.sh/potatoyz908.github.io/Maestrix.svg?style=flat-square&label=visits&color=9354e8&labelColor=151c2e"></div></footer>
 <script src="assets/site.js"></script>
 </body>
 </html>

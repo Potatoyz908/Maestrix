@@ -15,6 +15,8 @@
   <img src="https://img.shields.io/badge/platform-Linux%20(Ubuntu%20%2F%20Debian)-orange?style=flat-square" alt="Platform: Linux">
   <img src="https://img.shields.io/badge/ui-GTK%204%20%2B%20Cairo-blue?style=flat-square" alt="GTK 4 + Cairo">
   <img src="https://img.shields.io/badge/core-Swift%206-F05138?style=flat-square" alt="Swift 6">
+  <a href="https://github.com/Potatoyz908/Maestrix/stargazers"><img src="https://img.shields.io/github/stars/Potatoyz908/Maestrix?style=flat-square&color=168bf1" alt="GitHub stars"></a>
+  <img src="https://hits.sh/github.com/Potatoyz908/Maestrix.svg?style=flat-square&label=visits&color=9354e8" alt="Visits">
   <a href="https://github.com/Potatoyz908/Maestrix/actions/workflows/ci.yml"><img src="https://github.com/Potatoyz908/Maestrix/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 

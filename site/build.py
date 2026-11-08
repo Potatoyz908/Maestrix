@@ -135,12 +135,14 @@ def page_html(page: dict, pages: list[dict], neighbours: tuple) -> str:
   <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
   <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
   <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="{REPO}">GitHub</a></nav>
+  <a class="gh-stars" href="{REPO}" aria-label="Star Maestrix on GitHub"><span class="star">★</span> Star <b id="gh-stars">–</b></a>
 </header>
 <div class="layout">
 <aside class="sidebar" id="sidebar">{nav_html(pages, page["slug"])}</aside>
 {main}
 </div>
-<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="{REPO}">Source on GitHub</a>.</footer>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="{REPO}">Source on GitHub</a>.
+<div class="counters"><a href="{REPO}/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Potatoyz908/Maestrix?style=flat-square&label=stars&color=168bf1&labelColor=151c2e"></a> <img alt="Visits" src="https://hits.sh/potatoyz908.github.io/Maestrix.svg?style=flat-square&label=visits&color=9354e8&labelColor=151c2e"></div></footer>
 <script src="assets/site.js"></script>
 </body>
 </html>

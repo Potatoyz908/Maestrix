@@ -15,6 +15,7 @@
   <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
   <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
   <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+  <a class="gh-stars" href="https://github.com/Potatoyz908/Maestrix" aria-label="Star Maestrix on GitHub"><span class="star">★</span> Star <b id="gh-stars">–</b></a>
 </header>
 <div class="layout">
 <aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
@@ -43,8 +44,8 @@
 <div class="doc-shell"><main class="doc"><h1 class="doc-title">Agent communication</h1><p class="doc-sub">How connected agents delegate work to each other, and how Maestro Mode lets one agent assemble a team.</p><article><h2 id="talking-through-ropes">Talking through ropes<a class="headerlink" href="#talking-through-ropes" title="Permanent link">#</a></h2>
 <p>Connect two terminals and each becomes visible to the other. From inside a terminal:</p>
 <div class="hl"><pre><span></span><code>omaestri<span class="w"> </span>list<span class="w">                               </span><span class="c1"># who and what is connected to me</span>
-omaestri<span class="w"> </span>ask<span class="w"> </span><span class="s2">"Reviewer"</span><span class="w"> </span><span class="s2">"Review my PR"</span><span class="w">      </span><span class="c1"># send a prompt and wait for the reply</span>
-omaestri<span class="w"> </span>check<span class="w"> </span><span class="s2">"Builder"</span><span class="w">                    </span><span class="c1"># read the other agent's current screen</span>
+omaestri<span class="w"> </span>ask<span class="w"> </span><span class="s2">&quot;Reviewer&quot;</span><span class="w"> </span><span class="s2">&quot;Review my PR&quot;</span><span class="w">      </span><span class="c1"># send a prompt and wait for the reply</span>
+omaestri<span class="w"> </span>check<span class="w"> </span><span class="s2">&quot;Builder&quot;</span><span class="w">                    </span><span class="c1"># read the other agent&#39;s current screen</span>
 </code></pre></div>
 
 <ul>
@@ -55,11 +56,11 @@ omaestri<span class="w"> </span>check<span class="w"> </span><span class="s2">"B
 <p>Connections are the access control. A terminal that is not connected to another cannot ask or check it.</p>
 <h2 id="notes-as-shared-memory">Notes as shared memory<a class="headerlink" href="#notes-as-shared-memory" title="Permanent link">#</a></h2>
 <p>A note connected to a terminal is readable and writable by that agent:</p>
-<div class="hl"><pre><span></span><code>omaestri<span class="w"> </span>note<span class="w"> </span>create<span class="w"> </span><span class="s2">"initial content"</span><span class="w">         </span><span class="c1"># new note, linked to this terminal</span>
-omaestri<span class="w"> </span>note<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s2">"Spec"</span><span class="w">                      </span><span class="c1"># whole note</span>
-omaestri<span class="w"> </span>note<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s2">"Spec"</span><span class="w"> </span><span class="m">10</span><span class="w"> </span><span class="m">20</span><span class="w">                </span><span class="c1"># 20 lines starting at line 10</span>
-omaestri<span class="w"> </span>note<span class="w"> </span>write<span class="w"> </span><span class="s2">"Spec"</span><span class="w"> </span><span class="s2">"new content"</span><span class="w">       </span><span class="c1"># replace everything</span>
-omaestri<span class="w"> </span>note<span class="w"> </span>edit<span class="w"> </span><span class="s2">"Spec"</span><span class="w"> </span><span class="s2">"old text"</span><span class="w"> </span><span class="s2">"new text"</span><span class="w">   </span><span class="c1"># replace a substring</span>
+<div class="hl"><pre><span></span><code>omaestri<span class="w"> </span>note<span class="w"> </span>create<span class="w"> </span><span class="s2">&quot;initial content&quot;</span><span class="w">         </span><span class="c1"># new note, linked to this terminal</span>
+omaestri<span class="w"> </span>note<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s2">&quot;Spec&quot;</span><span class="w">                      </span><span class="c1"># whole note</span>
+omaestri<span class="w"> </span>note<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s2">&quot;Spec&quot;</span><span class="w"> </span><span class="m">10</span><span class="w"> </span><span class="m">20</span><span class="w">                </span><span class="c1"># 20 lines starting at line 10</span>
+omaestri<span class="w"> </span>note<span class="w"> </span>write<span class="w"> </span><span class="s2">&quot;Spec&quot;</span><span class="w"> </span><span class="s2">&quot;new content&quot;</span><span class="w">       </span><span class="c1"># replace everything</span>
+omaestri<span class="w"> </span>note<span class="w"> </span>edit<span class="w"> </span><span class="s2">&quot;Spec&quot;</span><span class="w"> </span><span class="s2">&quot;old text&quot;</span><span class="w"> </span><span class="s2">&quot;new text&quot;</span><span class="w">   </span><span class="c1"># replace a substring</span>
 </code></pre></div>
 
 <h2 id="portals">Portals<a class="headerlink" href="#portals" title="Permanent link">#</a></h2>
@@ -109,7 +110,8 @@ omaestri<span class="w"> </span>note<span class="w"> </span>edit<span class="w">
 <p>If you also have the official Maestri skills (<code>maestri</code>, <code>maestri-manager</code>) installed, an agent may read those first. Their CLI is named <code>maestri</code>, not <code>omaestri</code>. If an agent tries the wrong CLI, tell it to use <code>omaestri</code> or <code>"$MAESTRI_CLI"</code>.</p>
 </div></article><nav class="pager"><a class="prev" href="terminals-and-agents.html"><span>Previous</span>Terminals and agents</a><a class="next" href="floors.html"><span>Next</span>Floors</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#talking-through-ropes">Talking through ropes</a><a class="toc-l2" href="#notes-as-shared-memory">Notes as shared memory</a><a class="toc-l2" href="#portals">Portals</a><a class="toc-l2" href="#maestro-mode">Maestro Mode</a><a class="toc-l3" href="#skills">Skills</a></aside></div>
 </div>
-<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.
+<div class="counters"><a href="https://github.com/Potatoyz908/Maestrix/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Potatoyz908/Maestrix?style=flat-square&label=stars&color=168bf1&labelColor=151c2e"></a> <img alt="Visits" src="https://hits.sh/potatoyz908.github.io/Maestrix.svg?style=flat-square&label=visits&color=9354e8&labelColor=151c2e"></div></footer>
 <script src="assets/site.js"></script>
 </body>
 </html>
