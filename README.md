@@ -19,6 +19,7 @@
 </p>
 
 <p align="center">
+  <a href="https://potatoyz908.github.io/Maestrix/">Documentation</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#how-it-works">How It Works</a> &middot;
   <a href="#features">Features</a> &middot;
@@ -41,6 +42,8 @@ Maestrix is a **canvas-based orchestration layer** for the era of AI agents. It 
 Place terminals, agents, Markdown notes, file browsers, and web browsers on an infinite spatial canvas. Connect them with physics-based ropes. Let agents talk to each other through the `omaestri` CLI, without you acting as the human router between windows.
 
 > When several coding agents run at the same time, the developer becomes the messenger between terminals. Maestrix removes that friction.
+
+Full documentation: **[potatoyz908.github.io/Maestrix](https://potatoyz908.github.io/Maestrix/)**.
 
 Maestrix is the **native Linux version** (GTK 4 + Cairo, Swift core) of [OpenMaestri for macOS](https://github.com/zlh-428/open-maestri). The [original Maestri](https://maestriapp.com) is the reference for concept and interface.
 

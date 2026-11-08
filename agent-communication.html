@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent communication · Maestrix</title>
+<meta name="description" content="How connected agents delegate work to each other, and how Maestro Mode lets one agent assemble a team.">
+<meta name="theme-color" content="#0c0f1b">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="is-doc">
+<header class="topbar">
+  <button class="menu-btn" aria-label="Toggle navigation" id="menu-btn">☰</button>
+  <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
+  <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+</header>
+<div class="layout">
+<aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
+<a href="getting-started.html">Getting started</a>
+<a href="concepts.html">How it works</a>
+</div>
+<div class="nav-group"><div class="nav-title">Guide</div>
+<a href="canvas-and-nodes.html">Canvas and nodes</a>
+<a href="terminals-and-agents.html">Terminals and agents</a>
+<a class="active" href="agent-communication.html">Agent communication</a>
+<a href="floors.html">Floors</a>
+<a href="routines-and-partituras.html">Routines and partituras</a>
+<a href="files-notes-git.html">Files, notes and Git</a>
+<a href="remote-ssh.html">Remote SSH</a>
+<a href="themes-and-preferences.html">Themes and preferences</a>
+</div>
+<div class="nav-group"><div class="nav-title">Reference</div>
+<a href="cli-reference.html">CLI reference</a>
+<a href="configuration.html">Configuration</a>
+<a href="troubleshooting.html">Troubleshooting</a>
+</div>
+<div class="nav-group"><div class="nav-title">Project</div>
+<a href="development.html">Development</a>
+<a href="contributing.html">Contributing and credits</a>
+</div></aside>
+<div class="doc-shell"><main class="doc"><h1 class="doc-title">Agent communication</h1><p class="doc-sub">How connected agents delegate work to each other, and how Maestro Mode lets one agent assemble a team.</p><article><h2 id="talking-through-ropes">Talking through ropes<a class="headerlink" href="#talking-through-ropes" title="Permanent link">#</a></h2>
+<p>Connect two terminals and each becomes visible to the other. From inside a terminal:</p>
+<div class="hl"><pre><span></span><code>omaestri<span class="w"> </span>list<span class="w">                               </span><span class="c1"># who and what is connected to me</span>
+omaestri<span class="w"> </span>ask<span class="w"> </span><span class="s2">&quot;Reviewer&quot;</span><span class="w"> </span><span class="s2">&quot;Review my PR&quot;</span><span class="w">      </span><span class="c1"># send a prompt and wait for the reply</span>
+omaestri<span class="w"> </span>check<span class="w"> </span><span class="s2">&quot;Builder&quot;</span><span class="w">                    </span><span class="c1"># read the other agent&#39;s current screen</span>
+</code></pre></div>
+
+<ul>
+<li><strong><code>ask</code></strong> types the prompt into the target terminal, waits until the agent goes idle, and prints what it answered. If your tool's timeout expires first, do not send the prompt again: use <code>check</code> to see progress, then wait.</li>
+<li><strong><code>check</code></strong> reads the target's output without interrupting it. An optional line count limits it: <code>omaestri check "Builder" 40</code>.</li>
+<li><strong><code>list</code></strong> prints the terminals, notes and portals connected to the caller. Always run it first to get the exact names.</li>
+</ul>
+<p>Connections are the access control. A terminal that is not connected to another cannot ask or check it.</p>
+<h2 id="notes-as-shared-memory">Notes as shared memory<a class="headerlink" href="#notes-as-shared-memory" title="Permanent link">#</a></h2>
+<p>A note connected to a terminal is readable and writable by that agent:</p>
+<div class="hl"><pre><span></span><code>omaestri<span class="w"> </span>note<span class="w"> </span>create<span class="w"> </span><span class="s2">&quot;initial content&quot;</span><span class="w">         </span><span class="c1"># new note, linked to this terminal</span>
+omaestri<span class="w"> </span>note<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s2">&quot;Spec&quot;</span><span class="w">                      </span><span class="c1"># whole note</span>
+omaestri<span class="w"> </span>note<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s2">&quot;Spec&quot;</span><span class="w"> </span><span class="m">10</span><span class="w"> </span><span class="m">20</span><span class="w">                </span><span class="c1"># 20 lines starting at line 10</span>
+omaestri<span class="w"> </span>note<span class="w"> </span>write<span class="w"> </span><span class="s2">&quot;Spec&quot;</span><span class="w"> </span><span class="s2">&quot;new content&quot;</span><span class="w">       </span><span class="c1"># replace everything</span>
+omaestri<span class="w"> </span>note<span class="w"> </span>edit<span class="w"> </span><span class="s2">&quot;Spec&quot;</span><span class="w"> </span><span class="s2">&quot;old text&quot;</span><span class="w"> </span><span class="s2">&quot;new text&quot;</span><span class="w">   </span><span class="c1"># replace a substring</span>
+</code></pre></div>
+
+<h2 id="portals">Portals<a class="headerlink" href="#portals" title="Permanent link">#</a></h2>
+<p>Agents can drive a connected browser portal: navigate, take a snapshot of the page structure with element references (<code>@e1</code>), click, fill forms, press keys, scroll, take screenshots and evaluate JavaScript. See <a href="cli-reference.html#portals">Portal commands</a>.</p>
+<h2 id="maestro-mode">Maestro Mode<a class="headerlink" href="#maestro-mode" title="Permanent link">#</a></h2>
+<p>Maestro Mode turns a terminal into a <strong>lead</strong> that can build its own team. Enable it with the <strong>Maestro</strong> toggle when you create the terminal (or edit it later).</p>
+<p>A Maestro terminal can:</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>omaestri recruit "Name" --preset "Claude Code" --role "Reviewer"</code></td>
+<td>Create a new agent terminal on the canvas and connect it</td>
+</tr>
+<tr>
+<td><code>omaestri connect "A" "B"</code></td>
+<td>Wire two existing terminals together</td>
+</tr>
+<tr>
+<td><code>omaestri dismiss "Name"</code></td>
+<td>Stop a recruited terminal and remove it</td>
+</tr>
+<tr>
+<td><code>omaestri role …</code>, <code>omaestri preset list</code></td>
+<td>Manage roles and see the available presets</td>
+</tr>
+</tbody>
+</table>
+<p>Recruiting is refused when an agent with that name already exists, unless you pass <code>--replace</code>. Commands other than from a Maestro terminal answer <em>"this terminal is not in Maestro mode"</em>.</p>
+<p>The usual flow the lead follows:</p>
+<ol>
+<li><code>omaestri list</code> to see whether a teammate already covers the job.</li>
+<li><code>omaestri preset list</code> and <code>omaestri role list</code> to pick a preset and a role.</li>
+<li><code>omaestri recruit "Name" --preset … --role …</code>.</li>
+<li><code>omaestri ask "Name" "the task"</code> and read the reply, or <code>omaestri check "Name"</code> to follow progress.</li>
+<li><code>omaestri dismiss "Name"</code> when the work is done.</li>
+</ol>
+<h3 id="skills">Skills<a class="headerlink" href="#skills" title="Permanent link">#</a></h3>
+<p>For agents to know all this without being told, Maestrix installs skill files (<code>open-maestri</code>, <code>open-maestri-manager</code>, <code>open-maestri-portal</code>, <code>open-maestri-routines</code>, <code>open-maestri-workspace</code>) into the skill folders of the agents you use, for example <code>~/.claude/skills</code> and <code>~/.gemini/antigravity-cli/skills</code>. The server refreshes them at start when their content changed.</p>
+<div class="admonition note">
+<p class="admonition-title">Skills from the macOS Maestri</p>
+<p>If you also have the official Maestri skills (<code>maestri</code>, <code>maestri-manager</code>) installed, an agent may read those first. Their CLI is named <code>maestri</code>, not <code>omaestri</code>. If an agent tries the wrong CLI, tell it to use <code>omaestri</code> or <code>"$MAESTRI_CLI"</code>.</p>
+</div></article><nav class="pager"><a class="prev" href="terminals-and-agents.html"><span>Previous</span>Terminals and agents</a><a class="next" href="floors.html"><span>Next</span>Floors</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#talking-through-ropes">Talking through ropes</a><a class="toc-l2" href="#notes-as-shared-memory">Notes as shared memory</a><a class="toc-l2" href="#portals">Portals</a><a class="toc-l2" href="#maestro-mode">Maestro Mode</a><a class="toc-l3" href="#skills">Skills</a></aside></div>
+</div>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

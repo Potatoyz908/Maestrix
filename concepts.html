@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How it works · Maestrix</title>
+<meta name="description" content="The processes behind Maestrix, who owns what, and how agents reach each other.">
+<meta name="theme-color" content="#0c0f1b">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="is-doc">
+<header class="topbar">
+  <button class="menu-btn" aria-label="Toggle navigation" id="menu-btn">☰</button>
+  <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
+  <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+</header>
+<div class="layout">
+<aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
+<a href="getting-started.html">Getting started</a>
+<a class="active" href="concepts.html">How it works</a>
+</div>
+<div class="nav-group"><div class="nav-title">Guide</div>
+<a href="canvas-and-nodes.html">Canvas and nodes</a>
+<a href="terminals-and-agents.html">Terminals and agents</a>
+<a href="agent-communication.html">Agent communication</a>
+<a href="floors.html">Floors</a>
+<a href="routines-and-partituras.html">Routines and partituras</a>
+<a href="files-notes-git.html">Files, notes and Git</a>
+<a href="remote-ssh.html">Remote SSH</a>
+<a href="themes-and-preferences.html">Themes and preferences</a>
+</div>
+<div class="nav-group"><div class="nav-title">Reference</div>
+<a href="cli-reference.html">CLI reference</a>
+<a href="configuration.html">Configuration</a>
+<a href="troubleshooting.html">Troubleshooting</a>
+</div>
+<div class="nav-group"><div class="nav-title">Project</div>
+<a href="development.html">Development</a>
+<a href="contributing.html">Contributing and credits</a>
+</div></aside>
+<div class="doc-shell"><main class="doc"><h1 class="doc-title">How it works</h1><p class="doc-sub">The processes behind Maestrix, who owns what, and how agents reach each other.</p><article><h2 id="the-three-parts">The three parts<a class="headerlink" href="#the-three-parts" title="Permanent link">#</a></h2>
+<div class="hl"><pre><span></span><code>┌──────────────────────────────┐        ┌────────────────────────────────────┐
+│  GTK 4 + Cairo interface     │  REST  │  Swift server                      │
+│  canvas, ropes, terminals    │◄──────►│  workspaces, terminals (PTY),      │
+│  (VTE), notes, files,        │  WS    │  connections, floors, routines,    │
+│  portals (WebKitGTK)         │        │  SSH                               │
+└──────────────────────────────┘        └──────────────┬─────────────────────┘
+                                                       │ Unix socket + HTTP
+                                                       ▼
+                                     ┌─────────────────────────────────────┐
+                                     │  omaestri (CLI) inside each         │
+                                     │  terminal: list · ask · check · …   │
+                                     └─────────────────────────────────────┘
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>Technology</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Interface</td>
+<td>Python, GTK 4, Cairo, VTE, WebKitGTK</td>
+<td>Draws the canvas and ropes, shows terminals, notes, files and portals, runs dialogs and preferences.</td>
+</tr>
+<tr>
+<td>Server</td>
+<td>Swift (<code>open-maestri-server</code>)</td>
+<td>Owns shells (PTYs), stores workspaces, applies connection permissions, runs floors, routines and SSH.</td>
+</tr>
+<tr>
+<td>CLI</td>
+<td>Swift (<code>omaestri</code>)</td>
+<td>Runs inside terminals. Sends commands to the server, which routes them to other terminals.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-server-owns-the-shells">The server owns the shells<a class="headerlink" href="#the-server-owns-the-shells" title="Permanent link">#</a></h2>
+<p>A terminal on the canvas is a view of a PTY that <strong>belongs to the server</strong>. The interface connects to it over a WebSocket and the server replays the saved screen on every connection. Consequences:</p>
+<ul>
+<li>Switching workspaces, or closing and reopening the window, does not kill a running shell or an agent.</li>
+<li>Terminal history survives restarts of the interface.</li>
+<li>If the server itself restarts, shells are gone. Maestrix then relaunches agents on their last conversation. See <a href="terminals-and-agents.html#resuming-a-conversation">Terminals and agents</a>.</li>
+</ul>
+<h2 id="how-the-interface-finds-the-server">How the interface finds the server<a class="headerlink" href="#how-the-interface-finds-the-server" title="Permanent link">#</a></h2>
+<p>The server binds a dynamic port and writes it to <code>~/.open-maestri/run/server.port</code>. The interface reads that file, and re-reads it when the connection drops. While connected, the interface checks the server every few seconds; two misses in a row switch it to <strong>Standalone</strong> mode and it tries to reconnect.</p>
+<h2 id="how-agents-reach-each-other">How agents reach each other<a class="headerlink" href="#how-agents-reach-each-other" title="Permanent link">#</a></h2>
+<p>When the server creates a terminal it sets these variables inside it:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MAESTRI_SOCKET</code></td>
+<td>Unix socket of the server.</td>
+</tr>
+<tr>
+<td><code>MAESTRI_TERMINAL_ID</code></td>
+<td>Identifies this terminal. Node id and terminal id are the same value.</td>
+</tr>
+<tr>
+<td><code>MAESTRI_SERVER_PORT</code>, <code>MAESTRI_AUTH_TOKEN</code></td>
+<td>Loopback port and token for HTTP access.</td>
+</tr>
+<tr>
+<td><code>MAESTRI_CLI</code></td>
+<td>Absolute path to <code>omaestri</code>, used when <code>PATH</code> is reset.</td>
+</tr>
+</tbody>
+</table>
+<p><code>omaestri</code> sends each command together with the caller's terminal id. The server checks the ropes of that terminal's workspace and only lets it see and address the terminals, notes and portals <strong>connected to it</strong>.</p>
+<h2 id="data-model">Data model<a class="headerlink" href="#data-model" title="Permanent link">#</a></h2>
+<p>A workspace is stored as <code>workspace.json</code> (schema version 2): a list of nodes (<code>terminal</code>, <code>stickyNote</code>, <code>portal</code>, <code>fileTree</code>, drawings), the connections between them, canvas origin and zoom, and floors. Node frames are <code>[[x, y], [width, height]]</code>, and node content uses the wrapper <code>{ "terminal": { "_0": { … } } }</code>. This is the format of the original Maestri, which is why the two apps can share data.</p>
+<h2 id="standalone-mode">Standalone mode<a class="headerlink" href="#standalone-mode" title="Permanent link">#</a></h2>
+<p>Without a server the interface still opens. It shows <strong>Standalone</strong> in the header, terminals are plain local shells without the <code>MAESTRI_*</code> variables, and Floors are disabled. Edits are saved to disk locally and synced when the server is back. See <a href="troubleshooting.html#the-header-says-standalone">Troubleshooting</a>.</p></article><nav class="pager"><a class="prev" href="getting-started.html"><span>Previous</span>Getting started</a><a class="next" href="canvas-and-nodes.html"><span>Next</span>Canvas and nodes</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#the-three-parts">The three parts</a><a class="toc-l2" href="#the-server-owns-the-shells">The server owns the shells</a><a class="toc-l2" href="#how-the-interface-finds-the-server">How the interface finds the server</a><a class="toc-l2" href="#how-agents-reach-each-other">How agents reach each other</a><a class="toc-l2" href="#data-model">Data model</a><a class="toc-l2" href="#standalone-mode">Standalone mode</a></aside></div>
+</div>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

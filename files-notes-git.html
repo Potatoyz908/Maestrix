@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Files, notes and Git · Maestrix</title>
+<meta name="description" content="The File Tree node with Git status, and Markdown notes that live on the canvas.">
+<meta name="theme-color" content="#0c0f1b">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="is-doc">
+<header class="topbar">
+  <button class="menu-btn" aria-label="Toggle navigation" id="menu-btn">☰</button>
+  <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
+  <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+</header>
+<div class="layout">
+<aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
+<a href="getting-started.html">Getting started</a>
+<a href="concepts.html">How it works</a>
+</div>
+<div class="nav-group"><div class="nav-title">Guide</div>
+<a href="canvas-and-nodes.html">Canvas and nodes</a>
+<a href="terminals-and-agents.html">Terminals and agents</a>
+<a href="agent-communication.html">Agent communication</a>
+<a href="floors.html">Floors</a>
+<a href="routines-and-partituras.html">Routines and partituras</a>
+<a class="active" href="files-notes-git.html">Files, notes and Git</a>
+<a href="remote-ssh.html">Remote SSH</a>
+<a href="themes-and-preferences.html">Themes and preferences</a>
+</div>
+<div class="nav-group"><div class="nav-title">Reference</div>
+<a href="cli-reference.html">CLI reference</a>
+<a href="configuration.html">Configuration</a>
+<a href="troubleshooting.html">Troubleshooting</a>
+</div>
+<div class="nav-group"><div class="nav-title">Project</div>
+<a href="development.html">Development</a>
+<a href="contributing.html">Contributing and credits</a>
+</div></aside>
+<div class="doc-shell"><main class="doc"><h1 class="doc-title">Files, notes and Git</h1><p class="doc-sub">The File Tree node with Git status, and Markdown notes that live on the canvas.</p><article><p><img alt="Notes and file tree on the canvas" src="assets/img/agents-dark.png" /></p>
+<h2 id="file-tree">File Tree<a class="headerlink" href="#file-tree" title="Permanent link">#</a></h2>
+<p>A File Tree node browses a folder, starting from the workspace folder by default.</p>
+<ul>
+<li><strong>List</strong> and <strong>grid</strong> views, with navigation buttons, an <em>up</em> button and a hidden-files toggle.</li>
+<li><strong>Git integration</strong>: the header shows the current branch with a marker when the tree is dirty. Files carry badges for <strong>modified</strong>, <strong>added</strong>, <strong>deleted</strong>, <strong>renamed</strong>, <strong>conflict</strong> and <strong>untracked</strong>, and you can open a diff.</li>
+<li>Open a file in your preferred editor (<em>Preferences → General → Preferred IDE</em>) with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>.</li>
+<li>Right-click for file operations such as creating, renaming and deleting.</li>
+<li>The tree is also an input for agents: a selected file or folder can be sent to a connected agent as an <em>ask</em>.</li>
+</ul>
+<p>Drop a folder from your file manager onto the canvas to create a File Tree rooted there.</p>
+<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">#</a></h2>
+<p>A Note is a Markdown sticky note. Switch between <strong>Raw</strong> (editable text) and <strong>Formatted</strong> (rendered Markdown). Pick a colour from the strip at the bottom.</p>
+<ul>
+<li>By default a note is stored inside the workspace (<code>~/.open-maestri/workspaces/&lt;id&gt;/notes/</code>).</li>
+<li>A note can also be backed by an existing file: drop a text or Markdown file on the canvas.</li>
+<li>Connected agents read and write notes with <code>omaestri note</code>, which makes notes a convenient shared memory between agents. See <a href="agent-communication.html#notes-as-shared-memory">Agent communication</a>.</li>
+</ul>
+<h2 id="portals">Portals<a class="headerlink" href="#portals" title="Permanent link">#</a></h2>
+<p>A Portal is an embedded web view. Use it to keep a running app, documentation or a dashboard next to the agents. Connected agents can drive it with <code>omaestri portal …</code>; see the <a href="cli-reference.html#portals">CLI reference</a>.</p></article><nav class="pager"><a class="prev" href="routines-and-partituras.html"><span>Previous</span>Routines and partituras</a><a class="next" href="remote-ssh.html"><span>Next</span>Remote SSH</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#file-tree">File Tree</a><a class="toc-l2" href="#notes">Notes</a><a class="toc-l2" href="#portals">Portals</a></aside></div>
+</div>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

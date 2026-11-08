@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Themes and preferences · Maestrix</title>
+<meta name="description" content="The Dark and Light interface themes, every preference and the keyboard shortcuts.">
+<meta name="theme-color" content="#0c0f1b">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="is-doc">
+<header class="topbar">
+  <button class="menu-btn" aria-label="Toggle navigation" id="menu-btn">☰</button>
+  <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
+  <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+</header>
+<div class="layout">
+<aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
+<a href="getting-started.html">Getting started</a>
+<a href="concepts.html">How it works</a>
+</div>
+<div class="nav-group"><div class="nav-title">Guide</div>
+<a href="canvas-and-nodes.html">Canvas and nodes</a>
+<a href="terminals-and-agents.html">Terminals and agents</a>
+<a href="agent-communication.html">Agent communication</a>
+<a href="floors.html">Floors</a>
+<a href="routines-and-partituras.html">Routines and partituras</a>
+<a href="files-notes-git.html">Files, notes and Git</a>
+<a href="remote-ssh.html">Remote SSH</a>
+<a class="active" href="themes-and-preferences.html">Themes and preferences</a>
+</div>
+<div class="nav-group"><div class="nav-title">Reference</div>
+<a href="cli-reference.html">CLI reference</a>
+<a href="configuration.html">Configuration</a>
+<a href="troubleshooting.html">Troubleshooting</a>
+</div>
+<div class="nav-group"><div class="nav-title">Project</div>
+<a href="development.html">Development</a>
+<a href="contributing.html">Contributing and credits</a>
+</div></aside>
+<div class="doc-shell"><main class="doc"><h1 class="doc-title">Themes and preferences</h1><p class="doc-sub">The Dark and Light interface themes, every preference and the keyboard shortcuts.</p><article><p>Open preferences with <kbd>Ctrl</kbd>+<kbd>,</kbd> or the gear in the header. Changes apply immediately and are saved to <code>~/.open-maestri/preferences.json</code>.</p>
+<h2 id="interface-theme">Interface theme<a class="headerlink" href="#interface-theme" title="Permanent link">#</a></h2>
+<p><em>Preferences → General → Interface theme</em></p>
+<table>
+<thead>
+<tr>
+<th>Theme</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Dark · Maestrix</strong></td>
+<td>Navy ground with the palette of the app icon: blue <code>#168bf1</code> to purple <code>#9354e8</code> gradient for selections and primary actions, cyan <code>#71dcec</code> for focus and the active tool. The canvas background and grid are dark too.</td>
+</tr>
+<tr>
+<td><strong>Light</strong></td>
+<td>The base theme.</td>
+</tr>
+</tbody>
+</table>
+<p><img alt="Maestrix in the Light theme" src="assets/img/home-light.png" /></p>
+<p>The terminal colour theme is a separate setting, so you can keep, for instance, a light terminal on the dark interface.</p>
+<h2 id="preferences">Preferences<a class="headerlink" href="#preferences" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Setting</th>
+<th>Values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>General</td>
+<td>Language</td>
+<td>English, 简体中文 (applies on restart)</td>
+</tr>
+<tr>
+<td>General</td>
+<td>Canvas background</td>
+<td>Dot grid, Solid, Transparent</td>
+</tr>
+<tr>
+<td>General</td>
+<td>Preferred IDE</td>
+<td>Cursor, VS Code, Xcode</td>
+</tr>
+<tr>
+<td>General</td>
+<td>Autosave interval</td>
+<td>5 to 600 seconds (default 30)</td>
+</tr>
+<tr>
+<td>General</td>
+<td>Snap to alignment guides</td>
+<td>On / off</td>
+</tr>
+<tr>
+<td>General</td>
+<td>Interface theme</td>
+<td>Light, Dark · Maestrix</td>
+</tr>
+<tr>
+<td>General</td>
+<td>Remote SSH</td>
+<td>Enable, tunnel port (7433), script path</td>
+</tr>
+<tr>
+<td>Terminal</td>
+<td>Font family and size</td>
+<td>Any monospace font, 8 to 32 pt</td>
+</tr>
+<tr>
+<td>Terminal</td>
+<td>Colour theme</td>
+<td>system, dark, light, Dracula, Solarized dark/light, Nord, One Dark, Tokyo Night (and Day), Catppuccin (Mocha, Macchiato, Latte), Gruvbox dark/light, Rosé Pine</td>
+</tr>
+<tr>
+<td>Terminal</td>
+<td>Scrollback memory limit</td>
+<td>On / off</td>
+</tr>
+<tr>
+<td>Agents</td>
+<td>Presets</td>
+<td>Name, command, icon, colour and agent type</td>
+</tr>
+</tbody>
+</table>
+<h2 id="keyboard-shortcuts">Keyboard shortcuts<a class="headerlink" href="#keyboard-shortcuts" title="Permanent link">#</a></h2>
+<p><strong>Workspaces</strong></p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Keys</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Next / previous workspace</td>
+<td><kbd>Ctrl</kbd>+<kbd>↓</kbd> / <kbd>Ctrl</kbd>+<kbd>↑</kbd></td>
+</tr>
+<tr>
+<td>New workspace</td>
+<td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Elements</strong></p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Keys</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Center the selected node</td>
+<td><kbd>\</kbd></td>
+</tr>
+<tr>
+<td>Start a connection</td>
+<td><kbd>L</kbd></td>
+</tr>
+<tr>
+<td>Delete the selected node</td>
+<td><kbd>Ctrl</kbd>+<kbd>W</kbd> or <kbd>Delete</kbd></td>
+</tr>
+<tr>
+<td>Jump to terminal 1 to 9</td>
+<td><kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>9</kbd></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Canvas</strong></p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Keys</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Select tool / Terminal tool / Browser tool</td>
+<td><kbd>V</kbd> / <kbd>T</kbd> / <kbd>P</kbd></td>
+</tr>
+<tr>
+<td>Zoom in / out / reset</td>
+<td><kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>0</kbd></td>
+</tr>
+<tr>
+<td>Zoom with the wheel</td>
+<td><kbd>Ctrl</kbd>+scroll</td>
+</tr>
+<tr>
+<td>Snap to alignment guides</td>
+<td><kbd>Ctrl</kbd>+<kbd>;</kbd></td>
+</tr>
+<tr>
+<td>Copy / paste element</td>
+<td><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Terminal</strong></p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Keys</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Copy / paste</td>
+<td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd></td>
+</tr>
+<tr>
+<td>Select all</td>
+<td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></td>
+</tr>
+<tr>
+<td>Find</td>
+<td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td>
+</tr>
+</tbody>
+</table>
+<p><strong>App</strong></p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Keys</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>New terminal</td>
+<td><kbd>Ctrl</kbd>+<kbd>N</kbd></td>
+</tr>
+<tr>
+<td>Save</td>
+<td><kbd>Ctrl</kbd>+<kbd>S</kbd></td>
+</tr>
+<tr>
+<td>Open in editor</td>
+<td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></td>
+</tr>
+<tr>
+<td>Toggle sidebar</td>
+<td><kbd>Ctrl</kbd>+<kbd>B</kbd></td>
+</tr>
+<tr>
+<td>Open settings</td>
+<td><kbd>Ctrl</kbd>+<kbd>,</kbd></td>
+</tr>
+<tr>
+<td>Quit</td>
+<td><kbd>Ctrl</kbd>+<kbd>Q</kbd></td>
+</tr>
+</tbody>
+</table></article><nav class="pager"><a class="prev" href="remote-ssh.html"><span>Previous</span>Remote SSH</a><a class="next" href="cli-reference.html"><span>Next</span>CLI reference</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#interface-theme">Interface theme</a><a class="toc-l2" href="#preferences">Preferences</a><a class="toc-l2" href="#keyboard-shortcuts">Keyboard shortcuts</a></aside></div>
+</div>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

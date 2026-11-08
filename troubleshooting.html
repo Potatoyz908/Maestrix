@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting · Maestrix</title>
+<meta name="description" content="Offline mode, missing servers, agents that cannot reach each other and other common problems.">
+<meta name="theme-color" content="#0c0f1b">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="is-doc">
+<header class="topbar">
+  <button class="menu-btn" aria-label="Toggle navigation" id="menu-btn">☰</button>
+  <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
+  <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+</header>
+<div class="layout">
+<aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
+<a href="getting-started.html">Getting started</a>
+<a href="concepts.html">How it works</a>
+</div>
+<div class="nav-group"><div class="nav-title">Guide</div>
+<a href="canvas-and-nodes.html">Canvas and nodes</a>
+<a href="terminals-and-agents.html">Terminals and agents</a>
+<a href="agent-communication.html">Agent communication</a>
+<a href="floors.html">Floors</a>
+<a href="routines-and-partituras.html">Routines and partituras</a>
+<a href="files-notes-git.html">Files, notes and Git</a>
+<a href="remote-ssh.html">Remote SSH</a>
+<a href="themes-and-preferences.html">Themes and preferences</a>
+</div>
+<div class="nav-group"><div class="nav-title">Reference</div>
+<a href="cli-reference.html">CLI reference</a>
+<a href="configuration.html">Configuration</a>
+<a class="active" href="troubleshooting.html">Troubleshooting</a>
+</div>
+<div class="nav-group"><div class="nav-title">Project</div>
+<a href="development.html">Development</a>
+<a href="contributing.html">Contributing and credits</a>
+</div></aside>
+<div class="doc-shell"><main class="doc"><h1 class="doc-title">Troubleshooting</h1><p class="doc-sub">Offline mode, missing servers, agents that cannot reach each other and other common problems.</p><article><h2 id="the-header-says-standalone">The header says "Standalone"<a class="headerlink" href="#the-header-says-standalone" title="Permanent link">#</a></h2>
+<p>Standalone means the interface cannot reach the server. In that state:</p>
+<ul>
+<li>the <strong>Ground / Floors</strong> button is disabled and clicking it does nothing,</li>
+<li>terminals are plain local shells <strong>without</strong> <code>MAESTRI_SOCKET</code>, so <code>omaestri</code> fails inside them,</li>
+<li>leaving a workspace ends its local shells.</li>
+</ul>
+<p>What to do:</p>
+<ol>
+<li>Open Maestrix with the <code>maestrix</code> launcher (or from the application menu), not by running <code>app.py</code> directly. The launcher starts the server and exports what the app needs to restart it.</li>
+<li>Check that a server is running: <code>pgrep -a open-maestri-server</code>, and that <code>~/.open-maestri/run/server.port</code> exists.</li>
+<li>Read the log: <code>tail ~/.open-maestri/run/server.log</code>.</li>
+<li>If the server died while the app was open, wait up to a minute: the app notices within seconds and restarts it when started through the launcher.</li>
+</ol>
+<p>Terminals created while the app was in Standalone mode stay without the variables. Close them and create new ones after the app is connected.</p>
+<h2 id="omaestri-only-available-inside-open-maestri-terminals"><code>omaestri: only available inside open-maestri terminals</code><a class="headerlink" href="#omaestri-only-available-inside-open-maestri-terminals" title="Permanent link">#</a></h2>
+<p>You ran <code>omaestri</code> in a shell that Maestrix did not create, or in a terminal made in Standalone mode. Open a terminal from the canvas after the header shows <code>Porta &lt;number&gt;</code> (connected).</p>
+<h2 id="agent-name-not-found"><code>agent 'Name' not found</code><a class="headerlink" href="#agent-name-not-found" title="Permanent link">#</a></h2>
+<p>The terminals are not connected, or the name differs. Run <code>omaestri list</code> in the calling terminal and use the name exactly as printed. Names are unique per workspace, so a duplicate may have become <code>Name #2</code>.</p>
+<h2 id="a-maestro-does-not-recruit">A Maestro does not recruit<a class="headerlink" href="#a-maestro-does-not-recruit" title="Permanent link">#</a></h2>
+<ul>
+<li>The terminal must have the <strong>Maestro</strong> toggle on. Otherwise commands answer <em>"this terminal is not in Maestro mode"</em>.</li>
+<li>If you also have the official Maestri skills installed, the agent may follow those and call <code>maestri</code> instead of <code>omaestri</code>. Tell the agent to use <code>omaestri</code> or <code>"$MAESTRI_CLI"</code>.</li>
+<li>Restart the Maestrix server once after an update so the refreshed skills are written.</li>
+</ul>
+<h2 id="an-agent-opens-with-an-empty-chat">An agent opens with an empty chat<a class="headerlink" href="#an-agent-opens-with-an-empty-chat" title="Permanent link">#</a></h2>
+<p>Maestrix resumes the last conversation only for <code>claude</code>, <code>agy</code>, <code>codex</code> and <code>opencode</code>, and only when the shell of that terminal no longer exists. With two agents of the same kind in one folder, both resume the same conversation. See <a href="terminals-and-agents.html#resuming-a-conversation">Terminals and agents</a>.</p>
+<h2 id="stale-socket-after-a-reboot">Stale socket after a reboot<a class="headerlink" href="#stale-socket-after-a-reboot" title="Permanent link">#</a></h2>
+<p>If <code>~/.open-maestri/run/agent.sock</code> is left over from a dead server, the launcher checks that something is really listening on it, removes the stale file and starts a fresh server. If you start the server by hand, delete the file first.</p>
+<h2 id="an-older-server-keeps-running">An older server keeps running<a class="headerlink" href="#an-older-server-keeps-running" title="Permanent link">#</a></h2>
+<p>A server from before <code>run/server.port</code> existed cannot be found by a newer app. The launcher detects this (a live server without that file) and replaces the server that owns the data directory's socket. To do it yourself: stop that <code>open-maestri-server</code> process and start <code>maestrix</code> again.</p>
+<h2 id="the-build-fails-at-link-time">The build fails at link time<a class="headerlink" href="#the-build-fails-at-link-time" title="Permanent link">#</a></h2>
+<p>Use the <code>lld</code> linker: <code>swift build -Xswiftc -use-ld=lld</code> and <code>swift test -Xswiftc -use-ld=lld</code>.</p>
+<h2 id="the-theme-looks-different-from-the-screenshots">The theme looks different from the screenshots<a class="headerlink" href="#the-theme-looks-different-from-the-screenshots" title="Permanent link">#</a></h2>
+<p>A custom GTK theme (for example WhiteSur) can override some colours. Maestrix applies its own interface theme on top, but if a widget still looks off, test with the default GTK theme to confirm and open an issue with a screenshot.</p>
+<h2 id="still-stuck">Still stuck?<a class="headerlink" href="#still-stuck" title="Permanent link">#</a></h2>
+<p>Run <code>omaestri debug</code> inside a Maestrix terminal and attach its output, together with <code>server.log</code>, to an <a href="https://github.com/Potatoyz908/Maestrix/issues">issue</a>.</p></article><nav class="pager"><a class="prev" href="configuration.html"><span>Previous</span>Configuration</a><a class="next" href="development.html"><span>Next</span>Development</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#the-header-says-standalone">The header says &quot;Standalone&quot;</a><a class="toc-l2" href="#omaestri-only-available-inside-open-maestri-terminals">omaestri: only available inside open-maestri terminals</a><a class="toc-l2" href="#agent-name-not-found">agent &#x27;Name&#x27; not found</a><a class="toc-l2" href="#a-maestro-does-not-recruit">A Maestro does not recruit</a><a class="toc-l2" href="#an-agent-opens-with-an-empty-chat">An agent opens with an empty chat</a><a class="toc-l2" href="#stale-socket-after-a-reboot">Stale socket after a reboot</a><a class="toc-l2" href="#an-older-server-keeps-running">An older server keeps running</a><a class="toc-l2" href="#the-build-fails-at-link-time">The build fails at link time</a><a class="toc-l2" href="#the-theme-looks-different-from-the-screenshots">The theme looks different from the screenshots</a><a class="toc-l2" href="#still-stuck">Still stuck?</a></aside></div>
+</div>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

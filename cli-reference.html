@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI reference · Maestrix</title>
+<meta name="description" content="Every omaestri command, grouped by what it does.">
+<meta name="theme-color" content="#0c0f1b">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="is-doc">
+<header class="topbar">
+  <button class="menu-btn" aria-label="Toggle navigation" id="menu-btn">☰</button>
+  <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
+  <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+</header>
+<div class="layout">
+<aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
+<a href="getting-started.html">Getting started</a>
+<a href="concepts.html">How it works</a>
+</div>
+<div class="nav-group"><div class="nav-title">Guide</div>
+<a href="canvas-and-nodes.html">Canvas and nodes</a>
+<a href="terminals-and-agents.html">Terminals and agents</a>
+<a href="agent-communication.html">Agent communication</a>
+<a href="floors.html">Floors</a>
+<a href="routines-and-partituras.html">Routines and partituras</a>
+<a href="files-notes-git.html">Files, notes and Git</a>
+<a href="remote-ssh.html">Remote SSH</a>
+<a href="themes-and-preferences.html">Themes and preferences</a>
+</div>
+<div class="nav-group"><div class="nav-title">Reference</div>
+<a class="active" href="cli-reference.html">CLI reference</a>
+<a href="configuration.html">Configuration</a>
+<a href="troubleshooting.html">Troubleshooting</a>
+</div>
+<div class="nav-group"><div class="nav-title">Project</div>
+<a href="development.html">Development</a>
+<a href="contributing.html">Contributing and credits</a>
+</div></aside>
+<div class="doc-shell"><main class="doc"><h1 class="doc-title">CLI reference</h1><p class="doc-sub">Every omaestri command, grouped by what it does.</p><article><p><code>omaestri</code> is injected into every terminal Maestrix creates. <code>maestrix-cli</code> and <code>open-maestri</code> are aliases. If <code>omaestri</code> is not on <code>PATH</code> (a shell that resets it), use <code>"$MAESTRI_CLI"</code>. Run <code>omaestri help</code> for the built-in summary and <code>omaestri debug</code> to diagnose a broken setup.</p>
+<p>Names are case-sensitive here: run <code>omaestri list</code> first and copy the exact name.</p>
+<h2 id="discovering-and-talking">Discovering and talking<a class="headerlink" href="#discovering-and-talking" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>omaestri list</code></td>
+<td>Terminals, notes and portals connected to the caller.</td>
+</tr>
+<tr>
+<td><code>omaestri ask "Agent" "prompt"</code></td>
+<td>Send a prompt and wait for the reply (the agent going idle).</td>
+</tr>
+<tr>
+<td><code>omaestri check "Agent" [lines]</code></td>
+<td>Read the agent's current screen without interrupting it.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>omaestri note create ["content"]</code></td>
+<td>Create a note linked and connected to this terminal.</td>
+</tr>
+<tr>
+<td><code>omaestri note read "Note" [offset limit]</code></td>
+<td>Read a note, or <code>limit</code> lines from line <code>offset</code>.</td>
+</tr>
+<tr>
+<td><code>omaestri note write "Note" "content"</code></td>
+<td>Replace the whole note.</td>
+</tr>
+<tr>
+<td><code>omaestri note edit "Note" "old" "new"</code></td>
+<td>Replace a substring in place.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="portals">Portals<a class="headerlink" href="#portals" title="Permanent link">#</a></h2>
+<p>All portal commands need the portal name. <code>@e1</code> style references come from <code>snapshot</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>omaestri portal create "URL" ["Name"]</code></td>
+<td>Open a new portal.</td>
+</tr>
+<tr>
+<td><code>omaestri portal navigate "Portal" "URL"</code></td>
+<td>Go to a URL (<code>edit --url</code> also works).</td>
+</tr>
+<tr>
+<td><code>omaestri portal info / snapshot / screenshot / html "Portal"</code></td>
+<td>Inspect the page. <code>snapshot</code> lists elements with references.</td>
+</tr>
+<tr>
+<td><code>omaestri portal text "Portal" @e1</code></td>
+<td>Text of an element.</td>
+</tr>
+<tr>
+<td><code>omaestri portal click "Portal" @e1</code></td>
+<td>Click by reference, CSS selector or <code>"x,y"</code>.</td>
+</tr>
+<tr>
+<td><code>omaestri portal fill "Portal" @e1 "value"</code></td>
+<td>Fill an input.</td>
+</tr>
+<tr>
+<td><code>omaestri portal type "Portal" "text"</code> / <code>key "Portal" "Enter"</code></td>
+<td>Type text or press a key.</td>
+</tr>
+<tr>
+<td><code>omaestri portal hover / scroll / drag / wait / evaluate …</code></td>
+<td>Hover, scroll (<code>down [amount]</code>), drag <code>@e1 @e2</code>, wait for an element, run JavaScript.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="maestro-mode">Maestro Mode<a class="headerlink" href="#maestro-mode" title="Permanent link">#</a></h2>
+<p>These need the calling terminal to be in <a href="agent-communication.html#maestro-mode">Maestro Mode</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>omaestri recruit "Name" [--preset P] [--role R] [--command C] [--dir D] [--icon I] [--color C] [--floor F] [--replace]</code></td>
+<td>Create an agent terminal and connect it.</td>
+</tr>
+<tr>
+<td><code>omaestri dismiss "Name"</code></td>
+<td>Stop and remove a recruited terminal.</td>
+</tr>
+<tr>
+<td><code>omaestri connect "From" "To"</code></td>
+<td>Wire two existing terminals.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="roles-and-presets">Roles and presets<a class="headerlink" href="#roles-and-presets" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>omaestri role list</code></td>
+<td>All roles with a preview of their instructions.</td>
+</tr>
+<tr>
+<td><code>omaestri role show "Role"</code></td>
+<td>Name and full prompt.</td>
+</tr>
+<tr>
+<td><code>omaestri role create "Role" "instructions"</code></td>
+<td>Create a role.</td>
+</tr>
+<tr>
+<td><code>omaestri role edit "Role" --prompt "…"</code></td>
+<td>Change a role (<code>write</code> is an alias).</td>
+</tr>
+<tr>
+<td><code>omaestri role assign "Agent" "Role"</code></td>
+<td>Give an agent a role, effective on its next restart. <code>--none</code> clears it.</td>
+</tr>
+<tr>
+<td><code>omaestri preset list</code></td>
+<td>The agent presets you can pass to <code>recruit --preset</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="workspaces-floors-routines-partituras">Workspaces, floors, routines, partituras<a class="headerlink" href="#workspaces-floors-routines-partituras" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>omaestri workspace list / create "Name" --dir PATH / rename "A" "B" / move "Name" --group G / --root / unload "Name"</code></td>
+<td>Manage workspaces.</td>
+</tr>
+<tr>
+<td><code>omaestri floor list / create / land / delete / status</code></td>
+<td>Manage floors. See <a href="floors.html#from-the-cli">Floors</a>.</td>
+</tr>
+<tr>
+<td><code>omaestri routine list / show / create / edit / enable / disable / run / delete</code></td>
+<td>Scheduled prompts. See <a href="routines-and-partituras.html#routines">Routines</a>.</td>
+</tr>
+<tr>
+<td><code>omaestri partitura list / create / update / insert / delete</code></td>
+<td>Saved arrangements. See <a href="routines-and-partituras.html#partituras">Partituras</a>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="exit-and-errors">Exit and errors<a class="headerlink" href="#exit-and-errors" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>only available inside open-maestri terminals (MAESTRI_SOCKET not set)</code></td>
+<td>The shell is not a Maestrix terminal, or the app is in Standalone mode.</td>
+</tr>
+<tr>
+<td><code>agent 'X' not found. Use 'omaestri list' …</code></td>
+<td>No connected terminal with that name. Check the name and the ropes.</td>
+</tr>
+<tr>
+<td><code>this terminal is not in Maestro mode …</code></td>
+<td><code>recruit</code>, <code>dismiss</code> and <code>connect</code> need the Maestro toggle.</td>
+</tr>
+<tr>
+<td><code>an agent named 'X' already exists. Use --replace …</code></td>
+<td><code>recruit</code> refuses a duplicate name.</td>
+</tr>
+</tbody>
+</table></article><nav class="pager"><a class="prev" href="themes-and-preferences.html"><span>Previous</span>Themes and preferences</a><a class="next" href="configuration.html"><span>Next</span>Configuration</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#discovering-and-talking">Discovering and talking</a><a class="toc-l2" href="#notes">Notes</a><a class="toc-l2" href="#portals">Portals</a><a class="toc-l2" href="#maestro-mode">Maestro Mode</a><a class="toc-l2" href="#roles-and-presets">Roles and presets</a><a class="toc-l2" href="#workspaces-floors-routines-partituras">Workspaces, floors, routines, partituras</a><a class="toc-l2" href="#exit-and-errors">Exit and errors</a></aside></div>
+</div>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

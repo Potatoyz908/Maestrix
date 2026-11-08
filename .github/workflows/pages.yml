@@ -1,5 +1,8 @@
-name: Docs site (GitHub Pages)
+name: Docs site (publish to the repository root)
 
+# GitHub Pages is configured as "Deploy from a branch" (main, /root). The generated site is therefore committed to the root
+# (index.html, the other pages, assets/, search-index.json, .nojekyll) so Pages serves it instead of rendering README.md.
+# Edit site/content/*.md, never the generated files at the root: this workflow regenerates them.
 on:
   push:
     branches: [main]
@@ -9,16 +12,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: docs-site
   cancel-in-progress: true
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,18 +29,17 @@ jobs:
       - name: Build the site
         run: |
           pip install markdown pygments
-          python3 site/build.py site/_site
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site/_site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          python3 site/build.py "$RUNNER_TEMP/site-out"
+      - name: Copy to the repository root and commit
+        run: |
+          cp -r "$RUNNER_TEMP/site-out/." .
+          touch .nojekyll
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- *.html assets search-index.json .nojekyll
+          if git diff --cached --quiet; then
+            echo "Generated site is up to date."
+          else
+            git commit -m "docs: 📚 regenerate the documentation site"
+            git push
+          fi

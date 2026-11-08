@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration · Maestrix</title>
+<meta name="description" content="The data directory, the files Maestrix writes, preferences and environment variables.">
+<meta name="theme-color" content="#0c0f1b">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="is-doc">
+<header class="topbar">
+  <button class="menu-btn" aria-label="Toggle navigation" id="menu-btn">☰</button>
+  <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
+  <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+</header>
+<div class="layout">
+<aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
+<a href="getting-started.html">Getting started</a>
+<a href="concepts.html">How it works</a>
+</div>
+<div class="nav-group"><div class="nav-title">Guide</div>
+<a href="canvas-and-nodes.html">Canvas and nodes</a>
+<a href="terminals-and-agents.html">Terminals and agents</a>
+<a href="agent-communication.html">Agent communication</a>
+<a href="floors.html">Floors</a>
+<a href="routines-and-partituras.html">Routines and partituras</a>
+<a href="files-notes-git.html">Files, notes and Git</a>
+<a href="remote-ssh.html">Remote SSH</a>
+<a href="themes-and-preferences.html">Themes and preferences</a>
+</div>
+<div class="nav-group"><div class="nav-title">Reference</div>
+<a href="cli-reference.html">CLI reference</a>
+<a class="active" href="configuration.html">Configuration</a>
+<a href="troubleshooting.html">Troubleshooting</a>
+</div>
+<div class="nav-group"><div class="nav-title">Project</div>
+<a href="development.html">Development</a>
+<a href="contributing.html">Contributing and credits</a>
+</div></aside>
+<div class="doc-shell"><main class="doc"><h1 class="doc-title">Configuration</h1><p class="doc-sub">The data directory, the files Maestrix writes, preferences and environment variables.</p><article><h2 id="data-directory">Data directory<a class="headerlink" href="#data-directory" title="Permanent link">#</a></h2>
+<p>Everything lives in <code>~/.open-maestri</code>, or in the folder named by <code>OPEN_MAESTRI_DATA_DIR</code> when that variable is set.</p>
+<div class="hl"><pre><span></span><code>~/.open-maestri/
+├── manifest.json            # index of workspaces
+├── sidebar-layout.json      # groups and order of the sidebar
+├── preferences.json         # your preferences (see below)
+├── app-state.json           # includes the cleanShutdown flag used for crash recovery
+├── routines.json            # scheduled routines
+├── roles/                   # role presets
+├── skills/                  # skills written by the server
+├── notes/                   # notes not tied to a workspace folder
+├── run/
+│   ├── agent.sock           # Unix socket of the server
+│   ├── auth.token           # token for HTTP access (mode 0600)
+│   ├── server.port          # dynamic port of the server
+│   └── server.log           # server output
+└── workspaces/&lt;UUID&gt;/
+    ├── workspace.json       # nodes, connections, canvas origin and zoom, floors
+    ├── notes/               # notes of this workspace (Markdown)
+    ├── terminals/           # saved scrollback per terminal
+    └── snapshots/
+</code></pre></div>
+
+<p>The format is compatible with the original Maestri. Writes are atomic (a temporary file is written and swapped in), and the file layout of <code>workspace.json</code> is part of that compatibility, so do not rename keys by hand.</p>
+<h2 id="environment-variables">Environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">#</a></h2>
+<h3 id="for-you">For you<a class="headerlink" href="#for-you" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OPEN_MAESTRI_DATA_DIR</code></td>
+<td>Use another data directory. The right way to try Maestrix, or to run tests, without touching your real data.</td>
+</tr>
+<tr>
+<td><code>MAESTRI_SERVER_PORT</code></td>
+<td>Force the port the interface connects to. Normally not needed: the port is read from <code>run/server.port</code>.</td>
+</tr>
+<tr>
+<td><code>MAESTRI_AUTH_TOKEN</code></td>
+<td>Override the token otherwise read from <code>run/auth.token</code>.</td>
+</tr>
+<tr>
+<td><code>OMAESTRI_PATH</code></td>
+<td>Path of the <code>omaestri</code> binary to expose inside terminals.</td>
+</tr>
+<tr>
+<td><code>OPEN_MAESTRI_SSH_CONFIG</code></td>
+<td>Alternate ssh config for the host list (tests).</td>
+</tr>
+<tr>
+<td><code>OPEN_MAESTRI_SSH_BIN</code></td>
+<td>Alternate <code>ssh</code> executable (tests use a fake one).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="set-by-maestrix">Set by Maestrix<a class="headerlink" href="#set-by-maestrix" title="Permanent link">#</a></h3>
+<p>The launcher exports <code>OPEN_MAESTRI_SERVER_BIN</code> so the app can restart the server. Inside terminals, the server sets <code>MAESTRI_SOCKET</code>, <code>MAESTRI_TERMINAL_ID</code> (also <code>OMAESTRI_TERMINAL_ID</code>), <code>MAESTRI_SERVER_PORT</code>, <code>MAESTRI_AUTH_TOKEN</code>, <code>MAESTRI_CLI</code> (also <code>OMAESTRI_CLI</code>), and <code>MAESTRI_FLOOR_NAME</code> / <code>MAESTRI_FLOOR_PATH</code> inside a floor.</p>
+<h2 id="preferencesjson">preferences.json<a class="headerlink" href="#preferencesjson" title="Permanent link">#</a></h2>
+<div class="hl"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;schemaVersion&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;interfaceTheme&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;dark&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;terminalTheme&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;dark&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;terminalFontFamily&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;system&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;terminalFontSize&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">13</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;canvasBackground&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;dotGrid&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;canvasSnapping&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;preferredIDE&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cursor&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;language&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;en&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;autosaveIntervalSeconds&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;scrollbackMemoryLimit&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;optionAsMeta&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>Unknown keys (agent presets, role presets, skill paths and anything written by other versions) are preserved when Maestrix saves. Invalid values fall back to the default. <code>interfaceTheme</code> is <code>light</code> (default) or <code>dark</code>.</p>
+<h2 id="ports-and-security">Ports and security<a class="headerlink" href="#ports-and-security" title="Permanent link">#</a></h2>
+<p>The server listens on <code>127.0.0.1</code> only, on a dynamic port, and on the Unix socket. HTTP requests need the bearer token from <code>run/auth.token</code>. Requests must come from loopback hosts and origins. The <code>omaestri</code> CLI identifies itself with its terminal id and the server enforces the connection graph for every command.</p></article><nav class="pager"><a class="prev" href="cli-reference.html"><span>Previous</span>CLI reference</a><a class="next" href="troubleshooting.html"><span>Next</span>Troubleshooting</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#data-directory">Data directory</a><a class="toc-l2" href="#environment-variables">Environment variables</a><a class="toc-l3" href="#for-you">For you</a><a class="toc-l3" href="#set-by-maestrix">Set by Maestrix</a><a class="toc-l2" href="#preferencesjson">preferences.json</a><a class="toc-l2" href="#ports-and-security">Ports and security</a></aside></div>
+</div>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

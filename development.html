@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Development · Maestrix</title>
+<meta name="description" content="Build, test and package Maestrix, and where things live in the repository.">
+<meta name="theme-color" content="#0c0f1b">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="is-doc">
+<header class="topbar">
+  <button class="menu-btn" aria-label="Toggle navigation" id="menu-btn">☰</button>
+  <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="28" height="28"><span>Maestrix</span></a>
+  <div class="search"><input id="search" type="search" placeholder="Search the docs…" autocomplete="off" aria-label="Search"><div id="results" class="results" hidden></div></div>
+  <nav class="top-links"><a href="getting-started.html">Docs</a><a href="cli-reference.html">CLI</a><a href="https://github.com/Potatoyz908/Maestrix">GitHub</a></nav>
+</header>
+<div class="layout">
+<aside class="sidebar" id="sidebar"><div class="nav-group"><div class="nav-title">Start</div>
+<a href="getting-started.html">Getting started</a>
+<a href="concepts.html">How it works</a>
+</div>
+<div class="nav-group"><div class="nav-title">Guide</div>
+<a href="canvas-and-nodes.html">Canvas and nodes</a>
+<a href="terminals-and-agents.html">Terminals and agents</a>
+<a href="agent-communication.html">Agent communication</a>
+<a href="floors.html">Floors</a>
+<a href="routines-and-partituras.html">Routines and partituras</a>
+<a href="files-notes-git.html">Files, notes and Git</a>
+<a href="remote-ssh.html">Remote SSH</a>
+<a href="themes-and-preferences.html">Themes and preferences</a>
+</div>
+<div class="nav-group"><div class="nav-title">Reference</div>
+<a href="cli-reference.html">CLI reference</a>
+<a href="configuration.html">Configuration</a>
+<a href="troubleshooting.html">Troubleshooting</a>
+</div>
+<div class="nav-group"><div class="nav-title">Project</div>
+<a class="active" href="development.html">Development</a>
+<a href="contributing.html">Contributing and credits</a>
+</div></aside>
+<div class="doc-shell"><main class="doc"><h1 class="doc-title">Development</h1><p class="doc-sub">Build, test and package Maestrix, and where things live in the repository.</p><article><h2 id="repository-layout">Repository layout<a class="headerlink" href="#repository-layout" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gtk4-ui/</code></td>
+<td>GTK 4 interface: window, sidebar, dialogs, themes, floors</td>
+</tr>
+<tr>
+<td><code>canvas-cairo/</code></td>
+<td>Cairo canvas engine: nodes, ropes, VTE terminals, portals</td>
+</tr>
+<tr>
+<td><code>maestri_core/</code></td>
+<td>Python core: models, server client, preferences, sync</td>
+</tr>
+<tr>
+<td><code>Sources/</code></td>
+<td>Swift server and CLI (<code>open-maestri-server</code>, <code>omaestri</code>)</td>
+</tr>
+<tr>
+<td><code>Tests/</code></td>
+<td>Swift tests</td>
+</tr>
+<tr>
+<td><code>tests/</code></td>
+<td>Python unit, integration and end-to-end (Xvfb) tests</td>
+</tr>
+<tr>
+<td><code>scripts/</code></td>
+<td>Launcher, desktop install, <code>.deb</code> packaging, e2e runner</td>
+</tr>
+<tr>
+<td><code>docs/</code></td>
+<td>Architecture, roadmap, specs, product reference</td>
+</tr>
+<tr>
+<td><code>site/</code></td>
+<td>This documentation site</td>
+</tr>
+</tbody>
+</table>
+<h2 id="build-and-run">Build and run<a class="headerlink" href="#build-and-run" title="Permanent link">#</a></h2>
+<div class="hl"><pre><span></span><code>swift<span class="w"> </span>build<span class="w"> </span>-Xswiftc<span class="w"> </span>-use-ld<span class="o">=</span>lld<span class="w">              </span><span class="c1"># server and CLI</span>
+./scripts/install-desktop.sh<span class="w">                  </span><span class="c1"># menu entry and icons</span>
+maestrix<span class="w">                                      </span><span class="c1"># or: scripts/open-maestri</span>
+</code></pre></div>
+
+<h2 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">#</a></h2>
+<div class="hl"><pre><span></span><code>swift<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-Xswiftc<span class="w"> </span>-use-ld<span class="o">=</span>lld<span class="w">                                       </span><span class="c1"># Swift tests</span>
+python3<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>tests/unit<span class="w"> </span>canvas-cairo/tests<span class="w"> </span>tests/integration<span class="w">     </span><span class="c1"># Python tests</span>
+scripts/run-e2e-xvfb.sh<span class="w">                                               </span><span class="c1"># UI tests, private Xvfb</span>
+</code></pre></div>
+
+<p>Guidelines the test suites follow:</p>
+<ul>
+<li><strong>Isolation.</strong> Tests that start a server or a window set <code>OPEN_MAESTRI_DATA_DIR</code> to a temporary folder and give the server a private <code>HOME</code>. A guard fails the run if the real <code>~/.open-maestri</code> changes.</li>
+<li><strong>Headless UI.</strong> GUI tests run on a virtual display (<code>Xvfb</code>), never on your screen.</li>
+<li><strong>Regression tests prove themselves.</strong> A test for a bug should fail on the old code. The regression tests in <code>tests/e2e/test_regression_*</code> follow that rule.</li>
+</ul>
+<h2 id="documentation-site">Documentation site<a class="headerlink" href="#documentation-site" title="Permanent link">#</a></h2>
+<p>This site is generated from Markdown in <code>site/content</code> by <code>site/build.py</code> and published to GitHub Pages by <code>.github/workflows/pages.yml</code>.</p>
+<div class="hl"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>markdown<span class="w"> </span>pygments
+python3<span class="w"> </span>site/build.py<span class="w">                 </span><span class="c1"># writes site/_site</span>
+python3<span class="w"> </span>-m<span class="w"> </span>http.server<span class="w"> </span>-d<span class="w"> </span>site/_site<span class="w"> </span><span class="m">8000</span>
+</code></pre></div>
+
+<p>Add a page by creating <code>site/content/&lt;name&gt;.md</code> with this front matter:</p>
+<div class="hl"><pre><span></span><code><span class="nn">---</span>
+<span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Page title</span>
+<span class="nt">section</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Guide</span><span class="w">          </span><span class="c1"># Start, Guide, Reference or Project</span>
+<span class="nt">order</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+<span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">One sentence for search and previews.</span>
+<span class="nn">---</span>
+</code></pre></div>
+
+<h2 id="packaging">Packaging<a class="headerlink" href="#packaging" title="Permanent link">#</a></h2>
+<p><code>./scripts/build-deb.sh</code> builds <code>releases/maestrix_&lt;version&gt;_amd64.deb</code> with the binaries, the embedded Swift runtime, the desktop entry and icons, and the <code>maestrix</code>, <code>maestrix-cli</code> and <code>maestrix-server</code> commands.</p>
+<h2 id="contract-notes">Contract notes<a class="headerlink" href="#contract-notes" title="Permanent link">#</a></h2>
+<p>A few rules matter when you change the code:</p>
+<ul>
+<li>A terminal node's id <strong>is</strong> its terminal id.</li>
+<li><code>workspace.json</code> is schema version 2 and shares its format with the original Maestri. New optional fields are fine; renaming or removing existing ones is not.</li>
+<li>The server owns every PTY. The interface must never spawn a shell for a connected workspace.</li>
+</ul></article><nav class="pager"><a class="prev" href="troubleshooting.html"><span>Previous</span>Troubleshooting</a><a class="next" href="contributing.html"><span>Next</span>Contributing and credits</a></nav></main><aside class="toc"><div class="toc-title">On this page</div><a class="toc-l2" href="#repository-layout">Repository layout</a><a class="toc-l2" href="#build-and-run">Build and run</a><a class="toc-l2" href="#tests">Tests</a><a class="toc-l2" href="#documentation-site">Documentation site</a><a class="toc-l2" href="#packaging">Packaging</a><a class="toc-l2" href="#contract-notes">Contract notes</a></aside></div>
+</div>
+<footer class="footer">Maestrix is a derivative of OpenMaestri, distributed under the GPL-3.0-or-later. <a href="https://github.com/Potatoyz908/Maestrix">Source on GitHub</a>.</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>
