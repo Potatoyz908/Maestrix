@@ -86,6 +86,19 @@ tooltip, tooltip.background { background-color: #182239; color: #edf1ff; border:
 .maestri-dialog-btn:hover { background-color: #2d3d5e; }
 .maestri-dialog-btn-primary { background-image: linear-gradient(to right, #168bf1, #9354e8); background-color: #414bc5; color: white; border: none; }
 .maestri-dialog-btn-danger { background-color: #a62937; background-image: none; color: white; border: none; }
+/* Workspace colour dots: the generic dark button rule above would paint them all navy, so restate each colour here (extra repeated class = specificity above the :not() chain). */
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot { background-image: none; border: 2.5px solid transparent; box-shadow: none; }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.color-blue { background-color: #007AFF; }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.color-red { background-color: #FF3B30; }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.color-green { background-color: #34C759; }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.color-orange { background-color: #FF9500; }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.color-purple { background-color: #AF52DE; }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.color-pink { background-color: #FF2D55; }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.color-cyan { background-color: #32ADE6; }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.color-yellow { background-color: #FFCC00; }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.color-rainbow { background-color: transparent;
+  background-image: linear-gradient(135deg, #ff3b30, #ff9500, #ffcc00, #34c759, #007aff, #af52de); }
+button.maestri-color-dot.maestri-color-dot.maestri-color-dot.active { border-color: #edf1ff; box-shadow: 0 0 0 2px #151c2e; }
 .maestri-icon-btn { color: #c4cff0; }
 .maestri-icon-btn:hover { background-color: rgba(113, 220, 236, 0.10); }
 .maestri-icon-btn.active { background-color: rgba(22, 139, 241, 0.18); color: #71dcec; box-shadow: inset 0 0 0 1.5px #71dcec; }
