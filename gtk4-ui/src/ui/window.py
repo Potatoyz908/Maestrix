@@ -799,15 +799,15 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         .maestri-card-badge {
             font-size: 11px;
             color: #636366;
-            background-color: rgba(0, 0, 0, 0.05);
-            padding: 2px 8px;
-            border-radius: 10px;
+            background: none;
+            border: none;
+            box-shadow: none;
+            padding: 2px 4px;
         }
         .maestri-card-badge image {
             color: #636366;
         }
         .maestri-act-dot { background: #0a84ff; border-radius: 5px; }
-        .maestri-card-badge.unread { background-color: rgba(10, 132, 255, 0.16); }
         .maestri-act-dot.busy { background: #23d18b; animation: maestri-badge-pulse 0.9s ease-in-out infinite alternate; }
         .maestri-card-agents-btn { min-height: 20px; min-width: 20px; padding: 0; opacity: .7; background: transparent; box-shadow: none; border: none; }
         .maestri-card-agents-btn:hover { opacity: 1; background: alpha(currentColor, .08); }
