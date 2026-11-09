@@ -809,8 +809,9 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         }
         .maestri-act-dot { background: #0a84ff; border-radius: 5px; }
         .maestri-act-dot.busy { background: #23d18b; animation: maestri-badge-pulse 0.9s ease-in-out infinite alternate; }
-        .maestri-card-agents-btn { min-height: 20px; min-width: 20px; padding: 0; opacity: .7; background: transparent; box-shadow: none; border: none; }
-        .maestri-card-agents-btn:hover { opacity: 1; background: alpha(currentColor, .08); }
+        .maestri-card-agents-btn, .maestri-card-agents-btn > button { min-height: 20px; min-width: 0; padding: 0; background: transparent; box-shadow: none; border: none; }
+        .maestri-card-agents-btn > button { border-radius: 10px; }
+        .maestri-card-agents-btn > button:hover, .maestri-card-agents-btn > button:checked { background: alpha(currentColor, .1); }
         .maestri-agent-row { padding: 4px 8px; }
         .maestri-agent-state { font-size: 11px; }
         .maestri-agent-dot { border-radius: 5px; background: alpha(currentColor, .35); }

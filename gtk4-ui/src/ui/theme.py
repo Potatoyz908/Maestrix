@@ -40,6 +40,10 @@ popover > contents, .maestri-sidebar-menubar popover > contents,
 popover modelbutton label, .maestri-sidebar-menubar popover modelbutton label,
 .maestri-header-menubar popover modelbutton label { color: #edf1ff; }
 .maestri-card-badge, .maestri-card-badge.unread { background: none; border: none; box-shadow: none; }
+menubutton.maestri-card-agents-btn.maestri-card-agents-btn.maestri-card-agents-btn > button, menubutton.maestri-card-agents-btn.maestri-card-agents-btn.maestri-card-agents-btn > button:checked {
+  background-color: transparent; background-image: none; border: none; box-shadow: none; }
+menubutton.maestri-card-agents-btn.maestri-card-agents-btn.maestri-card-agents-btn > button:hover, menubutton.maestri-card-agents-btn.maestri-card-agents-btn.maestri-card-agents-btn > button:checked {
+  background-color: rgba(255, 255, 255, 0.08); }
 .maestri-card-badge, .maestri-card-badge label, .maestri-card-badge image { color: #8a93ab; }
 row:selected .maestri-card-badge, row:selected .maestri-card-badge label, row:selected .maestri-card-badge image { color: #ffffff; }
 .maestri-workspace-card:hover { border-color: #71dcec; }

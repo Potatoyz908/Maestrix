@@ -30,7 +30,7 @@ from typing import Callable, Dict, List, Optional
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from maestri_core.client.api import MaestriClient
 from maestri_core.models.workspace import SidebarGroup, SidebarLayout, WorkspaceEntry
@@ -575,18 +575,19 @@ class SidebarView(Gtk.Box):
         badge.set_tooltip_text("Terminals")
         # Compatibility helper for tests querying get_label()
         badge.get_label = lambda lbl=term_lbl: f">_ {lbl.get_label()}"
-        badges_box.append(badge)
         self._badges.setdefault(entry.id.upper(), []).append((badge, term_lbl))
 
         # the terminal-count pill doubles as the activity indicator: a dot (blue = unread answer, green = working)
         dot = Gtk.Box(width_request=8, height_request=8, valign=Gtk.Align.CENTER, visible=False, css_classes=["maestri-act-dot"])
         badge.prepend(dot)
         self._agent_widgets.setdefault(entry.id.upper(), []).append((badge, dot))
-        if True:
-            menu = Gtk.MenuButton(icon_name="maestri-chevron-down-symbolic", has_frame=False, valign=Gtk.Align.CENTER,
-                                  tooltip_text="Agents in this workspace", css_classes=["flat", "maestri-card-agents-btn"])
-            menu.set_create_popup_func(lambda mb, ws=entry.id.upper(): mb.set_popover(self._agents_popover(ws, mb)))
-            badges_box.append(menu)
+        # Clicking the terminal pill opens the list of agents in this workspace (the pill is the MenuButton's content)
+        menu = Gtk.MenuButton(child=badge, has_frame=False, valign=Gtk.Align.CENTER, always_show_arrow=False,
+                              tooltip_text="Agents in this workspace", css_classes=["flat", "maestri-card-agents-btn"])
+        badge.set_tooltip_text(None)
+        badge.bind_property("visible", menu, "visible", GObject.BindingFlags.SYNC_CREATE)
+        menu.set_create_popup_func(lambda mb, ws=entry.id.upper(): mb.set_popover(self._agents_popover(ws, mb)))
+        badges_box.append(menu)
 
         row_box.append(badges_box)
         row_box.ws_id = entry.id
