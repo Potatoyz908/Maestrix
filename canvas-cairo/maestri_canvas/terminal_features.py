@@ -28,10 +28,20 @@ PCRE2_MULTILINE = 0x00000400
 PCRE2_UTF = 0x00080000
 
 IDLE_AFTER_MS = 1500
+REPLAY_GRACE_US = 4_000_000   # terminal output in the first 4 s after the node appears is the replayed scrollback
 # scheme://... up to whitespace/quotes/brackets, not ending in punctuation that usually closes a sentence.
 URL_PATTERN = r"(?:https?|ftp|file)://[^\s<>\"'`]*[^\s<>\"'`.,;:!?)\]}]"
 
 _SHORTCUTS = {"c": "copy", "v": "paste", "a": "select-all", "f": "find"}
+FONT_MIN, FONT_MAX = 6.0, 40.0
+
+
+def font_zoom_action(keyval_name: str, ctrl: bool, shift: bool) -> Optional[str]:
+    """Ctrl+- / Ctrl+= (or +) / Ctrl+0 -> "smaller" / "bigger" / "reset" (shift allowed: '+' needs it on most layouts)."""
+    if not ctrl:
+        return None
+    return {"minus": "smaller", "underscore": "smaller", "KP_Subtract": "smaller", "equal": "bigger", "plus": "bigger",
+            "KP_Add": "bigger", "0": "reset", "parenright": "reset", "KP_0": "reset"}.get(keyval_name or "")
 
 
 def shortcut_action(keyval_name: str, ctrl: bool, shift: bool) -> Optional[str]:
@@ -101,9 +111,15 @@ class TerminalSearchBar(Gtk.Box):
 
 class TerminalFeatures:
     def __init__(self, term, frame, on_activity: Optional[Callable[[bool], None]] = None,
-                 open_link: Optional[Callable[[str], None]] = None) -> None:
+                 open_link: Optional[Callable[[str], None]] = None,
+                 on_unread: Optional[Callable[[bool], None]] = None) -> None:
         self.term, self.frame = term, frame
         self.on_activity = on_activity
+        self.on_unread = on_unread
+        self.on_font_size: Optional[Callable[[float], None]] = None
+        self._base_font: Optional[float] = None
+        self.unread = False            # output arrived while the terminal was not being looked at
+        self._born = GLib.get_monotonic_time()
         self.open_link = open_link
         self.option_as_meta = False
         self.busy = False
@@ -125,7 +141,9 @@ class TerminalFeatures:
         term.add_controller(click)
 
         focus = Gtk.EventControllerFocus()
-        focus.connect("enter", lambda _c: self.clear_bell())
+        focus.connect("enter", lambda _c: (self.clear_bell(), self.mark_read()))
+        focus.connect("leave", lambda _c: self.frame.remove_css_class("term-focused"))
+        focus.connect("enter", lambda _c: self.frame.add_css_class("term-focused"))
         term.add_controller(focus)
 
         self.dead = False   # the terminal was destroyed: late callbacks (debounced search-changed, timers) must not touch it
@@ -148,6 +166,11 @@ class TerminalFeatures:
     def _key_pressed(self, _c, keyval: int, _code: int, state: Gdk.ModifierType) -> bool:
         action = shortcut_action(Gdk.keyval_name(keyval) or "", bool(state & Gdk.ModifierType.CONTROL_MASK),
                                  bool(state & Gdk.ModifierType.SHIFT_MASK))
+        zoom = font_zoom_action(Gdk.keyval_name(keyval) or "", bool(state & Gdk.ModifierType.CONTROL_MASK),
+                                bool(state & Gdk.ModifierType.SHIFT_MASK)) if action is None else None
+        if zoom is not None:
+            self.zoom_font(zoom)
+            return True
         if action is None:
             if self.option_as_meta and state & Gdk.ModifierType.ALT_MASK and not state & Gdk.ModifierType.CONTROL_MASK:
                 codepoint = Gdk.keyval_to_unicode(keyval)
@@ -162,6 +185,21 @@ class TerminalFeatures:
             return False
         {"copy": self.copy, "paste": self.paste, "select-all": self.select_all, "find": self.open_search}[action]()
         return True
+
+    def zoom_font(self, how: str) -> None:
+        """Change this terminal's font size (bigger / smaller / reset) and tell the owner so it is saved on the node."""
+        from gi.repository import Pango
+        desc = self.term.get_font()
+        desc = desc.copy() if desc is not None else Pango.FontDescription.from_string("monospace 13")
+        cur = desc.get_size() / Pango.SCALE or 13.0
+        if self._base_font is None:
+            self._base_font = cur
+        new = self._base_font if how == "reset" else cur + (1.0 if how == "bigger" else -1.0)
+        new = max(FONT_MIN, min(FONT_MAX, new))
+        desc.set_size(int(round(new * Pango.SCALE)))
+        self.term.set_font(desc)
+        if self.on_font_size is not None:
+            self.on_font_size(new)
 
     # ---- links -------------------------------------------------------------------------------------------------
     def _install_links(self) -> None:
@@ -193,6 +231,7 @@ class TerminalFeatures:
         return match or None
 
     def _clicked(self, gesture: Gtk.GestureClick, _n: int, x: float, y: float) -> None:
+        self.mark_read()
         state = gesture.get_current_event_state()
         if not state & Gdk.ModifierType.CONTROL_MASK:
             return
@@ -281,7 +320,25 @@ class TerminalFeatures:
     def _went_idle(self) -> bool:
         self._idle_timer = 0
         self._set_busy(False)
+        # a burst of output that ended while nobody was in this terminal = an answer the user has not read yet
+        # (the first seconds are the core's scrollback replay, not news)
+        if not self.term.has_focus() and (GLib.get_monotonic_time() - self._born) > REPLAY_GRACE_US:
+            self.set_unread(True)
         return GLib.SOURCE_REMOVE
+
+    def set_unread(self, unread: bool) -> None:
+        if unread == self.unread:
+            return
+        self.unread = unread
+        if unread:
+            self.frame.set_badge("unread", "New", tooltip="New output you have not read", css=("maestri-term-unread",))
+        else:
+            self.frame.set_badge("unread", None)
+        if self.on_unread is not None:
+            self.on_unread(unread)
+
+    def mark_read(self) -> None:
+        self.set_unread(False)
 
     def _set_busy(self, busy: bool) -> None:
         self.busy = busy

@@ -297,12 +297,25 @@ class NodeFrame(Gtk.Overlay):
             attach(self)   # lets a content widget style the card and retag its header widgets
         # Terminal nodes (local VTE or core-backed VteTerminalView): Ctrl+Shift+C/V/A/F, find bar, links, bell, busy/idle.
         term = terminal_of(content)
-        self.terminal_features = TerminalFeatures(term, self, on_activity=self._terminal_activity) if term is not None else None
+        self.terminal_features = TerminalFeatures(term, self, on_activity=self._terminal_activity,
+                                                 on_unread=self._terminal_unread) if term is not None else None
+        if self.terminal_features is not None:
+            self.terminal_features.on_font_size = self._terminal_font_size
 
     def _terminal_activity(self, busy: bool) -> None:
         canvas = self.get_ancestor(CanvasWidget)
         if canvas is not None:
             canvas.emit("terminal-activity", self.node_id, busy)
+
+    def _terminal_font_size(self, size: float) -> None:
+        canvas = self.get_ancestor(CanvasWidget)
+        if canvas is not None:
+            canvas.emit("terminal-font-size", self.node_id, float(size))
+
+    def _terminal_unread(self, unread: bool) -> None:
+        canvas = self.get_ancestor(CanvasWidget)
+        if canvas is not None:
+            canvas.emit("terminal-unread", self.node_id, unread)
 
     def set_number_badge(self, n: int | None) -> None:
         """K9: the Ctrl+number shortcut badge shown in a terminal header while Ctrl is held (None hides it)."""
@@ -460,7 +473,10 @@ CSS = b"""
 .maestri-node-badge.routine-paused, .maestri-node-badge-icon.routine-paused { opacity: .45; }
 .maestri-node-badge-icon { margin-left: 2px; }
 .maestri-node-badge-icon.maestri-term-status { -gtk-icon-size: 8px; }
-.maestri-node-badge-icon.maestri-term-status.busy { color: #23d18b; }
+.maestri-node-badge-icon.maestri-term-status { -gtk-icon-size: 10px; }
+.maestri-node-badge-icon.maestri-term-status.busy { color: #23d18b; animation: maestri-badge-pulse 0.9s ease-in-out infinite alternate; }
+.maestri-node-badge.maestri-term-unread { background: #0a84ff; color: white; font-weight: 700; font-size: 10px; }
+.maestri-node.term-focused { box-shadow: 0 0 0 2px alpha(#0a84ff, .55); }
 .maestri-node-badge-icon.maestri-term-status.idle { color: alpha(currentColor, .35); }
 .maestri-node-badge-icon.maestri-badge-attention { color: #ff9f0a; animation: maestri-badge-pulse 0.8s ease-in-out infinite alternate; }
 .maestri-node-badge.maestri-badge-exited { color: #ff453a; background: alpha(#ff453a, .12); }
@@ -503,6 +519,8 @@ class CanvasWidget(Gtk.Overlay):
         "tool-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "viewport-changed": (GObject.SignalFlags.RUN_FIRST, None, (float, float, float)),
         "terminal-exited": (GObject.SignalFlags.RUN_FIRST, None, (str, int)),                            # id, wait status
+        "terminal-font-size": (GObject.SignalFlags.RUN_FIRST, None, (str, float)),                       # id, new size (Ctrl +/-/0)
+        "terminal-unread": (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),                           # id, unread (False = read)
         "terminal-activity": (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),                         # id, busy (False = idle)
         "copy-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),                              # K9/K10 Ctrl+C: tuple[str]
         "paste-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),                             # K9/K10 Ctrl+V: Point | None
@@ -1198,7 +1216,13 @@ class CanvasWidget(Gtk.Overlay):
         order = self.terminal_order()
         if not 1 <= n <= min(9, len(order)):
             return False
-        nid = order[n - 1]
+        return self.focus_node(order[n - 1])
+
+    def focus_node(self, nid: str) -> bool:
+        """Select a terminal, bring it into view and give it the keyboard (Ctrl+n, sidebar agent list)."""
+        nid = nid.upper()
+        if nid not in self.scene.nodes or nid not in self.frames:
+            return False
         node = self.scene.nodes[nid]
         self.controller._set_selection({nid})
         if self.scene.raise_to_front(nid):

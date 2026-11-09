@@ -388,6 +388,13 @@ def terminal_state(features) -> str:
     return "busy" if features is not None and features.busy else "idle"
 
 
+def terminal_state(features) -> str:
+    """busy / idle / exited of a terminal's TerminalFeatures (None = idle)."""
+    if features is not None and features.exited is not None:
+        return "exited"
+    return "busy" if features is not None and features.busy else "idle"
+
+
 def agent_activity_rows(nodes, frames) -> list[tuple[str, list[dict]]]:
     """(label, terminals) per agent kind, in AGENT_KINDS order; each terminal = {id, name, state, cwd}, state in
     busy / idle / exited. Same source as the rings: observed output activity, never quotas."""

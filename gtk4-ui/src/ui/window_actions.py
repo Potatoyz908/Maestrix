@@ -86,8 +86,45 @@ class WindowActionsMixin:
         cw = self.canvas_widget
         if GObject.signal_lookup("node-lock-changed", type(cw)):
             cw.connect("node-lock-changed", lambda _c, nid, locked: self.set_node_locked(nid, locked))
+        self.sidebar.agents_provider = self.agents_for_sidebar
+        self.sidebar.on_focus_agent = self.focus_agent
+        for sig in ("terminal-activity", "terminal-unread"):
+            cw.connect(sig, lambda *_a: GLib.idle_add(lambda: (self.sidebar.refresh_agent_indicators(), False)[1]))
+        if GObject.signal_lookup("terminal-font-size", type(cw)):
+            cw.connect("terminal-font-size", lambda _c, nid, size: self._on_terminal_font_size(nid, size))
         if GObject.signal_lookup("node-z-changed", type(cw)):
             cw.connect("node-z-changed", lambda _c, nid, z: self._on_node_z_changed(nid, z))
+
+    def _on_terminal_font_size(self, node_id: str, size: float) -> None:
+        """Ctrl +/-/0 inside a terminal: keep the size on the node (fontSize) so it survives a restart."""
+        node = self._find_node(node_id)
+        if node is None or node.node_type != "terminal":
+            return
+        node.content.font_size = float(size)
+        node.last_modified_at = current_iso8601()
+        bus.emit("node-updated", node.id)
+        if self.sync is not None:
+            self.sync.flush()
+
+    def agents_for_sidebar(self, ws_id: str) -> list[dict]:
+        """Terminals of workspace `ws_id` for the sidebar dropdown: {id, name, state, unread, kind}. Live states for the open
+        workspace (busy / idle / exited from the terminal frames); saved terminals of other workspaces are all "idle"."""
+        from .floating_bars import terminal_state
+        out: list[dict] = []
+        if (ws_id or "").upper() != str(self.document.payload.id or "").upper():
+            return out
+        frames = self.canvas_widget.frames
+        for node in self.terminals_in_order():
+            f = getattr(frames.get(node.id.upper()), "terminal_features", None)
+            out.append({"id": node.id.upper(), "name": getattr(node.content, "name", "") or "Terminal",
+                        "state": terminal_state(f), "unread": bool(f is not None and f.unread),
+                        "kind": getattr(node.content, "agent_type", "") or ""})
+        return out
+
+    def focus_agent(self, node_id: str) -> None:
+        cw = self.canvas_widget
+        if hasattr(cw, "focus_node"):
+            cw.focus_node(node_id)
 
     def set_node_locked(self, node_id: str, locked: bool) -> bool:
         node = self._find_node(node_id)

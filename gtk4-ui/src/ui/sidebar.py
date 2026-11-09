@@ -120,6 +120,9 @@ class SidebarView(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.client = client
         self.store = WorkspaceStore(client)
+        self.agents_provider = None      # callable(ws_id) -> [{id, name, state, unread}] (set by the window)
+        self.on_focus_agent = None       # callable(node_id)
+        self._agent_widgets: dict[str, tuple] = {}
         # Include the 12px outer margins in the 260px pane width so text and search are never clipped.
         self.set_size_request(236, -1)
         self.add_css_class("sidebar-view")
@@ -232,6 +235,54 @@ class SidebarView(Gtk.Box):
         self._bus_handlers = []
         self.close_active_popovers()
 
+    # ---- agents dropdown / activity indicators ---------------------------------------------------------------------------
+    def refresh_agent_indicators(self) -> None:
+        """Open workspace's card: green dot while an agent is working, blue dot + count while answers are unread."""
+        if self._disposed or self.agents_provider is None:
+            return
+        active = (self._active_workspace_id or "").upper()
+        for key, pairs in self._agent_widgets.items():
+            agents = self.agents_provider(key) if key == active else []
+            busy = sum(1 for a in agents if a["state"] == "busy")
+            unread = sum(1 for a in agents if a["unread"])
+            for dot, lbl in pairs:
+                for c in ("busy", "unread"):
+                    dot.remove_css_class(c)
+                dot.set_visible(bool(busy or unread))
+                if unread:
+                    dot.add_css_class("unread")
+                    lbl.set_label(str(unread))
+                    dot.set_tooltip_text(f"{unread} unread" + (f", {busy} working" if busy else ""))
+                elif busy:
+                    dot.add_css_class("busy")
+                    lbl.set_label("")
+                    dot.set_tooltip_text(f"{busy} working")
+
+    def _agents_popover(self, ws_id: str, anchor: Gtk.Widget) -> Gtk.Popover:
+        pop = Gtk.Popover(has_arrow=False, position=Gtk.PositionType.RIGHT, css_classes=["maestri-context-popover"])
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=6, margin_bottom=6, margin_start=6,
+                      margin_end=6, width_request=220)
+        pop.set_child(box)
+        agents = self.agents_provider(ws_id) if self.agents_provider is not None else []
+        if not agents:
+            msg = "Open this workspace to see its agents" if (ws_id.upper() != (self._active_workspace_id or "").upper()) else "No terminals"
+            box.append(Gtk.Label(label=msg, xalign=0, margin_start=6, margin_end=6, css_classes=["dim-label"]))
+        for a in agents:
+            row = Gtk.Button(css_classes=["flat", "maestri-menu-item-btn", "maestri-agent-row"])
+            line = Gtk.Box(spacing=8)
+            state = "unread" if a["unread"] else a["state"]
+            dot = Gtk.Box(width_request=9, height_request=9, valign=Gtk.Align.CENTER)
+            dot.add_css_class("maestri-agent-dot")
+            dot.add_css_class(state)
+            line.append(dot)
+            line.append(Gtk.Label(label=a["name"], xalign=0, hexpand=True, ellipsize=3))
+            line.append(Gtk.Label(label={"busy": "Working", "idle": "Idle", "exited": "Exited"}[a["state"]] if not a["unread"] else "Unread",
+                                  css_classes=["dim-label", "maestri-agent-state"]))
+            row.set_child(line)
+            row.connect("clicked", lambda _b, nid=a["id"], p=pop: (p.popdown(), self.on_focus_agent and self.on_focus_agent(nid)))
+            box.append(row)
+        return pop
+
     def set_active_workspace_id(self, ws_id: str) -> None:
         self._active_workspace_id = ws_id
 
@@ -298,6 +349,7 @@ class SidebarView(Gtk.Box):
         if self._active_workspace_id:
             self._set_badge(self._active_workspace_id, count_terminals(payload.nodes))
             self._select_active_row()
+            GLib.idle_add(lambda: (self.refresh_agent_indicators(), False)[1])
         pending = self._pending_delete
         if pending is not None and pending.id.upper() != (self._active_workspace_id or ""):
             self._pending_delete = None   # we left the workspace being deleted: now it is safe to remove it
@@ -360,6 +412,7 @@ class SidebarView(Gtk.Box):
         while self.ws_list_box.get_first_child():
             self.ws_list_box.remove(self.ws_list_box.get_first_child())
         self._badges = {}
+        self._agent_widgets = {}
 
         if not workspaces:
             if is_search:
@@ -388,6 +441,7 @@ class SidebarView(Gtk.Box):
         for ws in top_level:
             self.ws_list_box.append(self._create_workspace_card(ws, count=self._count_for(ws.id)))
         self._select_active_row()
+        GLib.idle_add(lambda: (self.refresh_agent_indicators(), False)[1])
 
     def _select_active_row(self) -> None:
         active = (self._active_workspace_id or "").upper()
@@ -526,6 +580,19 @@ class SidebarView(Gtk.Box):
         badge.get_label = lambda lbl=term_lbl: f">_ {lbl.get_label()}"
         badges_box.append(badge)
         self._badges.setdefault(entry.id.upper(), []).append((badge, term_lbl))
+
+        # activity dot (working / unread) + dropdown with the workspace's agents
+        act = Gtk.Box(spacing=3, visible=False, valign=Gtk.Align.CENTER, css_classes=["maestri-card-activity"])
+        act.append(Gtk.Box(width_request=9, height_request=9, valign=Gtk.Align.CENTER, css_classes=["maestri-act-dot"]))
+        act_lbl = Gtk.Label(label="")
+        act.append(act_lbl)
+        badges_box.prepend(act)
+        self._agent_widgets.setdefault(entry.id.upper(), []).append((act, act_lbl))
+        if True:
+            menu = Gtk.MenuButton(icon_name="maestri-chevron-down-symbolic", has_frame=False, valign=Gtk.Align.CENTER,
+                                  tooltip_text="Agents in this workspace", css_classes=["flat", "maestri-card-agents-btn"])
+            menu.set_create_popup_func(lambda mb, ws=entry.id.upper(): mb.set_popover(self._agents_popover(ws, mb)))
+            badges_box.append(menu)
 
         row_box.append(badges_box)
         row_box.ws_id = entry.id
