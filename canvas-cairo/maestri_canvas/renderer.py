@@ -141,6 +141,8 @@ class CairoRenderer:
             else:
                 cr.set_source_rgba(*ROPE_STATUS.get(status, ROPE), 1.0 if status in ROPE_STATUS else ROPE_ALPHA)
                 width, dash = 1.5, [6, 4]
+            if c.id == getattr(scene, "hover_connection", None):
+                width += 1.5   # hovered rope: thicker
             cr.set_line_width(width / vp.zoom)   # constant on screen
             cr.set_dash([d / vp.zoom for d in dash])
             _polyline_smooth(cr, pts)

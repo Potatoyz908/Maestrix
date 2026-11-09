@@ -1096,9 +1096,27 @@ class CanvasWidget(Gtk.Overlay):
             return
         if not self.controller.busy:
             t = self.target_at(x, y)
+            self._update_rope_hover(t)
             self.set_cursor_from_name({NodeHeader: "grab", NodePin: "crosshair"}.get(type(t)) or (t.edge.cursor if isinstance(t, NodeEdge) else
                                       ("crosshair" if self.controller.tool != "select" and isinstance(t, Background) else
                                        ("grab" if self.controller.space_held else None))))
+
+    def _update_rope_hover(self, target: Target) -> None:
+        """Hovering a rope names the two nodes it connects (tooltip) and thickens the rope."""
+        cid = target.conn_id if isinstance(target, ConnectionTarget) else None
+        if cid == getattr(self.scene, "hover_connection", None):
+            return
+        self.scene.hover_connection = cid
+        conn = self.scene.connections.get(cid) if cid else None
+        text = None
+        if conn is not None:
+            def name(nid: str) -> str:
+                n = self.scene.get(nid)
+                return (n.title if n is not None and n.title else None) or (nid[:8])
+            text = f"{name(conn.a)}  ↔  {name(conn.b)}"
+        self.set_tooltip_text(text)
+        self.controller.dirty = True
+        self.queue_draw()
 
     def _apply_cursor(self) -> None:
         if self.controller.cursor:
