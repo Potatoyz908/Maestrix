@@ -320,10 +320,6 @@ class TerminalFeatures:
     def _went_idle(self) -> bool:
         self._idle_timer = 0
         self._set_busy(False)
-        # a burst of output that ended while nobody was in this terminal = an answer the user has not read yet
-        # (the first seconds are the core's scrollback replay, not news)
-        if not self.term.has_focus() and (GLib.get_monotonic_time() - self._born) > REPLAY_GRACE_US:
-            self.set_unread(True)
         return GLib.SOURCE_REMOVE
 
     def set_unread(self, unread: bool) -> None:

@@ -12,6 +12,8 @@ final class TerminalSession {
     let roleName: String?
     /// 节点的 agent 类型（来自 TerminalContent.agentType），供 AskHandler 选择等待策略
     var agentType: String = "generic_shell"
+    /// Wall-clock time of the last PTY output (GET /api/terminals "lastOutputAt", epoch seconds): lets the UI show "working" / "unread" for terminals of workspaces that are not open.
+    private(set) var lastOutputAt: Date?
     /// 用户在 UI 中为此节点设置的显示名称（来自 TerminalContent.name）
     var displayName: String?
     /// Agent 实际分配的名称（来自 OMAESTRI_AGENT_NAME 环境变量，由 MaestroHandlers.recruit 注入）
@@ -77,6 +79,7 @@ final class TerminalSession {
         let newLines = text.components(separatedBy: "\n")
         appendToRing(newLines)
         isIdle = false
+        lastOutputAt = Date()
         activityMonitor.recordOutput()
     }
 

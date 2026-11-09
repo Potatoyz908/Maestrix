@@ -86,10 +86,13 @@ class WindowActionsMixin:
         cw = self.canvas_widget
         if GObject.signal_lookup("node-lock-changed", type(cw)):
             cw.connect("node-lock-changed", lambda _c, nid, locked: self.set_node_locked(nid, locked))
-        self.sidebar.agents_provider = self.agents_for_sidebar
+        from .terminal_attention import AttentionMonitor
+        self.attention = AttentionMonitor(self.client, self._focused_terminal_ids, self._attention_updated)
+        self.sidebar.summary_provider = self.attention.summary
+        self.sidebar.agents_provider = self.attention.terminals
         self.sidebar.on_focus_agent = self.focus_agent
-        for sig in ("terminal-activity", "terminal-unread"):
-            cw.connect(sig, lambda *_a: GLib.idle_add(lambda: (self.sidebar.refresh_agent_indicators(), False)[1]))
+        cw.connect("terminal-unread", lambda _c, nid, unread: None if unread else self.attention.mark_seen(nid))
+        self.attention.start()
         if GObject.signal_lookup("terminal-font-size", type(cw)):
             cw.connect("terminal-font-size", lambda _c, nid, size: self._on_terminal_font_size(nid, size))
         if GObject.signal_lookup("node-z-changed", type(cw)):
@@ -106,6 +109,28 @@ class WindowActionsMixin:
         if self.sync is not None:
             self.sync.flush()
 
+    def _focused_terminal_ids(self) -> list[str]:
+        """Terminals of the open workspace whose VTE has the keyboard while this window is the active one."""
+        if not self.is_active():
+            return []
+        out = []
+        for nid, frame in self.canvas_widget.frames.items():
+            f = getattr(frame, "terminal_features", None)
+            if f is not None and f.term.has_focus():
+                out.append(nid)
+        return out
+
+    def _attention_updated(self) -> None:
+        """New picture from the core: header "New" badges of the open canvas follow it, the sidebar pills too."""
+        tracker = self.attention.tracker
+        import time as _t
+        now = _t.time()
+        for nid, frame in self.canvas_widget.frames.items():
+            f = getattr(frame, "terminal_features", None)
+            if f is not None:
+                f.set_unread(tracker.state(nid, now) == "unread")
+        self.sidebar.refresh_agent_indicators()
+
     def agents_for_sidebar(self, ws_id: str) -> list[dict]:
         """Terminals of workspace `ws_id` for the sidebar dropdown: {id, name, state, unread, kind}. Live states for the open
         workspace (busy / idle / exited from the terminal frames); saved terminals of other workspaces are all "idle"."""
@@ -121,10 +146,18 @@ class WindowActionsMixin:
                         "kind": getattr(node.content, "agent_type", "") or ""})
         return out
 
-    def focus_agent(self, node_id: str) -> None:
+    def focus_agent(self, node_id: str, workspace_id: str = "") -> None:
         cw = self.canvas_widget
+        nid = node_id.upper()
+        if nid not in cw.frames:   # a terminal of another workspace: open it first, then focus once its canvas is there
+            row = self.attention.tracker.rows.get(nid) or {}
+            ws = str(row.get("workspaceId") or workspace_id or "")
+            if ws and ws.upper() != str(self.document.payload.id or "").upper():
+                bus.emit("workspace-switched", ws)
+                GLib.timeout_add(1200, lambda: (self.focus_agent(nid), False)[1])
+            return
         if hasattr(cw, "focus_node"):
-            cw.focus_node(node_id)
+            cw.focus_node(nid)
 
     def set_node_locked(self, node_id: str, locked: bool) -> bool:
         node = self._find_node(node_id)

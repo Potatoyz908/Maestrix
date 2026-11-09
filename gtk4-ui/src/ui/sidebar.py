@@ -120,6 +120,7 @@ class SidebarView(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.client = client
         self.store = WorkspaceStore(client)
+        self.summary_provider = None     # callable(ws_id) -> (working, unread) terminals
         self.agents_provider = None      # callable(ws_id) -> [{id, name, state, unread}] (set by the window)
         self.on_focus_agent = None       # callable(node_id)
         self._agent_widgets: dict[str, tuple] = {}
@@ -237,26 +238,22 @@ class SidebarView(Gtk.Box):
 
     # ---- agents dropdown / activity indicators ---------------------------------------------------------------------------
     def refresh_agent_indicators(self) -> None:
-        """Open workspace's card: green dot while an agent is working, blue dot + count while answers are unread."""
-        if self._disposed or self.agents_provider is None:
+        """Every workspace's terminal pill: blue dot + tint when a terminal has an unread answer, pulsing green dot while one is working."""
+        if self._disposed or self.summary_provider is None:
             return
-        active = (self._active_workspace_id or "").upper()
         for key, pairs in self._agent_widgets.items():
-            agents = self.agents_provider(key) if key == active else []
-            busy = sum(1 for a in agents if a["state"] == "busy")
-            unread = sum(1 for a in agents if a["unread"])
-            for dot, lbl in pairs:
+            busy, unread = self.summary_provider(key)
+            for badge, dot in pairs:
                 for c in ("busy", "unread"):
+                    badge.remove_css_class(c)
                     dot.remove_css_class(c)
                 dot.set_visible(bool(busy or unread))
-                if unread:
-                    dot.add_css_class("unread")
-                    lbl.set_label(str(unread))
-                    dot.set_tooltip_text(f"{unread} unread" + (f", {busy} working" if busy else ""))
-                elif busy:
-                    dot.add_css_class("busy")
-                    lbl.set_label("")
-                    dot.set_tooltip_text(f"{busy} working")
+                state = "unread" if unread else ("busy" if busy else "")
+                if state:
+                    badge.add_css_class(state)
+                    dot.add_css_class(state)
+                tip = [t for t in (f"{unread} unread" if unread else "", f"{busy} working" if busy else "") if t]
+                badge.set_tooltip_text(", ".join(tip) if tip else "Terminals")
 
     def _agents_popover(self, ws_id: str, anchor: Gtk.Widget) -> Gtk.Popover:
         pop = Gtk.Popover(has_arrow=False, position=Gtk.PositionType.RIGHT, css_classes=["maestri-context-popover"])
@@ -265,19 +262,19 @@ class SidebarView(Gtk.Box):
         pop.set_child(box)
         agents = self.agents_provider(ws_id) if self.agents_provider is not None else []
         if not agents:
-            msg = "Open this workspace to see its agents" if (ws_id.upper() != (self._active_workspace_id or "").upper()) else "No terminals"
+            msg = "No terminals"
             box.append(Gtk.Label(label=msg, xalign=0, margin_start=6, margin_end=6, css_classes=["dim-label"]))
         for a in agents:
             row = Gtk.Button(css_classes=["flat", "maestri-menu-item-btn", "maestri-agent-row"])
             line = Gtk.Box(spacing=8)
             state = "unread" if a["unread"] else a["state"]
+            label = {"busy": "Working", "idle": "Idle", "exited": "Exited", "unread": "Unread"}.get(state, "Idle")
             dot = Gtk.Box(width_request=9, height_request=9, valign=Gtk.Align.CENTER)
             dot.add_css_class("maestri-agent-dot")
             dot.add_css_class(state)
             line.append(dot)
             line.append(Gtk.Label(label=a["name"], xalign=0, hexpand=True, ellipsize=3))
-            line.append(Gtk.Label(label={"busy": "Working", "idle": "Idle", "exited": "Exited"}[a["state"]] if not a["unread"] else "Unread",
-                                  css_classes=["dim-label", "maestri-agent-state"]))
+            line.append(Gtk.Label(label=label, css_classes=["dim-label", "maestri-agent-state"]))
             row.set_child(line)
             row.connect("clicked", lambda _b, nid=a["id"], p=pop: (p.popdown(), self.on_focus_agent and self.on_focus_agent(nid)))
             box.append(row)
@@ -581,13 +578,10 @@ class SidebarView(Gtk.Box):
         badges_box.append(badge)
         self._badges.setdefault(entry.id.upper(), []).append((badge, term_lbl))
 
-        # activity dot (working / unread) + dropdown with the workspace's agents
-        act = Gtk.Box(spacing=3, visible=False, valign=Gtk.Align.CENTER, css_classes=["maestri-card-activity"])
-        act.append(Gtk.Box(width_request=9, height_request=9, valign=Gtk.Align.CENTER, css_classes=["maestri-act-dot"]))
-        act_lbl = Gtk.Label(label="")
-        act.append(act_lbl)
-        badges_box.prepend(act)
-        self._agent_widgets.setdefault(entry.id.upper(), []).append((act, act_lbl))
+        # the terminal-count pill doubles as the activity indicator: a dot (blue = unread answer, green = working)
+        dot = Gtk.Box(width_request=8, height_request=8, valign=Gtk.Align.CENTER, visible=False, css_classes=["maestri-act-dot"])
+        badge.prepend(dot)
+        self._agent_widgets.setdefault(entry.id.upper(), []).append((badge, dot))
         if True:
             menu = Gtk.MenuButton(icon_name="maestri-chevron-down-symbolic", has_frame=False, valign=Gtk.Align.CENTER,
                                   tooltip_text="Agents in this workspace", css_classes=["flat", "maestri-card-agents-btn"])

@@ -804,9 +804,9 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         .maestri-card-badge image {
             color: #636366;
         }
-        .maestri-card-activity { font-size: 11px; font-weight: 700; color: #0a84ff; }
         .maestri-act-dot { background: #0a84ff; border-radius: 5px; }
-        .maestri-card-activity.busy .maestri-act-dot { background: #23d18b; animation: maestri-badge-pulse 0.9s ease-in-out infinite alternate; }
+        .maestri-card-badge.unread { background-color: rgba(10, 132, 255, 0.16); }
+        .maestri-act-dot.busy { background: #23d18b; animation: maestri-badge-pulse 0.9s ease-in-out infinite alternate; }
         .maestri-card-agents-btn { min-height: 20px; min-width: 20px; padding: 0; opacity: .7; background: transparent; box-shadow: none; border: none; }
         .maestri-card-agents-btn:hover { opacity: 1; background: alpha(currentColor, .08); }
         .maestri-agent-row { padding: 4px 8px; }
@@ -2384,6 +2384,8 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         if self.sync is not None:
             self.sync.close()
             self.sync = None
+        if getattr(self, "attention", None) is not None:
+            self.attention.stop()
         if hasattr(self, "sidebar") and self.sidebar is not None:
             self.sidebar.dispose()   # count poll timer + bus handlers (also closes its popovers)
         if hasattr(self, "floor_button") and self.floor_button is not None:

@@ -975,6 +975,12 @@ class MaestriClient:
         )
         return self._handle_response(resp).json()
 
+    def list_terminals(self) -> list:
+        """GET /api/terminals: PTY metadata of every workspace (terminalId, workspaceId, running, lastOutputAt, ...)."""
+        resp = self.session.get(f"{self.base_url}/api/terminals", headers=self._headers(), timeout=self.timeout)
+        data = self._handle_response(resp).json()
+        return data if isinstance(data, list) else []
+
     def get_terminal(self, terminal_id: str) -> Optional[Dict[str, Any]]:
         """PTY metadata (pid/cols/rows/running/exitCode...) or None when the core has no such session (404)."""
         resp = self.session.get(

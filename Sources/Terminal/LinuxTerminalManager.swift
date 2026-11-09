@@ -201,6 +201,7 @@ final class LinuxTerminalManager: TerminalManaging {
         if let pid = proc?.childPid, pid > 0 { m["pid"] = Int(pid) }
         if let started = proc?.startedAt { m["startedAt"] = ISO8601DateFormatter().string(from: started) }
         if let code = proc?.exitCode { m["exitCode"] = Int(code) }
+        if let last = session.lastOutputAt { m["lastOutputAt"] = last.timeIntervalSince1970 }
         if let name = session.displayName { m["displayName"] = name }
         if let role = session.roleName { m["roleName"] = role }
         if let ws = terminalWorkspaceMap[terminalId] { m["workspaceId"] = ws.uuidString }

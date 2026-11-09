@@ -39,6 +39,9 @@ popover > contents, .maestri-sidebar-menubar popover > contents,
 }
 popover modelbutton label, .maestri-sidebar-menubar popover modelbutton label,
 .maestri-header-menubar popover modelbutton label { color: #edf1ff; }
+.maestri-card-badge { background-color: rgba(255, 255, 255, 0.14); }
+.maestri-card-badge, .maestri-card-badge label, .maestri-card-badge image { color: #ffffff; }
+.maestri-card-badge.unread { background-color: rgba(10, 132, 255, 0.45); }
 .maestri-workspace-card:hover { border-color: #71dcec; }
 /* The open workspace: accent bar on the left + tinted card + cyan border. */
 row:selected .maestri-workspace-card { background: #213556; border-color: #71dcec; box-shadow: inset 4px 0 0 #71dcec; }
