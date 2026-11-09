@@ -81,22 +81,44 @@ def sf_symbol_icon(sf_name: str | None) -> str:
     return icon_name(SF_SYMBOL_ICONS.get(sf_name or "", "folder"))
 
 
-class StatusIndicator(Gtk.Box):
-    """Header connection status: a CSS-drawn dot in the semantic colour + the text. Replaces the 🟢/🔴/⚪/⚠️ prefixes.
+class StatusIndicator(Gtk.MenuButton):
+    """Header server status: a coloured dot + one short word ("Online", "Offline"...). The details (port, standalone mode,
+    save errors) are in the tooltip and in a small popover on click, not in the header itself.
 
-    States: connected (green), error (red), warning (orange), offline / pending (grey). `get_label()` returns only the text,
+    States: connected (green), error (red), warning (orange), offline / pending (grey). `get_label()` returns the detail text,
     so callers and tests that look for "Porta …", "Standalone", "Token Inválido" or "Falha ao Salvar" keep working."""
     STATES = ("connected", "error", "warning", "offline", "pending")
+    SHORT = {"connected": "Online", "error": "Erro", "warning": "Atenção", "offline": "Offline", "pending": "Conectando…"}
+    TITLE = {"connected": "Servidor conectado", "error": "Servidor recusou o acesso", "warning": "Servidor com problema",
+             "offline": "Servidor desconectado", "pending": "Conectando ao servidor…"}
+    HINT = {"offline": "Modo standalone: o canvas funciona localmente, sem agentes conectados.",
+            "error": "Verifique o token de acesso do servidor."}
 
     def __init__(self, state: str = "pending", text: str = "") -> None:
-        super().__init__(spacing=6, valign=Gtk.Align.CENTER)
+        super().__init__(valign=Gtk.Align.CENTER, always_show_arrow=False)
+        self.set_has_frame(False)
         self.add_css_class("maestri-status")
+        box = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
         self.dot = Gtk.Box(valign=Gtk.Align.CENTER)
         self.dot.add_css_class("maestri-status-dot")
-        self.label = Gtk.Label()
-        self.append(self.dot)
-        self.append(self.label)
+        self.short = Gtk.Label()
+        self.short.add_css_class("maestri-status-text")
+        box.append(self.dot)
+        box.append(self.short)
+        self.set_child(box)
+
+        pop_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_top=8, margin_bottom=8,
+                          margin_start=10, margin_end=10)
+        self.pop_title = Gtk.Label(xalign=0, css_classes=["heading"])
+        self.pop_detail = Gtk.Label(xalign=0, selectable=True)
+        self.pop_note = Gtk.Label(xalign=0, wrap=True, max_width_chars=36, css_classes=["dim-label"])
+        for w in (self.pop_title, self.pop_detail, self.pop_note):
+            pop_box.append(w)
+        self.set_popover(Gtk.Popover(child=pop_box))
+
         self.state = ""
+        self._detail = ""
+        self._note = ""
         self.set_status(state, text)
 
     def set_status(self, state: str, text: str) -> None:
@@ -106,10 +128,26 @@ class StatusIndicator(Gtk.Box):
             self.dot.remove_css_class(self.state)
         self.state = state
         self.dot.add_css_class(state)
-        self.label.set_label(text)
+        self._detail = text
+        self._note = ""
+        self.short.set_label(self.SHORT[state])
+        self._refresh()
+
+    def set_tooltip_text(self, text: str | None) -> None:   # window adds a note ("Conectado e sincronizado.")
+        self._note = text or ""
+        self._refresh()
+
+    def _refresh(self) -> None:
+        note = self._note or self.HINT.get(self.state, "")
+        self.pop_title.set_label(self.TITLE[self.state])
+        self.pop_detail.set_label(self._detail)
+        self.pop_detail.set_visible(bool(self._detail) and self._detail != self.SHORT[self.state])
+        self.pop_note.set_label(note)
+        self.pop_note.set_visible(bool(note))
+        Gtk.Widget.set_tooltip_text(self, " · ".join(t for t in (self.TITLE[self.state], self._detail) if t))
 
     def get_label(self) -> str:
-        return self.label.get_label()
+        return self._detail
 
 
 CSS = """
@@ -118,6 +156,8 @@ CSS = """
 .maestri-status-dot.error { background-color: #FF3B30; }
 .maestri-status-dot.warning { background-color: #FF9500; }
 .maestri-status-dot.offline, .maestri-status-dot.pending { background-color: #8e8e93; }
+.maestri-status { padding: 2px 8px; min-height: 0; }
+.maestri-status-text { font-size: 12px; opacity: .8; }
 .maestri-preset-icon-img { -gtk-icon-size: 22px; }
 .maestri-icon-choice image { -gtk-icon-size: 18px; }
 .maestri-expanded { -gtk-icon-transform: rotate(90deg); }
