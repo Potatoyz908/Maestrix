@@ -31,6 +31,8 @@ from gi.repository import Gdk, GLib, Gtk, Pango
 from maestri_core.gitops import GitOps, _valid_ref
 from maestri_core.signals.bus import bus
 
+from .floor_transition import install_floor_transition
+
 Floor = Dict[str, Any]   # floorJSON from the core: id, name, branchName, worktreePath, hooks, createdAt
 
 FLOOR_EVENTS = frozenset({"floorCreated", "floorRemoved", "floorChanged", "floorUpdated", "floorLanded"})
@@ -1740,8 +1742,11 @@ def install_floors(window) -> FloorsController:
         window.floor_button.set_margin_bottom(16)
         window.canvas_widget.get_parent().add_overlay(window.floor_button)
 
+    window.floor_transition = install_floor_transition(window, controller)   # 3D layer animation on a floor switch
+
     def loaded(*_args) -> None:
         controller.floors, controller.statuses, controller.active_floor_id = [], {}, None
+        window.floor_transition._last = None   # a workspace opens on Ground: no animation from the previous one's floor
         controller.refresh()
         controller.start_events()
 
@@ -1750,6 +1755,7 @@ def install_floors(window) -> FloorsController:
         if bus.handler_is_connected(hid):
             bus.disconnect(hid)
         controller.stop_events()
+        window.floor_transition.dispose_bus()
         if hasattr(window, "floor_button") and hasattr(window.floor_button, "_cleanup"):
             window.floor_button._cleanup()
         return False
