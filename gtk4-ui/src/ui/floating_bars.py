@@ -74,6 +74,31 @@ TOP_CSS = """
     background-color: transparent;
     color: #FF453A;
 }
+/* The Draw tool is a Gtk.MenuButton: its node is `menubutton` with an inner `button.toggle`, so the rules above never
+   matched it (it kept the theme's own background/padding/colour, wrong in the light theme). Same look, one level down. */
+.maestri-top-toolbar menubutton.maestri-island-btn { background: none; padding: 0; margin: 0; min-width: 0; min-height: 0; }
+.maestri-top-toolbar menubutton.maestri-island-btn > button {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    border-radius: 8px;
+    min-width: 0;
+    min-height: 0;
+    padding: 6px 9px;
+    color: rgba(235, 235, 245, 0.80);
+}
+.maestri-top-toolbar menubutton.maestri-island-btn > button image {
+    background: none; background-color: transparent; background-image: none;
+    border: none; box-shadow: none; padding: 0; margin: 0; -gtk-icon-shadow: none;
+}
+.maestri-top-toolbar menubutton.maestri-island-btn > button:hover,
+.maestri-top-toolbar menubutton.maestri-island-btn > button:checked {
+    background-color: rgba(255, 255, 255, 0.07);
+    color: #ffffff;
+}
+.maestri-top-toolbar menubutton.maestri-island-btn.active > button { background-color: transparent; color: #0A84FF; }
 """
 _top_css_installed = False
 
@@ -354,6 +379,13 @@ def terminal_activity_counts(nodes, frames):
 AGENT_KINDS = (("claude_code", "Claude Code"), ("codex", "Codex"), ("gemini_cli", "Gemini CLI"),
                ("antigravity", "Antigravity"), ("open_code", "OpenCode"))
 ACTIVITY_POLL_MS = 2000
+
+
+def terminal_state(features) -> str:
+    """busy / idle / exited of a terminal's TerminalFeatures (None = idle)."""
+    if features is not None and features.exited is not None:
+        return "exited"
+    return "busy" if features is not None and features.busy else "idle"
 
 
 def agent_activity_rows(nodes, frames) -> list[tuple[str, list[dict]]]:

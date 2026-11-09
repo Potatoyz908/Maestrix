@@ -75,6 +75,14 @@ tooltip, tooltip.background { background-color: #182239; color: #edf1ff; border:
   background-color: transparent; background-image: none; box-shadow: none; color: #71dcec;   /* the icon colour is the marker */
 }
 .maestri-context-actions-pill button.maestri-island-btn.maestri-island-btn.maestri-island-btn.danger:hover { background-color: rgba(255, 69, 58, 0.14); color: #ff746f; }
+/* Draw tool = Gtk.MenuButton: same island look on its inner button. */
+.maestri-top-toolbar menubutton.maestri-island-btn.maestri-island-btn > button {
+  background-color: transparent; background-image: none; border: none; box-shadow: none; color: #c4cff0;
+}
+.maestri-top-toolbar menubutton.maestri-island-btn.maestri-island-btn > button:hover, .maestri-top-toolbar menubutton.maestri-island-btn.maestri-island-btn > button:checked {
+  background-color: rgba(113, 220, 236, 0.10); background-image: none; color: #ffffff;
+}
+.maestri-top-toolbar menubutton.maestri-island-btn.maestri-island-btn.active > button { background-color: transparent; color: #71dcec; }
 /* Sheets / dialogs (New Workspace, Edit Workspace, New Terminal...): they hard-code light surfaces in window.py. */
 .maestri-modal-window, .maestri-modal-dialog, .maestri-sheet-root { background-color: #151c2e; color: #edf1ff; }
 .maestri-sheet-header { background-color: #151c2e; background-image: none; border-bottom: 1px solid #303956; }
