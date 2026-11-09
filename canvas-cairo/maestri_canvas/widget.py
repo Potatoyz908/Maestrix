@@ -1170,6 +1170,14 @@ class CanvasWidget(Gtk.Overlay):
             f = f.get_parent()
         return False
 
+    def _focus_in_text(self) -> bool:
+        f = self._focus_widget()
+        while f is not None and f is not self:
+            if isinstance(f, (Gtk.TextView, Gtk.Editable)):
+                return True
+            f = f.get_parent()
+        return False
+
     # Ctrl+=/-/0 still zoom the canvas and Ctrl+1..9 jump between terminals, even from inside a shell (macOS: Cmd+number)
     _TERMINAL_PASSTHROUGH = frozenset({"equal", "plus", "minus", "underscore", "0", *"123456789"})
 
@@ -1179,6 +1187,11 @@ class CanvasWidget(Gtk.Overlay):
         if name in ("control_l", "control_r"):
             self.show_number_badges(True)   # macOS: holding Cmd shows each terminal's number
             return False
+        # Ctrl+Z: canvas undo (moves, resizes, new/deleted nodes), unless a shell or a text field has the focus (they own it)
+        if name == "z" and mods & Mods.CTRL and not mods & Mods.SHIFT and not self._focus_in_terminal() \
+                and not self._focus_in_text():
+            undo = getattr(self.get_root(), "canvas_undo", None)
+            return bool(undo is not None and undo.undo())
         # A focused shell owns the keyboard (Ctrl+W = delete word, Ctrl+A = line start...): only canvas zoom chords are taken.
         if self._focus_in_terminal() and not (mods & Mods.CTRL and name in self._TERMINAL_PASSTHROUGH):
             return False

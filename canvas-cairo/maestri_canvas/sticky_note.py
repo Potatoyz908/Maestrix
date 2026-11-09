@@ -252,7 +252,9 @@ class StickyNoteView(Gtk.Box):
 
     def _set_text(self, text: str) -> None:
         self._applying = True
+        self.buf.begin_irreversible_action()   # loading / external reload is not an edit: Ctrl+Z must not blank the note
         self.buf.set_text(text)
+        self.buf.end_irreversible_action()
         self._applying = False
 
     def _on_loaded(self, text: str | None, err: Exception | None) -> None:

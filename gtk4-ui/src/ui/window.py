@@ -43,6 +43,7 @@ from maestri_canvas.terminal_themes import apply_terminal_style
 from maestri_canvas.viewport import Viewport
 from maestri_canvas.widget import CanvasWidget, is_terminal, load_vte, terminal_of, terminate_terminal
 from .drawing import DrawingTools
+from .canvas_undo import CanvasUndo
 from .ask_agent import install_ask_agent
 from .routines_window import install_routines
 from .floors import install_floors
@@ -170,6 +171,7 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
                     "connection-created", "connection-changed", "connection-removed"):
             self._bus_handlers.append((bus, bus.connect(sig, self._on_canvas_mutated)))
         self._setup_shortcuts()
+        self.canvas_undo = CanvasUndo(self)      # Ctrl+Z on the canvas (moves, resizes, new and deleted nodes)
         self.floors = install_floors(self)       # floating Floors button (bottom-right) + New/Land/Delete dialogs
         self.routines = install_routines(self)   # File → Routines (Ctrl+Shift+R), scheduler on the main loop
         self.ask_agent = install_ask_agent(self)  # DiffView 'Ask agent' -> bus 'ask-agent' -> active terminal
@@ -2056,6 +2058,8 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         old = node.frame
         resized = (old.width, old.height) != (w, h)
         node.frame = NodeFrame(x=x, y=y, width=w, height=h)
+        if getattr(self, "canvas_undo", None) is not None:
+            self.canvas_undo.frame_changed(node.id, old, node.frame, final)
         # Bridge canvas-widget signals onto the SignalBus; WorkspaceSync debounces + persists.
         if resized:
             bus.emit("node-resized", node.id, x, y, w, h)
@@ -2065,6 +2069,8 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             self.sync.flush()
 
     def _on_canvas_delete_requested(self, _canvas, ids):
+        if getattr(self, "canvas_undo", None) is not None:
+            self.canvas_undo.nodes_deleting(ids)
         for nid in tuple(ids):
             node = self._find_node(nid)
             if node is not None and node.is_locked:
