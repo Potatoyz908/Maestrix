@@ -136,7 +136,12 @@ class SettingsWindow(Gtk.Window):
         self.theme_dropdown = self._dropdown(("light", "dark"), {"light": "Light", "dark": "Dark · Maestrix"}, self.prefs.interface_theme)
         self.theme_dropdown.connect("notify::selected", lambda d, _p: self._set("interface_theme", ("light", "dark")[d.get_selected()]))
         self._row(g, 5, "Interface theme", self.theme_dropdown)
-        self._build_remote_ssh(g, 6)
+        self.mascot_switch = Gtk.Switch(active=self.prefs.mascot_enabled, valign=Gtk.Align.CENTER,
+                                        tooltip_text="An animated Maestrix mascot appears while the window is minimized and "
+                                                     "tells you when an agent finishes its task. Drag it or close it anytime.")
+        self.mascot_switch.connect("notify::active", lambda s, _p: self._set("mascot_enabled", s.get_active()))
+        self._row(g, 6, "Mascot when minimized", self.mascot_switch)
+        self._build_remote_ssh(g, 7)
         return g
 
     # ---- Remote SSH (GeneralSettingsView.swift: only sshEnabled / sshTunnelPort / sshScriptPath here; the host is chosen per
