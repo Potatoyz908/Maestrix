@@ -742,6 +742,11 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         .maestri-group-header:hover {
             background-color: rgba(0, 0, 0, 0.04);
         }
+        .maestri-group-container:drop(active), .maestri-workspace-list:drop(active) {
+            background-color: rgba(10, 132, 255, 0.12);
+            box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.6);
+            border-radius: 8px;
+        }
         .maestri-group-title {
             font-size: 12px;
             font-weight: 600;

@@ -32,6 +32,8 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
+WS_DRAG_PREFIX = "maestri-workspace:"
+
 from maestri_core.client.api import MaestriClient
 from maestri_core.models.workspace import SidebarGroup, SidebarLayout, WorkspaceEntry
 from maestri_core.signals.bus import bus
@@ -189,6 +191,7 @@ class SidebarView(Gtk.Box):
         self.ws_box.append(self.groups_container)
 
         self.ws_list_box = Gtk.ListBox()
+        self._add_ws_drop(self.ws_list_box, None)   # dragging a grouped workspace here takes it out of the group
         self.ws_list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.ws_list_box.add_css_class("maestri-workspace-list")
         self.ws_list_box.connect("row-activated", self._on_ws_selected)
@@ -510,6 +513,7 @@ class SidebarView(Gtk.Box):
 
         items_list.set_visible(not group.is_collapsed)
         group_vbox.append(items_list)
+        self._add_ws_drop(group_vbox, group.id)
         return group_vbox
 
     def _create_workspace_card(
@@ -602,6 +606,12 @@ class SidebarView(Gtk.Box):
             lambda _g, _n, x, y, ent=entry, gid=group_id, w=row_box: self._show_workspace_context_menu(w, x, y, ent, gid)
         )
         row_box.add_controller(rc_gesture)
+
+        # Drag the card onto a group (header or its list) to move it there, or onto the main list to ungroup it
+        drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+        drag.connect("prepare", lambda _s, _x, _y, ws=entry.id: Gdk.ContentProvider.new_for_value(f"{WS_DRAG_PREFIX}{ws}"))
+        drag.connect("drag-begin", lambda s, _d, w=row_box: s.set_icon(Gtk.WidgetPaintable.new(w), 12, 12))
+        row_box.add_controller(drag)
 
         return row_box
 
@@ -733,6 +743,31 @@ class SidebarView(Gtk.Box):
             GLib.idle_add(done)
 
         threading.Thread(target=worker, name="maestri-sidebar-action", daemon=True).start()
+
+    def _add_ws_drop(self, widget: Gtk.Widget, group_id: Optional[str]) -> None:
+        """Accept a dragged workspace card: group_id = move into that group, None = back to the top level."""
+        target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        target.connect("drop", lambda _t, value, _x, _y, gid=group_id: self._on_ws_dropped(value, gid))
+        widget.add_controller(target)
+
+    def _on_ws_dropped(self, value, group_id: Optional[str]) -> bool:
+        if not isinstance(value, str) or not value.startswith(WS_DRAG_PREFIX):
+            return False
+        ws_id = value[len(WS_DRAG_PREFIX):]
+        current = next((g for g in self._sidebar_layout.groups if ws_id.upper() in {i.upper() for i in g.items}), None)
+        if (current.id if current else None) == group_id:
+            return False   # dropped where it already is
+        if group_id is not None:
+            target = next((g for g in self._sidebar_layout.groups if g.id == group_id), None)
+            if target is not None and target.is_collapsed:
+                target.is_collapsed = False   # show where it landed
+            moved = core_link.move_to_group(self._sidebar_layout, ws_id, group_id)
+        else:
+            core_link.remove_from_group(self._sidebar_layout, ws_id)
+            moved = True
+        if moved:   # re-render after the drag finishes (the source card is rebuilt)
+            GLib.idle_add(lambda: (self._save_sidebar_layout(), False)[1])
+        return moved
 
     def _save_sidebar_layout(self) -> None:
         """Re-render now, persist a snapshot of the layout in the background."""
