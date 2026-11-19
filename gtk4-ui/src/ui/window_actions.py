@@ -130,13 +130,6 @@ class WindowActionsMixin:
             if f is not None:
                 f.set_unread(tracker.state(nid, now) == "unread")
         self.sidebar.refresh_agent_indicators()
-        # every workspace: terminals that just became "unread" = an agent finished its task -> the mascot says so
-        unread = {tid for tid in tracker.rows if tracker.state(tid, now) == "unread"}
-        fresh = unread - getattr(self, "_unread_before", set())
-        self._unread_before = unread
-        mascot = getattr(self, "mascot", None)
-        if fresh and mascot is not None:
-            mascot.agents_finished([tracker.rows[t].get("displayName") or "Um agente" for t in sorted(fresh)])
 
     def agents_for_sidebar(self, ws_id: str) -> list[dict]:
         """Terminals of workspace `ws_id` for the sidebar dropdown: {id, name, state, unread, kind}. Live states for the open

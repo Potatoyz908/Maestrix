@@ -42,7 +42,6 @@ class Preferences:
     scrollback_memory_limit: bool = False
     option_as_meta: bool = False
     canvas_snapping: bool = True   # smart alignment guides while dragging nodes (Linux port; unknown keys are ignored by Swift)
-    mascot_enabled: bool = False   # Linux port: animated mascot while the window is minimized, says when an agent finished
     _extra: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict:
@@ -60,7 +59,6 @@ class Preferences:
             "scrollbackMemoryLimit": bool(self.scrollback_memory_limit),
             "optionAsMeta": bool(self.option_as_meta),
             "canvasSnapping": bool(self.canvas_snapping),
-            "mascotEnabled": bool(self.mascot_enabled),
         })
         return d
 
@@ -70,7 +68,7 @@ class Preferences:
         base = cls()
         known = {"schemaVersion", "terminalFontFamily", "terminalFontSize", "terminalTheme", "canvasBackground",
                  "preferredIDE", "language", "autosaveIntervalSeconds", "scrollbackMemoryLimit", "optionAsMeta",
-                 "canvasSnapping", "interfaceTheme", "mascotEnabled"}
+                 "canvasSnapping", "interfaceTheme"}
         try:
             size = float(d.get("terminalFontSize", base.terminal_font_size))
         except (TypeError, ValueError):
@@ -92,7 +90,6 @@ class Preferences:
             scrollback_memory_limit=bool(d.get("scrollbackMemoryLimit", False)),
             option_as_meta=bool(d.get("optionAsMeta", False)),
             canvas_snapping=bool(d.get("canvasSnapping", True)),
-            mascot_enabled=bool(d.get("mascotEnabled", False)),
             _extra={k: v for k, v in d.items() if k not in known},
         )
 

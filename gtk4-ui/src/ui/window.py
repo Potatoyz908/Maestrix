@@ -44,7 +44,6 @@ from maestri_canvas.viewport import Viewport
 from maestri_canvas.widget import CanvasWidget, is_terminal, load_vte, terminal_of, terminate_terminal
 from .drawing import DrawingTools
 from .canvas_undo import CanvasUndo
-from .mascot import MascotController
 from .ask_agent import install_ask_agent
 from .routines_window import install_routines
 from .floors import install_floors
@@ -173,7 +172,6 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             self._bus_handlers.append((bus, bus.connect(sig, self._on_canvas_mutated)))
         self._setup_shortcuts()
         self.canvas_undo = CanvasUndo(self)      # Ctrl+Z on the canvas (moves, resizes, new and deleted nodes)
-        self.mascot = MascotController(self, self.preferences.mascot_enabled)   # minimized: mascot says when agents finish
         self.floors = install_floors(self)       # floating Floors button (bottom-right) + New/Land/Delete dialogs
         self.routines = install_routines(self)   # File → Routines (Ctrl+Shift+R), scheduler on the main loop
         self.ask_agent = install_ask_agent(self)  # DiffView 'Ask agent' -> bus 'ask-agent' -> active terminal
@@ -1598,7 +1596,6 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         cw = self.canvas_widget
         cw.renderer.background = prefs.canvas_background
         cw.set_snapping(prefs.canvas_snapping)
-        self.mascot.set_enabled(prefs.mascot_enabled)
         cw.controller.dirty = True
         cw.queue_draw()
         for node in self.document.payload.nodes:
@@ -2401,8 +2398,6 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
             self.sync = None
         if getattr(self, "attention", None) is not None:
             self.attention.stop()
-        if getattr(self, "mascot", None) is not None:
-            self.mascot.destroy()
         if hasattr(self, "sidebar") and self.sidebar is not None:
             self.sidebar.dispose()   # count poll timer + bus handlers (also closes its popovers)
         if hasattr(self, "floor_button") and self.floor_button is not None:
