@@ -43,6 +43,7 @@ class Preferences:
     option_as_meta: bool = False
     canvas_snapping: bool = True   # smart alignment guides while dragging nodes (Linux port; unknown keys are ignored by Swift)
     agent_economy_mode: bool = False   # short agent-to-agent prompts/replies, read by the core on every ask (AgentEconomy)
+    agent_compact_language: bool = False   # with economy mode: agents talk in MX telegrams (do:/in:/out: -> ok:/err:/q:)
     _extra: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict:
@@ -61,6 +62,7 @@ class Preferences:
             "optionAsMeta": bool(self.option_as_meta),
             "canvasSnapping": bool(self.canvas_snapping),
             "agentEconomyMode": bool(self.agent_economy_mode),
+            "agentCompactLanguage": bool(self.agent_compact_language),
         })
         return d
 
@@ -70,7 +72,8 @@ class Preferences:
         base = cls()
         known = {"schemaVersion", "terminalFontFamily", "terminalFontSize", "terminalTheme", "canvasBackground",
                  "preferredIDE", "language", "autosaveIntervalSeconds", "scrollbackMemoryLimit", "optionAsMeta",
-                 "canvasSnapping", "interfaceTheme", "agentEconomyMode"}
+                 "canvasSnapping", "interfaceTheme", "agentEconomyMode",
+                 "agentCompactLanguage"}
         try:
             size = float(d.get("terminalFontSize", base.terminal_font_size))
         except (TypeError, ValueError):
@@ -93,6 +96,7 @@ class Preferences:
             option_as_meta=bool(d.get("optionAsMeta", False)),
             canvas_snapping=bool(d.get("canvasSnapping", True)),
             agent_economy_mode=bool(d.get("agentEconomyMode", False)),
+            agent_compact_language=bool(d.get("agentCompactLanguage", False)),
             _extra={k: v for k, v in d.items() if k not in known},
         )
 

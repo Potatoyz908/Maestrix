@@ -48,3 +48,10 @@ def test_agent_economy_mode_round_trip_default_off():
     assert Preferences().agent_economy_mode is False
     d = Preferences(agent_economy_mode=True).to_dict()
     assert d["agentEconomyMode"] is True and Preferences.from_dict(d).agent_economy_mode is True
+
+
+def test_agent_compact_language_round_trip_default_off():
+    from maestri_core.preferences import Preferences
+    assert Preferences().agent_compact_language is False
+    d = Preferences(agent_economy_mode=True, agent_compact_language=True).to_dict()
+    assert d["agentCompactLanguage"] is True and Preferences.from_dict(d).agent_compact_language is True

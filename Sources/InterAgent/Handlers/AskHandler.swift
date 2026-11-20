@@ -112,8 +112,9 @@ final class AskHandler {
 
         let tid = agent.terminalId
         let isAgent = session.agentType != "generic_shell"
-        let economy = AgentEconomy.isOn()
-        let text = raw ? text : AgentEconomy.prompt(text, toAgent: isAgent, on: economy)
+        let mode = AgentEconomy.mode()
+        let economy = mode.economy
+        let text = raw ? text : AgentEconomy.prompt(text, toAgent: isAgent, on: economy, compactLanguage: mode.compactLanguage)
         let before = tm.bufferText(for: tid) ?? ""
         let activity = OutputActivity()
         let unsubscribe = tm.observeOutput(for: tid) { _ in activity.touch() }
@@ -146,7 +147,10 @@ final class AskHandler {
                                             payload: ["terminalId": tid.uuidString])
         }
         let reply = Self.reply(before: before, after: tm.bufferText(for: tid) ?? session.recentOutput(lines: 80))
-        return .success(economy ? AgentEconomy.compact(reply, limit: AgentEconomy.replyLineLimit) : reply)
+        guard economy else { return .success(reply) }
+        let short = AgentEconomy.compact(reply, limit: AgentEconomy.replyLineLimit)
+        // "MX› " tells the asking agent that the compact language is on, so its next asks use it too
+        return .success(mode.compactLanguage && isAgent ? AgentEconomy.mxReplyPrefix + short : short)
     }
 
     /// Screen text produced after `before`: the new lines when the buffer grew in place, otherwise (a TUI redrew the

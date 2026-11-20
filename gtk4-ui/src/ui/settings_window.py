@@ -143,7 +143,15 @@ class SettingsWindow(Gtk.Window):
                                                       "Applies at once to running agents.")
         self.economy_switch.connect("notify::active", lambda s, _p: self._set("agent_economy_mode", s.get_active()))
         self._row(g, 6, "Agent economy mode (fewer tokens)", self.economy_switch)
-        self._build_remote_ssh(g, 7)
+        self.mx_switch = Gtk.Switch(active=self.prefs.agent_compact_language, valign=Gtk.Align.CENTER,
+                                    sensitive=self.prefs.agent_economy_mode,
+                                    tooltip_text="With economy mode: agents talk to each other in MX, a telegraphic "
+                                                 "language (do:/in:/ctx:/out: -> ok:/err:/q:), not prose. Hard for people "
+                                                 "to read, cheapest for the agents.")
+        self.mx_switch.connect("notify::active", lambda s, _p: self._set("agent_compact_language", s.get_active()))
+        self.economy_switch.connect("notify::active", lambda s, _p: self.mx_switch.set_sensitive(s.get_active()))
+        self._row(g, 7, "Compact agent language (MX)", self.mx_switch)
+        self._build_remote_ssh(g, 8)
         return g
 
     # ---- Remote SSH (GeneralSettingsView.swift: only sshEnabled / sshTunnelPort / sshScriptPath here; the host is chosen per

@@ -155,6 +155,10 @@ final class CollaborationTests: IsolatedDataDirTestCase {
         XCTAssertTrue(p.hasPrefix("review x  [Maestrix economy mode"))
         XCTAssertFalse(p.contains("\n"))   // typed into a TUI: a newline would submit early
         XCTAssertEqual(AgentEconomy.prompt(p, toAgent: true, on: true), p)
+        let mx = AgentEconomy.prompt("do:fix in:a.py out:ok|err", toAgent: true, on: true, compactLanguage: true)
+        XCTAssertTrue(mx.hasSuffix("out:<shape>.") && mx.contains("[MX]") && !mx.contains("\n"))
+        XCTAssertEqual(AgentEconomy.prompt(mx, toAgent: true, on: true, compactLanguage: true), mx)
+        XCTAssertEqual(AgentEconomy.prompt("ls", toAgent: false, on: true, compactLanguage: true), "ls")
     }
 
     // MARK: - K7

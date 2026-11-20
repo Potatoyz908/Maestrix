@@ -177,6 +177,18 @@ public final class SkillInjector {
     Notes support line-range reads: `omaestri note read "Note Name" <offset> <limit>` where offset is the starting line number and limit is how many lines to return.
 
     Use `omaestri note write` to replace the entire note content. Use `omaestri note edit` for surgical in-place replacements.
+
+    ## Compact language (MX)
+
+    When an `ask` reply starts with `MX›` or a prompt ends with `[MX]`, the user turned on Maestrix's compact agent language
+    to save tokens. Then talk to agents only in MX telegrams, never prose, no greetings, no recaps:
+
+    - request: `do:<task> in:<paths> ctx:<facts they lack> out:<shape of reply>`
+      e.g. `do:fix null deref login in:src/auth.py:40-60 ctx:tests/test_auth.py fails out:ok|err`
+    - reply: `ok:<result>` | `err:<cause>` | `q:<question>` — at most 3 lines, items split by `;`,
+      long content (code, logs, lists) goes to a file or note and the reply carries `@path`
+      e.g. `ok:fixed src/auth.py:52 guard None;tests 14/14`
+    - point to files and lines instead of pasting them; send only what the other agent cannot read itself.
     """
 
     // MARK: open-maestri-portal

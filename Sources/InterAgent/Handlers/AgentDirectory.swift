@@ -139,16 +139,29 @@ enum AgentEconomy {
     static let promptSuffix = "  [Maestrix economy mode: reply in at most 5 short lines with only the result. "
         + "Put long content (code, logs, lists) in a file or note and reply with its path. No preamble, no recap.]"
 
-    static func isOn() -> Bool {
+    /// MX, the compact agent language (economy mode + preferences `agentCompactLanguage`): requests and replies are
+    /// key:value telegrams instead of prose. Grammar (also in the open-maestri skill):
+    ///   request  do:<task> in:<paths> ctx:<facts> out:<shape>
+    ///   reply    ok:<result> | err:<cause> | q:<question>   (<=3 lines, items split by ";", long content -> @path)
+    static let mxSuffix = "  [MX] reply MX only, no prose: ok:<result> | err:<cause> | q:<question>, max 3 lines, "
+        + "items split by ;, long content in a file -> @path. Your own asks: do:<task> in:<paths> ctx:<facts> out:<shape>."
+    static let mxReplyPrefix = "MX› "
+
+    struct Mode: Equatable { var economy: Bool; var compactLanguage: Bool }
+
+    static func mode() -> Mode {
         guard let data = PersistenceManager.shared.preferencesSnapshot(),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
-        return (obj["agentEconomyMode"] as? Bool) ?? false
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return Mode(economy: false, compactLanguage: false) }
+        let economy = (obj["agentEconomyMode"] as? Bool) ?? false
+        return Mode(economy: economy, compactLanguage: economy && ((obj["agentCompactLanguage"] as? Bool) ?? false))
     }
 
+    static func isOn() -> Bool { mode().economy }
+
     /// The prompt as sent to an agent: unchanged when economy mode is off or the target is a plain shell.
-    static func prompt(_ text: String, toAgent: Bool, on: Bool) -> String {
-        guard on, toAgent, !text.contains("[Maestrix economy mode") else { return text }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines) + promptSuffix
+    static func prompt(_ text: String, toAgent: Bool, on: Bool, compactLanguage: Bool = false) -> String {
+        guard on, toAgent, !text.contains("[Maestrix economy mode"), !text.contains("[MX]") else { return text }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines) + (compactLanguage ? mxSuffix : promptSuffix)
     }
 
     private static let boxChars = Set("─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▔▁▏▕╌╍┄┅┈┉ ")
