@@ -136,7 +136,14 @@ class SettingsWindow(Gtk.Window):
         self.theme_dropdown = self._dropdown(("light", "dark"), {"light": "Light", "dark": "Dark · Maestrix"}, self.prefs.interface_theme)
         self.theme_dropdown.connect("notify::selected", lambda d, _p: self._set("interface_theme", ("light", "dark")[d.get_selected()]))
         self._row(g, 5, "Interface theme", self.theme_dropdown)
-        self._build_remote_ssh(g, 6)
+        self.economy_switch = Gtk.Switch(active=self.prefs.agent_economy_mode, valign=Gtk.Align.CENTER,
+                                         tooltip_text="Agents spend fewer tokens talking to each other: every ask asks for a "
+                                                      "short reply (long content goes to a file or note) and replies come "
+                                                      "back without the terminal's boxes and status bars, at most 40 lines. "
+                                                      "Applies at once to running agents.")
+        self.economy_switch.connect("notify::active", lambda s, _p: self._set("agent_economy_mode", s.get_active()))
+        self._row(g, 6, "Agent economy mode (fewer tokens)", self.economy_switch)
+        self._build_remote_ssh(g, 7)
         return g
 
     # ---- Remote SSH (GeneralSettingsView.swift: only sshEnabled / sshTunnelPort / sshScriptPath here; the host is chosen per

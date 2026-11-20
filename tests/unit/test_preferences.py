@@ -41,3 +41,10 @@ def test_canvas_snapping_defaults_on_and_roundtrips(tmp_path):
     store.save(p)
     assert json.loads((tmp_path / "preferences.json").read_text())["canvasSnapping"] is False
     assert store.load().canvas_snapping is False
+
+
+def test_agent_economy_mode_round_trip_default_off():
+    from maestri_core.preferences import Preferences
+    assert Preferences().agent_economy_mode is False
+    d = Preferences(agent_economy_mode=True).to_dict()
+    assert d["agentEconomyMode"] is True and Preferences.from_dict(d).agent_economy_mode is True

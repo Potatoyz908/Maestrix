@@ -28,6 +28,7 @@ struct Preferences: Codable, Equatable {
     var scrollbackMemoryLimit: Bool     // 是否限制每个终端的 scrollback 内存
     var optionAsMeta: Bool              // 将 Option 用作 Meta 键
     var autosaveIntervalSeconds: Int    // 自动保存间隔（秒），与 Maestri preferences 格式对齐
+    var agentEconomyMode: Bool          // Linux: shorter agent-to-agent prompts/replies (AgentEconomy)
 
     init() {
         self.schemaVersion = 1
@@ -53,6 +54,7 @@ struct Preferences: Codable, Equatable {
         self.scrollbackMemoryLimit = false
         self.optionAsMeta = false
         self.autosaveIntervalSeconds = 30
+        self.agentEconomyMode = false
     }
 
     /// 自定义解码：新增字段使用默认值，兼容旧版 JSON
@@ -81,6 +83,7 @@ struct Preferences: Codable, Equatable {
         scrollbackMemoryLimit = try container.decodeIfPresent(Bool.self, forKey: .scrollbackMemoryLimit) ?? false
         optionAsMeta = try container.decodeIfPresent(Bool.self, forKey: .optionAsMeta) ?? false
         autosaveIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .autosaveIntervalSeconds) ?? 30
+        agentEconomyMode = try container.decodeIfPresent(Bool.self, forKey: .agentEconomyMode) ?? false
     }
 }
 

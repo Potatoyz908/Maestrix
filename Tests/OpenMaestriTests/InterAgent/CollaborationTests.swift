@@ -138,6 +138,25 @@ final class CollaborationTests: IsolatedDataDirTestCase {
         XCTAssertEqual(TerminalText.tidy("\u{1B}[31mred\u{1B}[0m  \r\n\n\n\nx\u{1B}]0;title\u{07}"), "red\n\nx")
     }
 
+    func testEconomyModeCompactsTuiChromeAndShortensPrompts() {
+        let screen = """
+        ⏺ Fixed the login bug in auth.py (2 lines).
+        ╭──────────────────────────────────────╮
+        │ >                                    │
+        ╰──────────────────────────────────────╯
+          ? for shortcuts            ⏵⏵ bypass permissions on
+        ✻ Thinking… (3s · esc to interrupt)
+        """
+        XCTAssertEqual(AgentEconomy.compact(screen, limit: 40), "⏺ Fixed the login bug in auth.py (2 lines).")
+        XCTAssertEqual(AgentEconomy.compact("a\nb\nc", limit: 2), "b\nc")
+        XCTAssertEqual(AgentEconomy.prompt("hi", toAgent: true, on: false), "hi")
+        XCTAssertEqual(AgentEconomy.prompt("ls", toAgent: false, on: true), "ls")
+        let p = AgentEconomy.prompt("review x", toAgent: true, on: true)
+        XCTAssertTrue(p.hasPrefix("review x  [Maestrix economy mode"))
+        XCTAssertFalse(p.contains("\n"))   // typed into a TUI: a newline would submit early
+        XCTAssertEqual(AgentEconomy.prompt(p, toAgent: true, on: true), p)
+    }
+
     // MARK: - K7
 
     func testNoteCreateReadScopeChainAndDelete() async throws {

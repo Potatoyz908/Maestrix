@@ -111,6 +111,9 @@ final class AskHandler {
         defer { if let connId { cm.updateStatus(.idle, for: connId) } }
 
         let tid = agent.terminalId
+        let isAgent = session.agentType != "generic_shell"
+        let economy = AgentEconomy.isOn()
+        let text = raw ? text : AgentEconomy.prompt(text, toAgent: isAgent, on: economy)
         let before = tm.bufferText(for: tid) ?? ""
         let activity = OutputActivity()
         let unsubscribe = tm.observeOutput(for: tid) { _ in activity.touch() }
@@ -133,7 +136,6 @@ final class AskHandler {
         }
         logger.debug("ask -> \(tid.uuidString.prefix(8)): \(text.prefix(50))")
 
-        let isAgent = session.agentType != "generic_shell"
         if isAgent {
             await waitForQuiet(activity, quiet: Self.agentQuietSeconds, ceiling: Self.agentCeiling)
         } else {
@@ -143,7 +145,8 @@ final class AskHandler {
             EventBroadcaster.shared.publish(type: "terminalBecameIdle", workspaceId: tm.terminalWorkspaceMap[tid],
                                             payload: ["terminalId": tid.uuidString])
         }
-        return .success(Self.reply(before: before, after: tm.bufferText(for: tid) ?? session.recentOutput(lines: 80)))
+        let reply = Self.reply(before: before, after: tm.bufferText(for: tid) ?? session.recentOutput(lines: 80))
+        return .success(economy ? AgentEconomy.compact(reply, limit: AgentEconomy.replyLineLimit) : reply)
     }
 
     /// Screen text produced after `before`: the new lines when the buffer grew in place, otherwise (a TUI redrew the

@@ -128,3 +128,50 @@ enum TerminalText {
         return out
     }
 }
+
+/// Economy mode (preferences `agentEconomyMode`, toggled in the Linux Settings): agents talk to each other with fewer
+/// tokens. `ask` asks the target for a short answer and both `ask` and `check` return the answer without the TUI chrome
+/// (box borders, spinners, status/shortcut bars) and with fewer lines. Read from the file on every call, so the switch
+/// applies at once to every agent, without restarting them.
+enum AgentEconomy {
+    static let replyLineLimit = 40
+    static let checkLineLimit = 12
+    static let promptSuffix = "  [Maestrix economy mode: reply in at most 5 short lines with only the result. "
+        + "Put long content (code, logs, lists) in a file or note and reply with its path. No preamble, no recap.]"
+
+    static func isOn() -> Bool {
+        guard let data = PersistenceManager.shared.preferencesSnapshot(),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return (obj["agentEconomyMode"] as? Bool) ?? false
+    }
+
+    /// The prompt as sent to an agent: unchanged when economy mode is off or the target is a plain shell.
+    static func prompt(_ text: String, toAgent: Bool, on: Bool) -> String {
+        guard on, toAgent, !text.contains("[Maestrix economy mode") else { return text }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines) + promptSuffix
+    }
+
+    private static let boxChars = Set("─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▔▁▏▕╌╍┄┅┈┉ ")
+    private static let chrome = ["esc to interrupt", "? for shortcuts", "shift+tab", "auto-accept", "bypass permissions",
+                                 "ctrl+c to", "ctrl-c to", "press enter to", "context left", "tokens used", "⏵⏵", "⏸"]
+
+    /// Screen text without TUI chrome: lines made only of box drawing go, the side borders of an input box are cut,
+    /// status / shortcut / spinner lines are dropped, blank runs collapse; then at most `limit` lines from the end.
+    static func compact(_ text: String, limit: Int) -> String {
+        var out: [String] = []
+        for raw in text.components(separatedBy: "\n") {
+            var line = raw
+            if !line.isEmpty, line.allSatisfy({ boxChars.contains($0) }) { continue }
+            while let f = line.first, "│┃║".contains(f) { line.removeFirst() }
+            while let l = line.last, "│┃║ ".contains(l) { line.removeLast() }
+            let lower = line.lowercased()
+            if chrome.contains(where: { lower.contains($0) }) { continue }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == ">" || trimmed == "❯" || trimmed == "›" { continue }   // empty input prompt of the TUI
+            if trimmed.isEmpty, out.last?.isEmpty ?? true { continue }
+            out.append(trimmed.isEmpty ? "" : line)
+        }
+        while out.last?.isEmpty == true { out.removeLast() }
+        return out.suffix(max(1, limit)).joined(separator: "\n")
+    }
+}

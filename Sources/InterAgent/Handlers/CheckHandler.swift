@@ -16,7 +16,8 @@ final class CheckHandler {
         guard args.count >= 2 else {
             return "error: usage: omaestri check \"TargetAgent\" [lines]"
         }
-        let lineCount = args.count >= 3 ? max(1, Int(args[2]) ?? 20) : 20
+        let economy = AgentEconomy.isOn()
+        let lineCount = args.count >= 3 ? max(1, Int(args[2]) ?? 20) : (economy ? AgentEconomy.checkLineLimit : 20)
         guard let caller = terminalId else { return "error: missing terminal ID" }
         guard let agent = AgentDirectory.resolve(args[1], from: caller) else {
             return "error: agent '\(args[1])' not found in connections"
@@ -25,7 +26,8 @@ final class CheckHandler {
             return "error: agent '\(agent.name)' is not running"
         }
         let screen = tm.bufferText(for: agent.terminalId) ?? session.recentOutput(lines: lineCount * 4)
-        let text = TerminalText.lastLines(TerminalText.tidy(screen), lineCount)
+        let tidy = TerminalText.tidy(screen)
+        let text = economy ? AgentEconomy.compact(tidy, limit: lineCount) : TerminalText.lastLines(tidy, lineCount)
         return text.isEmpty ? "(no recent output)" : text
     }
 }
