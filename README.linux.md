@@ -4,6 +4,18 @@ Guia de execução, testes e arquitetura da versão Linux do **open-maestri** (b
 
 ---
 
+## Novidades da versão Linux
+
+- **Modo econômico dos agentes:** botão de folha no cabeçalho (ou *Preferences → General*). Cada `ask` pede resposta curta e a resposta volta sem as caixas e barras do terminal, com no máximo 40 linhas. Em *Agent language → MX telegrams*, os agentes conversam em telegramas `do:/in:/ctx:/out:` → `ok:/err:/q:`. Vale na hora para os agentes que já estão rodando. Detalhes em [docs/agent-economy.md](docs/agent-economy.md).
+- **`maestri` funciona nos terminais do Maestrix** (apelido do `omaestri`); um nome de agente errado já responde com os nomes conectados.
+- **Ctrl+Z no canvas:** desfaz mover, redimensionar, criar e excluir nós.
+- **Barra lateral:** arraste um workspace para dentro de um grupo (ou de volta para a lista principal); clique no contador de terminais para ver os agentes do workspace.
+- **Floors:** a troca entre Ground e floors mostra as camadas empilhadas.
+- **Cabeçalho:** indicador compacto do servidor (porta ao passar o mouse ou clicar); *Open in Editor* ficou em *View → Open in Editor* (Ctrl+Shift+E).
+- **Terminal:** os 15 temas do macOS com cores de cursor e seleção; fonte padrão monoespaçada de 13 pt.
+
+---
+
 ## 🛠️ Pré-requisitos no Ubuntu Linux
 
 - **Sistema:** Ubuntu 22.04, 24.04 ou 26.04 (x86_64)

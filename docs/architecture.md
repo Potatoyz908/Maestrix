@@ -121,6 +121,13 @@ Content-Type: application/json
 
 **Response**: `text/plain`, printed directly by the CLI.
 
+**Economy mode** (`agentEconomyMode` / `agentCompactLanguage` in `preferences.json`, read on every call): `AskHandler`
+appends a short-reply rule (or the MX rule) to prompts sent to agents and returns the reply through
+`AgentEconomy.compact` (TUI chrome removed, at most 40 lines; `check` defaults to 12). See `docs/agent-economy.md`.
+
+**CLI on PATH**: every PTY gets `MAESTRI_CLI` and a private shim directory first on `PATH` with `omaestri` and `maestri`
+symlinks to the CLI (`POSIXPtyProcess.cliShimDir`). Unknown agent names in `ask` / `check` answer with the connected names.
+
 ## Node Content Model
 
 `NodeContent` is a Swift enum with six variants. All variants use the `{ "type": { "_0": ... } }` wrapping format for Maestri compatibility.

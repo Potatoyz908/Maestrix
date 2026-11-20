@@ -125,6 +125,7 @@ To build the `.deb` package locally: `./scripts/build-deb.sh`.
 - Terminals, Markdown notes, file tree, portals (embedded browser), text labels, and drawings (rectangle, ellipse, diamond).
 - Ropes connecting nodes, with physics simulation; magnetic alignment (snapping) and a dot grid.
 - Zoom, minimap, and group selection; copy and paste elements across workspaces.
+- **Undo (Ctrl+Z)** on the canvas: moves, resizes, new nodes, and deleted nodes (a deleted note comes back with its text and ropes). Inside a note or a terminal, Ctrl+Z keeps its usual meaning.
 
 <img src="docs/images/maestrix-dark-agents.png" alt="Terminals, a note, and a file tree on the canvas (demo scene)" width="760">
 
@@ -137,6 +138,9 @@ To build the `.deb` package locally: `./scripts/build-deb.sh`.
 - **Unique names per workspace**: when a name repeats, Maestrix numbers it (`Agent #2`).
 - **Conversation resume**: if an agent's shell was lost (for example, the server restarted), reopening the workspace brings the agent back on its last conversation (`claude --continue`, `agy --continue`, `codex resume --last`, `opencode --continue`).
 - Agent activity indicator, persisted screen history, and a close button on every node.
+- **Terminal themes**: the 15 macOS themes (Maestri Dark/Light, Dracula, Solarized, Nord, One Dark, Tokyo Night, Catppuccin, Gruvbox, Rosé Pine) with their cursor and selection colours; *System* follows the light/dark appearance; default font 13 pt monospace. Ctrl + / − / 0 zooms a terminal's font.
+- **Custom presets** for any command, for example a local model (*Preferences → Agents*).
+- **Sidebar activity**: each workspace's terminal count shows a pulsing green dot while an agent works and a blue dot when an answer is unread, for every workspace. Clicking the count lists that workspace's agents.
 
 <img src="docs/images/create-terminal.png" alt="New terminal dialog" width="560">
 
@@ -147,13 +151,15 @@ To build the `.deb` package locally: `./scripts/build-deb.sh`.
 
 - Connected agents exchange messages through the CLI: `omaestri ask` sends and waits for the reply; `omaestri check` reads another agent's output; `omaestri note` reads and writes connected notes.
 - In **Maestro Mode**, a terminal can recruit other agents (`omaestri recruit`), connect them, assign roles, and dismiss them. The required skills are installed automatically in the agents' skill directories (for example `~/.claude/skills`).
+- **Economy mode** (leaf button in the header, or *Preferences → General*) cuts the tokens agents spend talking to each other: every `ask` asks for a short answer, and replies come back without the terminal's boxes and status bars, at most 40 lines. With **Agent language → MX telegrams**, agents talk in a compact `do:/in:/ctx:/out:` → `ok:/err:/q:` language. It applies at once to running agents. See [docs/agent-economy.md](docs/agent-economy.md).
+- Inside Maestrix terminals `maestri` also works (alias of `omaestri`), and an unknown agent name answers with the connected names, so agents do not waste calls finding the CLI or listing agents.
 
 </details>
 
 <details>
 <summary><strong>Floors (git worktrees), routines, and partituras</strong></summary>
 
-- **Floors**: isolated branches of the same repository as git worktrees, with setup, run, and teardown hooks; the *Ground* button returns to the main repository and *Land* brings the commits back.
+- **Floors**: isolated branches of the same repository as git worktrees, with setup, run, and teardown hooks; the *Ground* button returns to the main repository and *Land* brings the commits back. Switching floors plays a short animation: the canvas tilts into a stack of layers (Ground at the bottom) and slides to the chosen one.
 - **Routines**: scheduled commands and reminders for an agent.
 - **Partituras**: save and reapply an arrangement of agents, roles, and connections.
 
@@ -181,7 +187,9 @@ To build the `.deb` package locally: `./scripts/build-deb.sh`.
 <summary><strong>Themes and preferences</strong></summary>
 
 - Interface theme **Light** or **Dark · Maestrix** (the icon palette: blue, purple, and cyan on navy), under *Preferences → General → Interface theme*; the terminal theme is independent.
-- Terminal font and theme, canvas background, autosave interval, shortcuts, and preferred editor.
+- Terminal font and theme, canvas background, autosave interval, shortcuts, and preferred editor (*View → Open in Editor*, Ctrl+Shift+E).
+- **Header**: a compact server indicator (*Online* / *Offline* / *Conectando…*); hover or click it for the port and details. The leaf button next to it holds economy mode.
+- **Sidebar groups**: drag a workspace onto a group to move it there, or back onto the main list to take it out; the right-click menu still works.
 
 <img src="docs/images/maestrix-light-home.png" alt="Maestrix in the Light theme" width="760">
 
@@ -189,7 +197,7 @@ To build the `.deb` package locally: `./scripts/build-deb.sh`.
 
 ## CLI Reference
 
-The `omaestri` CLI is injected into every connected terminal (`maestrix-cli` and `open-maestri` are compatibility aliases):
+The `omaestri` CLI is injected into every connected terminal (`maestri`, `maestrix-cli`, and `open-maestri` are aliases):
 
 ```bash
 omaestri list                            # connected agents, notes, and portals

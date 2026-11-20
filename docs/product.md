@@ -43,7 +43,9 @@ macOS developers who:
 | Terminal nodes (PTY) | Implemented | Full VT100/xterm-256color via SwiftTerm; scrollback persisted |
 | Note nodes (Markdown) | Implemented | Raw + formatted dual-view; image paste; note chains |
 | Connection + SkillInjector | Implemented | Auto-injects `omaestri` CLI into connected terminals |
-| `omaestri` CLI (inter-agent communication) | Implemented | `ask`, `check`, `note read/write`, `list` |
+| `omaestri` CLI (inter-agent communication) | Implemented | `ask`, `check`, `note read/write`, `list`; `maestri` alias inside Maestrix terminals |
+| Agent economy mode + MX language | Implemented (Linux) | Short asks, replies without TUI chrome, optional MX telegrams; see `docs/agent-economy.md` |
+| Canvas undo (Ctrl+Z) | Implemented (Linux) | Moves, resizes, created and deleted nodes |
 | Maestro orchestration mode | Implemented | `recruit`, `dismiss`, `connect` commands |
 | Portal (WKWebView browser node) | Implemented | `navigate`, `snapshot`, `click`, `fill` commands |
 | File Tree + Git operations | Partial | File browsing works; Git operations incomplete |

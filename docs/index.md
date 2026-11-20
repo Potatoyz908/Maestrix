@@ -26,6 +26,7 @@ This index is the repository map for humans and coding agents. Read these files 
 
 ## CLI & Integration
 
+- [docs/agent-economy.md](./agent-economy.md) — economy mode and the MX language: fewer tokens between agents
 - [docs/cli-acceptance-test.md](./cli-acceptance-test.md) — `omaestri` CLI acceptance test cases and expected behaviour
 - [docs/cli-acceptance-test-out.md](./cli-acceptance-test-out.md) — recorded CLI acceptance test output
 - [docs/cli-integration-backlog.md](./cli-integration-backlog.md) — pending CLI integration work items
