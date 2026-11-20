@@ -99,7 +99,7 @@ final class AskHandler {
     @MainActor
     func ask(_ name: String, text: String, raw: Bool, from caller: UUID) async -> Result<String, AskError> {
         guard let agent = AgentDirectory.resolve(name, from: caller) else {
-            return .failure(AskError(message: "agent '\(name)' not found. Use 'omaestri list' to see connected agents."))
+            return .failure(AskError(message: AgentDirectory.notFound(name, from: caller)))
         }
         guard let tm = PlatformHooks.terminalsService, let session = tm.terminals[agent.terminalId] else {
             return .failure(AskError(message: "agent '\(agent.name)' is not running"))

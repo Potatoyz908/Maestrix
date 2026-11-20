@@ -43,6 +43,14 @@ enum AgentDirectory {
             .map { agent($0, graph: g) }
     }
 
+    /// Error for an unknown name that already carries the answer of `list`, so the agent does not need another call.
+    static func notFound(_ query: String, from caller: UUID) -> String {
+        let names = connectedAgents(of: caller).map { "\"\($0.name)\"" }
+        return names.isEmpty
+            ? "agent '\(query)' not found: this terminal has no connected agents"
+            : "agent '\(query)' not found. Connected agents: \(names.joined(separator: ", "))"
+    }
+
     /// Resolve `query` among the caller's connected agents: exact name, case-insensitive name, id prefix, substring.
     static func resolve(_ query: String, from caller: UUID) -> Agent? {
         let agents = connectedAgents(of: caller)

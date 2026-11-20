@@ -163,6 +163,18 @@ final class LinuxPtyAndServerTests: IsolatedDataDirTestCase {
         }
     }
 
+    func testCliShimMakesMaestriAnAliasOfTheCli() throws {
+        let cli = FileManager.default.temporaryDirectory.appendingPathComponent("fake-omaestri-\(UUID().uuidString)").path
+        XCTAssertTrue(FileManager.default.createFile(atPath: cli, contents: Data("#!/bin/sh\n".utf8),
+                                                     attributes: [.posixPermissions: 0o755]))
+        defer { try? FileManager.default.removeItem(atPath: cli) }
+        let dir = try XCTUnwrap(POSIXPtyProcess.cliShimDir(for: cli))
+        for name in ["maestri", "omaestri"] {
+            XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: "\(dir)/\(name)"), cli)
+        }
+        XCTAssertEqual(POSIXPtyProcess.cliShimDir(for: cli), dir)   // idempotent
+    }
+
     func testWebSocketKeyAcceptGeneration() {
         // RFC 6455 Section 1.3 test vector
         let clientKey = "dGhlIHNhbXBsZSBub25jZQ=="

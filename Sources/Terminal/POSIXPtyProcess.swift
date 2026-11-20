@@ -181,6 +181,12 @@ final class POSIXPtyProcess: @unchecked Sendable {
             let dir = (cli as NSString).deletingLastPathComponent
             resolvedPaths.removeAll { $0 == dir }
             resolvedPaths.insert(dir, at: 0)
+            // Agents often load the Maestri skill and type `maestri ...` first: answer it here too, so they do not spend
+            // a failed call + a search for the right binary (`maestri` is only an alias inside these terminals).
+            if let shims = Self.cliShimDir(for: cli) {
+                resolvedPaths.removeAll { $0 == shims }
+                resolvedPaths.insert(shims, at: 0)
+            }
         }
 
         env["PATH"] = resolvedPaths.joined(separator: ":")
@@ -382,6 +388,24 @@ final class POSIXPtyProcess: @unchecked Sendable {
     }
 
     /// `omaestri` to expose to the shell: $OMAESTRI_PATH, next to this server binary, then ~/.local/bin.
+    /// Private directory with `maestri` and `omaestri` symlinks to the CLI (per user, recreated when the CLI moves).
+    static func cliShimDir(for cli: String) -> String? {
+        let fm = FileManager.default
+        let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("maestrix-cli-\(getuid())")
+        do {
+            try fm.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            for name in ["maestri", "omaestri"] {
+                let link = (dir as NSString).appendingPathComponent(name)
+                if (try? fm.destinationOfSymbolicLink(atPath: link)) == cli { continue }
+                try? fm.removeItem(atPath: link)
+                try fm.createSymbolicLink(atPath: link, withDestinationPath: cli)
+            }
+            return dir
+        } catch {
+            return nil
+        }
+    }
+
     static func omaestriPath() -> String? {
         let fm = FileManager.default
         var candidates: [String] = []

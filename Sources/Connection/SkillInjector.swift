@@ -155,7 +155,7 @@ public final class SkillInjector {
     The `omaestri` CLI is pre-installed and available on PATH inside open-maestri terminals.
     If `omaestri` is not found on PATH (e.g., custom shell setups that reset PATH), use `"$MAESTRI_CLI"` instead — this environment variable always points to the full binary path.
 
-    Always run `omaestri list` first to get the exact agent and note names.
+    Run `omaestri list` when you do not know the names yet. If you already know a name, ask directly: an unknown name answers with the connected agents' names, so a separate `list` is not needed.
 
     The response from `ask` returns as soon as the other agent finishes. Scale the Bash tool timeout to the estimated completion time:
 
@@ -295,7 +295,7 @@ public final class SkillInjector {
     # open-maestri Team Orchestration
 
     You are running inside **open-maestri** (the Linux Maestri), on a canvas that connects agents, terminals, notes and portals.
-    The CLI here is **`omaestri`** (never `maestri`: that is a different app). If `omaestri` is not on PATH use `"$MAESTRI_CLI"`.
+    The CLI here is **`omaestri`**; inside these terminals `maestri` is an alias of it, so both work. If neither is on PATH use `"$MAESTRI_CLI"`.
 
     ## Maestro Mode
 

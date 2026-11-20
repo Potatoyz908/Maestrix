@@ -20,7 +20,7 @@ final class CheckHandler {
         let lineCount = args.count >= 3 ? max(1, Int(args[2]) ?? 20) : (economy ? AgentEconomy.checkLineLimit : 20)
         guard let caller = terminalId else { return "error: missing terminal ID" }
         guard let agent = AgentDirectory.resolve(args[1], from: caller) else {
-            return "error: agent '\(args[1])' not found in connections"
+            return "error: " + AgentDirectory.notFound(args[1], from: caller)
         }
         guard let tm = PlatformHooks.terminalsService, let session = tm.terminals[agent.terminalId] else {
             return "error: agent '\(agent.name)' is not running"
