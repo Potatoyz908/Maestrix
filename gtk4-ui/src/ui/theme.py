@@ -137,6 +137,22 @@ button.maestri-color-dot.maestri-color-dot.maestri-color-dot.active { border-col
 .maestri-file-tree-list > row:selected, .maestri-file-grid > child:selected { background-color: rgba(22, 139, 241, 0.28); color: white; }
 .maestri-menu-item-btn.danger { color: #ff746f; }
 .maestri-menu-item-btn.danger:hover { background: #a62937; color: white; }
+/* Header and sidebar toolbar buttons: icon only, like the light theme (no filled background, border or shadow). */
+button.maestri-header-btn.maestri-header-btn.maestri-header-btn.maestri-header-btn,
+menubutton.maestri-header-btn.maestri-header-btn.maestri-header-btn.maestri-header-btn > button,
+menubutton.maestri-header-btn.maestri-header-btn.maestri-header-btn.maestri-header-btn > button:checked,
+button.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn,
+menubutton.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn > button,
+menubutton.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn > button:checked {
+  background-color: transparent; background-image: none; border: none; box-shadow: none; outline: none; color: #c4cff0;
+}
+button.maestri-header-btn.maestri-header-btn.maestri-header-btn.maestri-header-btn:hover,
+menubutton.maestri-header-btn.maestri-header-btn.maestri-header-btn.maestri-header-btn > button:hover,
+button.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn:hover,
+menubutton.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn.maestri-sidebar-add-btn > button:hover {
+  background-color: rgba(255, 255, 255, 0.08); color: #edf1ff;
+}
+.maestri-add-split-btn image { color: #c4cff0; }
 """
 
 
