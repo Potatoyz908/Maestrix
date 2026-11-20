@@ -44,6 +44,7 @@ from maestri_canvas.viewport import Viewport
 from maestri_canvas.widget import CanvasWidget, is_terminal, load_vte, terminal_of, terminate_terminal
 from .drawing import DrawingTools
 from .canvas_undo import CanvasUndo
+from .eco_button import EcoButton
 from .ask_agent import install_ask_agent
 from .routines_window import install_routines
 from .floors import install_floors
@@ -1369,18 +1370,22 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         btn_settings.connect("clicked", lambda _b: self.show_preferences())
         header.pack_end(btn_settings)
 
-        # Open in Editor (macOS View > Open in Editor, ⇧⌘E): the workspace folder in the preferred IDE
-        btn_editor = Gtk.Button(icon_name=icon_name("code"))
-        btn_editor.set_tooltip_text("Open in Editor (Ctrl+Shift+E)")
-        btn_editor.add_css_class("maestri-header-btn")
-        btn_editor.connect("clicked", lambda _b: self.open_in_editor())
-        header.pack_end(btn_editor)
-        self.btn_open_editor = btn_editor
+        # Economy button (leaf) where "Open in Editor" was; the editor stays in View > Open in Editor (Ctrl+Shift+E)
+        self.eco_button = EcoButton(self.preferences, self._on_eco_changed)
+        header.pack_end(self.eco_button)
 
         # Backend Connection status indicator
         self.lbl_status = StatusIndicator("pending", "Conectando...")   # CSS dot in the semantic colour + text (no emoji)
         self.lbl_status.set_margin_end(8)
         header.pack_end(self.lbl_status)
+
+    def _on_eco_changed(self, eco) -> None:
+        """Header leaf: persist only the two economy keys on top of the file (Settings may have saved other changes)."""
+        prefs = self.prefs_store.load()
+        prefs.agent_economy_mode = eco.agent_economy_mode
+        prefs.agent_compact_language = eco.agent_compact_language
+        self.prefs_store.save(prefs)
+        self._on_preferences_changed(prefs)
 
     def _check_connection_async(self):
         """Re-probe the core off the main thread and refresh the header label (the initial load sets it the first time)."""
@@ -1585,6 +1590,8 @@ class MaestrixWindow(WindowActionsMixin, Gtk.ApplicationWindow):
         """Persisted by SettingsWindow already; apply live: terminal font/theme, canvas background, autosave interval."""
         old = self.preferences
         self.preferences = prefs
+        if getattr(self, "eco_button", None) is not None:
+            self.eco_button.sync(prefs)
         self.interface_theme.apply(prefs.interface_theme)
         self.canvas_widget.renderer.dark_mode = prefs.interface_theme == "dark"
         self.terminal_presets_menu.remove_all()
