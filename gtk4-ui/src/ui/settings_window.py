@@ -10,8 +10,8 @@ from gi.repository import Gtk
 from typing import Callable, Optional
 
 from maestri_core.preferences import (
-    AUTOSAVE_RANGE, CANVAS_BACKGROUNDS, FONT_SIZE_RANGE, IDES, LANGUAGES, TERMINAL_THEMES,
-    Preferences, PreferencesStore,
+    AGENT_LANGUAGE_HELP, AGENT_LANGUAGE_LABELS, AGENT_LANGUAGES, AUTOSAVE_RANGE, CANVAS_BACKGROUNDS, ECONOMY_HELP,
+    FONT_SIZE_RANGE, IDES, LANGUAGES, TERMINAL_THEMES, Preferences, PreferencesStore, agent_language, compact_for,
 )
 
 LANGUAGE_LABELS = {"en": "English", "zh-Hans": "简体中文"}
@@ -97,6 +97,22 @@ class SettingsWindow(Gtk.Window):
         grid.attach(widget, 1, row, 1, 1)
 
     @staticmethod
+    def _help(grid: Gtk.Grid, row: int, text: str) -> Gtk.Label:
+        """Dim wrapped explanation under the setting above it (spans both columns)."""
+        lbl = Gtk.Label(label=text, xalign=0, wrap=True, max_width_chars=60, css_classes=["dim-label", "caption"])
+        grid.attach(lbl, 0, row, 2, 1)
+        return lbl
+
+    def _on_agent_language(self, index: int) -> None:
+        lang = AGENT_LANGUAGES[index] if 0 <= index < len(AGENT_LANGUAGES) else AGENT_LANGUAGES[0]
+        self.agent_lang_help.set_label(AGENT_LANGUAGE_HELP[lang])
+        self._set("agent_compact_language", compact_for(lang))
+
+    def _show_agent_language(self, on: bool) -> None:
+        for w in (self.agent_lang_label, self.agent_lang_dropdown, self.agent_lang_help):
+            w.set_visible(on)
+
+    @staticmethod
     def _dropdown(values, labels, current) -> Gtk.DropDown:
         model = Gtk.StringList.new([labels.get(v, v) for v in values])
         dd = Gtk.DropDown(model=model)
@@ -136,22 +152,23 @@ class SettingsWindow(Gtk.Window):
         self.theme_dropdown = self._dropdown(("light", "dark"), {"light": "Light", "dark": "Dark · Maestrix"}, self.prefs.interface_theme)
         self.theme_dropdown.connect("notify::selected", lambda d, _p: self._set("interface_theme", ("light", "dark")[d.get_selected()]))
         self._row(g, 5, "Interface theme", self.theme_dropdown)
-        self.economy_switch = Gtk.Switch(active=self.prefs.agent_economy_mode, valign=Gtk.Align.CENTER,
-                                         tooltip_text="Agents spend fewer tokens talking to each other: every ask asks for a "
-                                                      "short reply (long content goes to a file or note) and replies come "
-                                                      "back without the terminal's boxes and status bars, at most 40 lines. "
-                                                      "Applies at once to running agents.")
+        self.economy_switch = Gtk.Switch(active=self.prefs.agent_economy_mode, valign=Gtk.Align.CENTER)
         self.economy_switch.connect("notify::active", lambda s, _p: self._set("agent_economy_mode", s.get_active()))
         self._row(g, 6, "Agent economy mode (fewer tokens)", self.economy_switch)
-        self.mx_switch = Gtk.Switch(active=self.prefs.agent_compact_language, valign=Gtk.Align.CENTER,
-                                    sensitive=self.prefs.agent_economy_mode,
-                                    tooltip_text="With economy mode: agents talk to each other in MX, a telegraphic "
-                                                 "language (do:/in:/ctx:/out: -> ok:/err:/q:), not prose. Hard for people "
-                                                 "to read, cheapest for the agents.")
-        self.mx_switch.connect("notify::active", lambda s, _p: self._set("agent_compact_language", s.get_active()))
-        self.economy_switch.connect("notify::active", lambda s, _p: self.mx_switch.set_sensitive(s.get_active()))
-        self._row(g, 7, "Compact agent language (MX)", self.mx_switch)
-        self._build_remote_ssh(g, 8)
+        self.economy_help = self._help(g, 7, ECONOMY_HELP)
+
+        # Agent language: only meaningful with economy mode on, hidden otherwise (agentCompactLanguage underneath)
+        lang = agent_language(self.prefs.agent_compact_language)
+        self.agent_lang_label = Gtk.Label(label="Agent language", xalign=0, hexpand=True)
+        self.agent_lang_dropdown = self._dropdown(AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, lang)
+        self.agent_lang_dropdown.set_halign(Gtk.Align.END)
+        g.attach(self.agent_lang_label, 0, 8, 1, 1)
+        g.attach(self.agent_lang_dropdown, 1, 8, 1, 1)
+        self.agent_lang_help = self._help(g, 9, AGENT_LANGUAGE_HELP[lang])
+        self.agent_lang_dropdown.connect("notify::selected", lambda d, _p: self._on_agent_language(d.get_selected()))
+        self.economy_switch.connect("notify::active", lambda s, _p: self._show_agent_language(s.get_active()))
+        self._show_agent_language(self.prefs.agent_economy_mode)
+        self._build_remote_ssh(g, 10)
         return g
 
     # ---- Remote SSH (GeneralSettingsView.swift: only sshEnabled / sshTunnelPort / sshScriptPath here; the host is chosen per

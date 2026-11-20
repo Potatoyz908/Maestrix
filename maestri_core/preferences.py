@@ -23,6 +23,26 @@ LANGUAGES = ("en", "zh-Hans")
 IDES = ("cursor", "vscode", "xcode")
 AUTOSAVE_RANGE = (5, 600)
 FONT_SIZE_RANGE = (8.0, 32.0)
+# Agent economy (Settings > General). Stored as agentEconomyMode / agentCompactLanguage: the Swift core reads those keys.
+ECONOMY_HELP = ("Every ask adds a short-reply rule. Replies come back without the terminal's boxes and status bars, at most "
+                "40 lines; check shows the last 12 lines. Applies at once to running agents.")
+AGENT_LANGUAGES = ("short", "mx")   # dropdown order; "mx" <=> agent_compact_language True
+AGENT_LANGUAGE_LABELS = {"short": "Short replies", "mx": "MX telegrams"}
+AGENT_LANGUAGE_HELP = {
+    "short": "Agents answer in plain language, in 5 lines or fewer.",
+    "mx": "Agents talk in telegrams: do:/in:/ctx:/out: and reply ok:/err:/q: in 3 lines or fewer. "
+          "Hard for people to read, cheapest for the agents.",
+}
+
+
+def agent_language(compact: bool) -> str:
+    """Dropdown value for agent_compact_language."""
+    return "mx" if compact else "short"
+
+
+def compact_for(language: str) -> bool:
+    """agent_compact_language for a dropdown value."""
+    return language == "mx"
 
 
 def _pick(value: Any, allowed, default):
